@@ -1,5 +1,6 @@
 import secrets
 import warnings
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -9,12 +10,15 @@ from pydantic import (
     HttpUrl,
     PostgresDsn,
     computed_field,
-    model_validator,
+    model_validator, Field,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.main import DotEnvSettingsSource
 from typing_extensions import Self
+from dotenv import  load_dotenv
 
+load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=True)
+BASE_PATH = Path(__file__).resolve().parents[2]
 
 def parse_cors(v: Any) -> list[str] | str:
     if isinstance(v, str) and not v.startswith("["):
@@ -120,14 +124,25 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str
     TAVILY_API_KEY: str
 
+    CHROMA_DB_PATH: Path = Field(default_factory=lambda: BASE_PATH / ".tmp/chroma_db")
+    REPO_PATH: Path = Field(default_factory=lambda: BASE_PATH / ".tmp/repositories")
+
+    EMBEDDING_MODEL: str = "voyage-code-3"
+    EMBEDDING_MODEL_TOKENIZER: str = "voyageai/voyage-code-3"
+    EMBEDDING_DIMENSIONS: Literal[256, 512, 1024, 2048] = 1024
+
+    def model_post_init(self, __context) -> None:
+        self.CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
+        self.REPO_PATH.mkdir(parents=True, exist_ok=True)
+
     @classmethod
     def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: Any,
-        env_settings: Any,
-        dotenv_settings: Any,
-        file_secret_settings: Any,
+            cls,
+            settings_cls: type[BaseSettings],
+            init_settings: Any,
+            env_settings: Any,
+            dotenv_settings: Any,
+            file_secret_settings: Any,
     ) -> tuple[Any, ...]:
         # .env file takes priority over system/process environment variables
         return (init_settings, dotenv_settings, env_settings, file_secret_settings)
