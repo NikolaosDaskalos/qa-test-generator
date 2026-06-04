@@ -33,21 +33,21 @@ class VectorRetriever:
             search_kwargs={"k": k, lambda_mult: lambda_mult},
         )
 
-        def get_stats(self) -> Dict:
-            """Return chunk count and unique document sources."""
-            collection = self.vectorstore._collection
-            count = collection.count()
-            sources = set()
-            if count > 0:
-                data = collection.get(include=["metadatas"])
-                for m in (data.get("metadatas") or []):
-                    if m and "source" in m:
-                        sources.add(m["source"])
-            return {
-                "total_chunks": count,
-                "unique_sources": len(sources),
-                "sources": sorted(sources),
-            }
+    def get_stats(self) -> Dict:
+        """Return chunk count and unique document sources."""
+        collection = self.vectorstore._collection
+        count = collection.count()
+        sources = set()
+        if count > 0:
+            data = collection.get(include=["metadatas"])
+            for m in (data.get("metadatas") or []):
+                if m and "source" in m:
+                    sources.add(m["source"])
+        return {
+            "total_chunks": count,
+            "unique_sources": len(sources),
+            "sources": sorted(sources),
+        }
 
         # TODO remove this is not needed
         def clear(self):

@@ -4,19 +4,21 @@ If the Repo is already indexed skips the execution.
 import re
 import logging
 import uuid
-from pathlib import Path
-
-from dotenv import load_dotenv
+import os
 from langchain_community.document_loaders import GitLoader
 from langchain_core.documents import Document
 from langchain_voyageai import VoyageAIEmbeddings
 from langchain_chroma import Chroma
-from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
-from transformers import AutoTokenizer
+from langchain_text_splitters import RecursiveCharacterTextSplitter, Language, TextSplitter
+from transformers import AutoTokenizer, TokenizersBackend
 from app.core.config import settings
 from app.rag.manager import VectorManager
 
 logger = logging.getLogger(__name__)
+
+# added to remove Hugging Face Warning from AutoTokenizer
+os.environ.setdefault("HF_TOKEN", settings.HF_TOKEN)
+
 
 class RepositoryIngestor:
     """
@@ -54,7 +56,7 @@ class RepositoryIngestor:
             branch="main",
             file_filter=lambda file_path: str(file_path).endswith(".py"),
         )
-        #TODO: remove [-5:] when finished testing
+        # TODO: remove [-5:] when finished testing
         raw_docs: list[Document] = git_loader.load()[-5:]
         for raw_doc in raw_docs:
             raw_doc.metadata["repo_name"] = repo_name
@@ -63,11 +65,13 @@ class RepositoryIngestor:
 
     def _split(self, raw_docs: list[Document]) -> list[Document]:
         """Split loaded documents into chunks."""
-        splitter: RecursiveCharacterTextSplitter = (
-            RecursiveCharacterTextSplitter
-            .from_language(Language.PYTHON, chunk_size=500, chunk_overlap=10)
-            .from_huggingface_tokenizer(
-                AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL_TOKENIZER))
+        tokenizer: TokenizersBackend = AutoTokenizer.from_pretrained(
+            settings.EMBEDDING_MODEL_TOKENIZER, token=settings.HF_TOKEN)
+        splitter: RecursiveCharacterTextSplitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+            tokenizer,
+            separators=RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON),
+            chunk_size=settings.CHUNK_SIZE,
+            chunk_overlap=settings.CHUNK_OVERLAP,
         )
         return splitter.split_documents(raw_docs)
 
@@ -90,7 +94,7 @@ class RepositoryIngestor:
         if re.search(r"[^A-Za-z0-9_.-]", repo_name):
             raise ValueError("Repository name contains invalid characters")
 
-    #todo remove this method when app is ready
+    # todo remove this method when app is ready
     def _print_debug_documents(self, raw_docs: list[Document], chunked_docs: list[Document]) -> None:
         """Print raw document and chunk contents for local debugging."""
         for raw_doc in raw_docs:
@@ -107,9 +111,15 @@ class RepositoryIngestor:
 def ingest(vectorstore, repo_name: str, repo_url: str) -> None:
     RepositoryIngestor(vectorstore).ingest(repo_name, repo_url)
 
+
 # TODO: remove this when testing is finished
 if __name__ == "__main__":
-    embeddings = VoyageAIEmbeddings(model=settings.EMBEDDING_MODEL, output_dimension=settings.EMBEDDING_DIMENSIONS)
+    embeddings = VoyageAIEmbeddings(
+        model=settings.EMBEDDING_MODEL,
+        output_dimension=settings.EMBEDDING_DIMENSIONS,
+        api_key=settings.VOYAGE_API_KEY
+    )
+
     vectorstore = Chroma(
         collection_name="repositories",
         embedding_function=embeddings,
