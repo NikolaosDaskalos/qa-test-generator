@@ -4,48 +4,56 @@ If the Repo is already indexed skips the execution.
 import re
 import logging
 import uuid
-from pathlib import Path
-
-from dotenv import load_dotenv
+import os
 from langchain_community.document_loaders import GitLoader
 from langchain_core.documents import Document
-from langchain_voyageai import VoyageAIEmbeddings
-from langchain_chroma import Chroma
-from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
-from transformers import AutoTokenizer
+import giturlparse
+from langchain_text_splitters import RecursiveCharacterTextSplitter, Language, TextSplitter
+from transformers import AutoTokenizer, TokenizersBackend
 from app.core.config import settings
-from app.rag.manager import VectorManager
 
 logger = logging.getLogger(__name__)
 
-class RepositoryIngestor:
+# added to remove Hugging Face Warning from AutoTokenizer
+os.environ.setdefault("HF_TOKEN", settings.HF_TOKEN)
+
+
+class DocumentIngestor:
     """
     Loads a Git repository, splits Python files into chunks, and stores them in Chroma db.
     """
 
     def __init__(self, vectorstore):
         self.vectorstore = vectorstore
+        self._tokenizer: TokenizersBackend = AutoTokenizer.from_pretrained(
+            settings.EMBEDDING_MODEL_TOKENIZER, token=settings.HF_TOKEN)
 
-    def ingest(self, repo_name: str, repo_url: str) -> None:
+    def ingest(self, repo_url: str) -> int:
         """
         Full ingestion pipeline: Load -> Split -> Store.
         Skips ingestion when this repo is already in the vector store.
         """
-        self._validate_repo_name(repo_name)
-
+        self._validate_repo_url(repo_url)
+        # TODO same repo names can exists with different users
+        repo_name: str = giturlparse.parse(repo_url).name
+        print(giturlparse.parse(repo_url).data)
         if self._is_already_indexed(repo_name):
-            return
+            logger.info(f"Repository {repo_name} already indexed.")
+            return 0
 
         raw_docs = self._load(repo_name, repo_url)
-        chunked_docs = self._split(raw_docs)
-        if not chunked_docs:
-            return
+        if not raw_docs:
+            logger.info(f"No files found in {repo_name}")
+            return 0
 
+        chunked_docs = self._split(raw_docs)
         self._store(chunked_docs)
-        self._print_debug_documents(raw_docs, chunked_docs)
+        # self._print_debug_documents(raw_docs, chunked_docs)
+        return len(chunked_docs)
 
     def _load(self, repo_name: str, repo_url: str) -> list[Document]:
         """Load Python documents from the Git repository."""
+
         (settings.REPO_PATH / repo_name).parent.mkdir(parents=True, exist_ok=True)
         # todo add logic for private repos with GH_TOKEN
         git_loader: GitLoader = GitLoader(
@@ -54,8 +62,8 @@ class RepositoryIngestor:
             branch="main",
             file_filter=lambda file_path: str(file_path).endswith(".py"),
         )
-        #TODO: remove [-5:] when finished testing
-        raw_docs: list[Document] = git_loader.load()[-5:]
+
+        raw_docs: list[Document] = git_loader.load()
         for raw_doc in raw_docs:
             raw_doc.metadata["repo_name"] = repo_name
             raw_doc.metadata["parent_document_id"] = str(uuid.uuid4())
@@ -63,17 +71,18 @@ class RepositoryIngestor:
 
     def _split(self, raw_docs: list[Document]) -> list[Document]:
         """Split loaded documents into chunks."""
-        splitter: RecursiveCharacterTextSplitter = (
-            RecursiveCharacterTextSplitter
-            .from_language(Language.PYTHON, chunk_size=500, chunk_overlap=10)
-            .from_huggingface_tokenizer(
-                AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL_TOKENIZER))
+
+        splitter: RecursiveCharacterTextSplitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+            self._tokenizer,
+            separators=RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON),
+            chunk_size=settings.CHUNK_SIZE,
+            chunk_overlap=settings.CHUNK_OVERLAP,
         )
         return splitter.split_documents(raw_docs)
 
     def _store(self, chunked_docs: list[Document]) -> None:
         """Store chunks in the provided vector store."""
-        VectorManager(self.vectorstore).upsert_embeddings(chunked_docs)
+        self.vectorstore.add_documents(chunked_docs)
 
     def _is_already_indexed(self, repo_name: str) -> bool:
         """Return True when this repo already exists in the vector store."""
@@ -83,14 +92,16 @@ class RepositoryIngestor:
         )
         return bool(existing["ids"])
 
-    def _validate_repo_name(self, repo_name: str) -> None:
-        """Validates repo name for invalid characters."""
-        if not repo_name:
-            raise ValueError("Repository name cannot be empty")
-        if re.search(r"[^A-Za-z0-9_.-]", repo_name):
-            raise ValueError("Repository name contains invalid characters")
 
-    #todo remove this method when app is ready
+    def _validate_repo_url(self, repo_url) -> None:
+        """Validates repo_url for invalid urls or ssh links."""
+        if not repo_url:
+            raise ValueError("Repository URL cannot be empty")
+
+        if not giturlparse.validate(repo_url):
+            raise ValueError("Repository URL or SSH link is not valid")
+
+    # todo remove this method when app is ready
     def _print_debug_documents(self, raw_docs: list[Document], chunked_docs: list[Document]) -> None:
         """Print raw document and chunk contents for local debugging."""
         for raw_doc in raw_docs:
@@ -102,17 +113,3 @@ class RepositoryIngestor:
                     print(f"\n/// chunk {i}///\n{chunk.metadata}\n\n{chunk.page_content}\n\n")
                     print("-" * 90)
                     i += 1
-
-
-def ingest(vectorstore, repo_name: str, repo_url: str) -> None:
-    RepositoryIngestor(vectorstore).ingest(repo_name, repo_url)
-
-# TODO: remove this when testing is finished
-if __name__ == "__main__":
-    embeddings = VoyageAIEmbeddings(model=settings.EMBEDDING_MODEL, output_dimension=settings.EMBEDDING_DIMENSIONS)
-    vectorstore = Chroma(
-        collection_name="repositories",
-        embedding_function=embeddings,
-        persist_directory=str(settings.CHROMA_DB_PATH),
-    )
-    RepositoryIngestor(vectorstore).ingest('heroes-app', "https://github.com/NikolaosDaskalos/fastapi-heroes-app.git")

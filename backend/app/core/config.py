@@ -13,12 +13,10 @@ from pydantic import (
     model_validator, Field,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic_settings.main import DotEnvSettingsSource
 from typing_extensions import Self
-from dotenv import  load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=True)
 BASE_PATH = Path(__file__).resolve().parents[2]
+
 
 def parse_cors(v: Any) -> list[str] | str:
     if isinstance(v, str) and not v.startswith("["):
@@ -122,14 +120,26 @@ class Settings(BaseSettings):
         return self
 
     OPENAI_API_KEY: str
+    ANTHROPIC_API_KEY: str
     TAVILY_API_KEY: str
+    VOYAGE_API_KEY: str
+    HF_TOKEN: str
 
-    CHROMA_DB_PATH: Path = Field(default_factory=lambda: BASE_PATH / ".tmp/chroma_db")
-    REPO_PATH: Path = Field(default_factory=lambda: BASE_PATH / ".tmp/repositories")
+    LLM_MODEL: str = "gpt-4o-mini"
+    MAX_TOKENS: int = 5_000
+    TEMPERATURE: float = 0.0
 
     EMBEDDING_MODEL: str = "voyage-code-3"
     EMBEDDING_MODEL_TOKENIZER: str = "voyageai/voyage-code-3"
     EMBEDDING_DIMENSIONS: Literal[256, 512, 1024, 2048] = 1024
+
+    CHUNK_SIZE: int = 500
+    CHUNK_OVERLAP: int = 10
+    TOP_K: int | None = 4
+    MIN_RELEVANCE_SCORE: float = 0.15
+
+    CHROMA_DB_PATH: Path = Field(default_factory=lambda: BASE_PATH / ".tmp/chroma_db")
+    REPO_PATH: Path = Field(default_factory=lambda: BASE_PATH / ".tmp/repositories")
 
     def model_post_init(self, __context) -> None:
         self.CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
