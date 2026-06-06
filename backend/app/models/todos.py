@@ -1,11 +1,11 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
-from app.models.common import get_datetime_utc
 from app.models.users import User
+
 
 # Base schema: shared Todo fields.
 # This is reused by TodoCreate, TodoPublic, and the Todo DB model.
@@ -22,7 +22,7 @@ class Todo(TodoBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
     created_at: datetime | None = Field(
-        default_factory=get_datetime_utc,
+        default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore
     )
 

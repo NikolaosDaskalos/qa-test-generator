@@ -1,18 +1,17 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import EmailStr
 from sqlalchemy import DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
-from app.models.common import get_datetime_utc
-
 if TYPE_CHECKING:
     from app.models.git_repositories import GitRepository
     from app.models.items import Item
     from app.models.searches import SearchSession
     from app.models.todos import Todo
+
 
 # Base schema: shared user fields used by API schemas and the DB model.
 # This is not a DB table because it does not use `table=True`.
@@ -66,7 +65,7 @@ class User(UserBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     hashed_password: str
     created_at: datetime | None = Field(
-        default_factory=get_datetime_utc,
+        default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore
     )
 
@@ -82,6 +81,7 @@ class User(UserBase, table=True):
         back_populates="user",
         cascade_delete=True,
     )
+
 
 # API response schema: public representation of a user.
 # It intentionally excludes sensitive/internal fields such as `hashed_password`.

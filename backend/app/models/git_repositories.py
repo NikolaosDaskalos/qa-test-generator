@@ -1,12 +1,10 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
-
-from app.models.common import get_datetime_utc
 
 if TYPE_CHECKING:
     from app.models.branch import Branch
@@ -79,13 +77,13 @@ class GitRepository(GitRepositoryBase, table=True):
     )
     last_error: str | None = Field(default=None)
     created_at: datetime = Field(
-        default_factory=get_datetime_utc,
+        default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore
     )
     updated_at: datetime = Field(
-        default_factory=get_datetime_utc,
+        default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore
-        sa_column_kwargs={"onupdate": get_datetime_utc},
+        sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
     )
 
     user: "User" = Relationship(back_populates="repositories")

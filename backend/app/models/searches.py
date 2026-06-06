@@ -1,10 +1,10 @@
 import uuid
-from datetime import datetime
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.models.users import User
+
 
 # Base schema: common fields for a search session.
 class SearchSessionBase(SQLModel):
@@ -25,16 +25,14 @@ class SearchSession(SearchSessionBase, table=True):
     memory: str = Field(default="[]")
 
     # Timestamps for session lifecycle.
-    # Note: datetime.utcnow() returns a naive datetime. If you want timezone-aware
-    # timestamps everywhere, prefer get_datetime_utc consistently.
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # ORM relationships.
     # owner: the User that owns the session.
     # history: all SearchHistory rows belonging to this session.
     owner: User = Relationship(back_populates="search_sessions")
-    history: List["SearchHistory"] = Relationship(
+    history: list["SearchHistory"] = Relationship(
         back_populates="session", cascade_delete=True
     )
 
@@ -47,7 +45,7 @@ class SearchSessionCreate(SearchSessionBase):
 # API schema: payload for updating a search session.
 # Only title is editable here, and it is optional for partial update endpoints.
 class SearchSessionUpdate(SQLModel):
-    title: Optional[str] = Field(default=None, max_length=255)
+    title: str | None = Field(default=None, max_length=255)
 
 
 # API response schema: public search session returned to the client.
@@ -72,9 +70,7 @@ class SearchSessionsPublic(SQLModel):
 # Base schema: shared fields for a single search/answer entry.
 class SearchHistoryBase(SQLModel):
     query: str
-    result: Optional[str] = (
-        None  # Agent answer. None means no result has been stored yet.
-    )
+    result: str | None = None  # Agent answer. None means no result has been stored yet.
 
 
 # Database model: maps to the `search_history` table.
@@ -93,7 +89,7 @@ class SearchHistory(SearchHistoryBase, table=True):
     owner_id: uuid.UUID = Field(
         foreign_key="user.id", nullable=False, ondelete="CASCADE"
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # ORM relationships for navigation in Python code.
     session: SearchSession = Relationship(back_populates="history")

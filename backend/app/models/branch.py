@@ -1,11 +1,9 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
-
-from app.models.common import get_datetime_utc
 
 if TYPE_CHECKING:
     from app.models.git_repositories import GitRepository
@@ -39,12 +37,12 @@ class Branch(BranchBase, table=True):
     # local_head_sha: SHA currently checked out in the local clone.
     local_head_sha: str = Field(nullable=False, max_length=64)
     created_at: datetime = Field(
-        default_factory=get_datetime_utc,
+        default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore
     )
     updated_at: datetime = Field(
-        default_factory=get_datetime_utc,
+        default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore
-        sa_column_kwargs={"onupdate": get_datetime_utc},
+        sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
     )
     git_repository: "GitRepository" = Relationship(back_populates="branches")
