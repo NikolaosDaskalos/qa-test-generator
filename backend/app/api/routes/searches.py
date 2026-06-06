@@ -3,25 +3,20 @@
 
 import uuid
 from typing import Any
+
 from fastapi import APIRouter, HTTPException
 from sqlmodel import func, select
 
+from app.agent.graph import run_agent_on_session
 from app.api.deps import CurrentUser, SessionDep
-from app.models import (
-    Message,
+from app.models.searches import (
+    AgentChatRequest,
+    AgentChatResponse,
     SearchSession,
     SearchSessionCreate,
     SearchSessionPublic,
     SearchSessionsPublic,
-    SearchHistory,
-    SearchHistoryCreate,
-    SearchHistoryPublic,
-    SearchHistoriesPublic,
-    AgentChatRequest,
-    AgentChatResponse,
 )
-
-from app.agent.graph import run_agent_on_session
 
 router = APIRouter(prefix="/searches", tags=["searches"])
 
@@ -31,7 +26,6 @@ router = APIRouter(prefix="/searches", tags=["searches"])
 def read_searches(
     session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 100
 ):
-
     if current_user.is_superuser:
         count_statement = select(func.count()).select_from(SearchSession)
         count = session.exec(count_statement).one()
@@ -60,7 +54,6 @@ def read_searches(
 def create_search(
     *, session: SessionDep, current_user: CurrentUser, search_in: SearchSessionCreate
 ) -> Any:
-
     search_session = SearchSession.model_validate(
         search_in, update={"owner_id": current_user.id}
     )
@@ -81,7 +74,6 @@ async def chat_with_agent_on_search(
     id: uuid.UUID,
     chat_in: AgentChatRequest,
 ) -> Any:
-
     search_session = session.get(SearchSession, id)
     if not search_session:
         raise HTTPException(status_code=404, detail="Search session not found")

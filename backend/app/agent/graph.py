@@ -10,8 +10,7 @@ from sqlmodel import Session
 
 from app.agent.tools import web_search
 from app.core.config import settings
-from app.models import SearchHistory, SearchSession
-
+from app.models.searches import SearchHistory, SearchSession
 
 # LLM initialize
 llm = ChatOpenAI(
