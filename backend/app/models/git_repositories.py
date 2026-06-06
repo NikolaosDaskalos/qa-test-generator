@@ -28,13 +28,6 @@ class GitRepositoryStatus(str, Enum):
     archived = "archived"
 
 
-class EmbeddingIndexStatus(str, Enum):
-    pending = "pending"
-    indexing = "indexing"
-    ready = "ready"
-    failed = "failed"
-
-
 # Shared fields used by GitRepository create/public schemas and the DB model.
 class GitRepositoryBase(SQLModel):
     name: str = Field(min_length=1, max_length=255, index=True)
@@ -45,7 +38,6 @@ class GitRepositoryBase(SQLModel):
 
 
 # Plain credentials are accepted only by request schemas.
-# They are encrypted by the service layer before a GitRepositoryCredential row is persisted.
 class GitRepositoryCreate(SQLModel):
     repository_url: str = Field(min_length=1, max_length=255)
     token: str | None = Field(default=None, min_length=1, max_length=255)
@@ -67,6 +59,7 @@ class GitRepository(GitRepositoryBase, table=True):
         foreign_key="user.id",
         nullable=False,
         index=True,
+        ondelete="CASCADE",
     )
     status: GitRepositoryStatus = Field(
         default=GitRepositoryStatus.pending,

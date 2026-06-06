@@ -34,6 +34,7 @@ class Branch(BranchBase, table=True):
         foreign_key="git_repository.id",
         nullable=False,
         index=True,
+        ondelete="CASCADE",
     )
     # local_head_sha: SHA currently checked out in the local clone.
     local_head_sha: str = Field(nullable=False, max_length=64)
