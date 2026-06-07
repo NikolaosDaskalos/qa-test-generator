@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import func, select
 
 from app.agent.graph import run_agent_on_session
-from app.api.deps import CurrentUser, SessionDep
+from app.dependencies import CurrentUser, SessionDep
 from app.models.searches import (
     AgentChatRequest,
     AgentChatResponse,

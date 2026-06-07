@@ -33,10 +33,7 @@ class DocumentIngestor:
         Full ingestion pipeline: Load -> Split -> Store.
         Skips ingestion when this repo is already in the vector store.
         """
-        self._validate_repo_url(repo_url)
         # TODO same repo names can exists with different users
-        repo_name: str = giturlparse.parse(repo_url).name
-        print(giturlparse.parse(repo_url).data)
         if self._is_already_indexed(repo_name):
             logger.info(f"Repository {repo_name} already indexed.")
             return 0
@@ -92,14 +89,6 @@ class DocumentIngestor:
         )
         return bool(existing["ids"])
 
-
-    def _validate_repo_url(self, repo_url) -> None:
-        """Validates repo_url for invalid urls or ssh links."""
-        if not repo_url:
-            raise ValueError("Repository URL cannot be empty")
-
-        if not giturlparse.validate(repo_url):
-            raise ValueError("Repository URL or SSH link is not valid")
 
     # todo remove this method when app is ready
     def _print_debug_documents(self, raw_docs: list[Document], chunked_docs: list[Document]) -> None:

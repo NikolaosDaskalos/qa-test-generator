@@ -1,5 +1,5 @@
 """
-git/git_manager.py
+git/git_commands.py
 -------------------
 Git Manager to make handle git repositories cloning and branching
 """
@@ -24,18 +24,18 @@ class GitResult:
     stderr: str
 
 
-class GitManager:
+class GitCommands:
 
     # TODO add functionality for private repositories
     def __init__(self, repo_url: str) -> None:
         self._parsed_url: GitUrlParsed = self._parse_repo_url(repo_url)
-        self._repo_path: Path = settings.REPO_PATH / self._parsed_url.name
+        self.repo_path: Path = settings.REPO_PATH / self._parsed_url.owner / self._parsed_url.name
         # Create the path if it does not exist
-        self._repo_path.mkdir(parents=True, exist_ok=True)
+        self.repo_path.mkdir(parents=True, exist_ok=True)
 
     def clone(self) -> GitResult | None:
-        print(self._repo_path)
-        if self._repo_path.exists() and any(self._repo_path.iterdir()):
+        print(self.repo_path)
+        if self.repo_path.exists() and any(self.repo_path.iterdir()):
             logger.info(f"Repository {self._parsed_url.name} already exists")
             return None
 
@@ -82,7 +82,7 @@ class GitManager:
     def _run(self, *args: str) -> GitResult:
         result = subprocess.run(
             [*args],
-            cwd=self._repo_path.resolve(),
+            cwd=self.repo_path.resolve(),
             timeout=30,
             text=True,
             check=True,
@@ -107,16 +107,15 @@ class GitManager:
 
         return parsed_url
 
-
 # if __name__ == "__main__":
-    # git = GitManager("git@github.com:NikolaosDaskalos/fastapi-heroes-app.git")
-    # print(git.get_default_branch())
-    # clone = git.clone()
-    # print(f"clone: {clone}")
-    # fetch = git.fetch()
-    # print(f"fetch: {fetch}")
-    # try:
-    #     checkout = git.checkout('non-existing-branch')
-    #     print(f"checkout: {checkout}")
-    # except GitError as e:
-    #     print(f"error: {e}")
+# git = GitManager("git@github.com:NikolaosDaskalos/fastapi-heroes-app.git")
+# print(git.get_default_branch())
+# clone = git.clone()
+# print(f"clone: {clone}")
+# fetch = git.fetch()
+# print(f"fetch: {fetch}")
+# try:
+#     checkout = git.checkout('non-existing-branch')
+#     print(f"checkout: {checkout}")
+# except GitError as e:
+#     print(f"error: {e}")

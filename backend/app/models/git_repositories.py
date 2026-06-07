@@ -20,7 +20,7 @@ class GitRepositoryProvider(str, Enum):
 
 class GitRepositoryStatus(str, Enum):
     pending = "pending"
-    cloning = "cloning"
+    indexing = "indexing"
     ready = "ready"
     failed = "failed"
     archived = "archived"
@@ -31,7 +31,7 @@ class GitRepositoryBase(SQLModel):
     name: str = Field(min_length=1, max_length=255, index=True)
     repository_url: str = Field(min_length=1, max_length=255)
     provider: GitRepositoryProvider = GitRepositoryProvider.other
-    repository_owner: str = Field(min_length=1, max_length=255)
+    owner: str = Field(min_length=1, max_length=255)
     default_branch: str | None = Field(default=None, max_length=255)
 
 
@@ -48,7 +48,7 @@ class GitRepository(GitRepositoryBase, table=True):
         UniqueConstraint(
             "user_id",
             "repository_url",
-            name="uq_repository_owner_url",
+            name="uq_user_id_repository_url",
         ),
     )
 
@@ -71,11 +71,7 @@ class GitRepository(GitRepositoryBase, table=True):
     # Useful for a single-worker deployment. For multiple workers, move local
     # clone state into a separate checkout table keyed by worker/host.
     local_path: str | None = Field(default=None, max_length=255)
-    last_cloned_at: datetime | None = Field(
-        default=None,
-        sa_type=DateTime(timezone=True),  # type: ignore
-    )
-    last_error: str | None = Field(default=None)
+    failed_reason: str | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_type=DateTime(timezone=True),  # type: ignore
@@ -97,8 +93,7 @@ class GitRepositoryPublic(GitRepositoryBase):
     id: uuid.UUID
     user_id: uuid.UUID
     status: GitRepositoryStatus
-    last_cloned_at: datetime | None
-    last_error: str | None
+    failed_reason: str | None
     created_at: datetime
     updated_at: datetime
 
