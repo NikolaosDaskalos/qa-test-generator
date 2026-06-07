@@ -1,16 +1,20 @@
 import secrets
 import warnings
+from base64 import urlsafe_b64encode
+from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+from cryptography.fernet import Fernet
 from pydantic import (
     AnyUrl,
     BeforeValidator,
     EmailStr,
+    Field,
     HttpUrl,
     PostgresDsn,
     computed_field,
-    model_validator, Field,
+    model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
@@ -36,6 +40,7 @@ class Settings(BaseSettings):
     )
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = secrets.token_urlsafe(32)
+    REPOSITORY_TOKEN_ENCRYPTION_KEY: str | None = None
     # 60 minutes * 24 hours * 8 days = 8 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
     FRONTEND_HOST: str = "http://localhost:5173"
@@ -116,8 +121,28 @@ class Settings(BaseSettings):
         self._check_default_secret(
             "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
         )
+        if self.ENVIRONMENT != "local" and not self.REPOSITORY_TOKEN_ENCRYPTION_KEY:
+            raise ValueError(
+                "REPOSITORY_TOKEN_ENCRYPTION_KEY must be configured outside local development"
+            )
+        if self.REPOSITORY_TOKEN_ENCRYPTION_KEY:
+            try:
+                Fernet(self.REPOSITORY_TOKEN_ENCRYPTION_KEY.encode())
+            except ValueError as exc:
+                raise ValueError(
+                    "REPOSITORY_TOKEN_ENCRYPTION_KEY must be a valid Fernet key"
+                ) from exc
 
         return self
+
+    @property
+    def repository_token_encryption_key(self) -> bytes:
+        if self.REPOSITORY_TOKEN_ENCRYPTION_KEY:
+            return self.REPOSITORY_TOKEN_ENCRYPTION_KEY.encode()
+
+        # Local development uses a stable derived key. Deployed environments
+        # must configure a dedicated encryption key.
+        return urlsafe_b64encode(sha256(self.SECRET_KEY.encode()).digest())
 
     OPENAI_API_KEY: str
     ANTHROPIC_API_KEY: str
@@ -147,12 +172,12 @@ class Settings(BaseSettings):
 
     @classmethod
     def settings_customise_sources(
-            cls,
-            settings_cls: type[BaseSettings],
-            init_settings: Any,
-            env_settings: Any,
-            dotenv_settings: Any,
-            file_secret_settings: Any,
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: Any,
+        env_settings: Any,
+        dotenv_settings: Any,
+        file_secret_settings: Any,
     ) -> tuple[Any, ...]:
         # .env file takes priority over system/process environment variables
         return (init_settings, dotenv_settings, env_settings, file_secret_settings)

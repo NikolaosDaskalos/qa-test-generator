@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
+from cryptography.fernet import Fernet, InvalidToken
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 from pwdlib.hashers.bcrypt import BcryptHasher
@@ -34,3 +35,24 @@ def verify_password(
 
 def get_password_hash(password: str) -> str:
     return password_hash.hash(password)
+
+
+def encrypt_repository_token(token: str) -> str:
+    if not token:
+        raise ValueError("Repository token cannot be empty")
+    return (
+        Fernet(settings.repository_token_encryption_key)
+        .encrypt(token.encode())
+        .decode()
+    )
+
+
+def decrypt_repository_token(encrypted_token: str) -> str:
+    try:
+        return (
+            Fernet(settings.repository_token_encryption_key)
+            .decrypt(encrypted_token.encode())
+            .decode()
+        )
+    except (InvalidToken, ValueError) as exc:
+        raise ValueError("Repository token could not be decrypted") from exc

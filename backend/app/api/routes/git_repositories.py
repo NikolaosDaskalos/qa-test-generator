@@ -1,21 +1,28 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from sqlmodel import func, select
 
 from app.dependencies import CurrentUser, SessionDep
-from app.models.git_repositories import GitRepositoryPublic, GitRepositoriesPublic, GitRepository, GitRepositoryCreate
+from app.models.git_repositories import (
+    GitRepositoriesPublic,
+    GitRepository,
+    GitRepositoryCreate,
+    GitRepositoryPublic,
+)
+from app.repositories.git_repository_repository import GitRepositoryRepository
+from app.services.git_repository_service import RepositoryService
 
 router = APIRouter(prefix="/repositories", tags=["repositories"])
 
 
 @router.get("/", response_model=GitRepositoriesPublic)
 def read_repositories(
-        session: SessionDep,
-        current_user: CurrentUser,
-        skip: int = 0,
-        limit: int = 100,
+    session: SessionDep,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 100,
 ) -> Any:
     if current_user.is_superuser:
         count_statement = select(func.count()).select_from(GitRepository)
@@ -45,9 +52,9 @@ def read_repositories(
 
 @router.get("/{id}", response_model=GitRepositoryPublic)
 def read_repository(
-        session: SessionDep,
-        current_user: CurrentUser,
-        id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentUser,
+    id: uuid.UUID,
 ) -> Any:
     repository = session.get(GitRepository, id)
 
@@ -60,23 +67,27 @@ def read_repository(
     return repository
 
 
-@router.post("/", response_model=GitRepositoryPublic)
+@router.post(
+    "/",
+    response_model=GitRepositoryPublic,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def create_repository(
-        *,
-        session: SessionDep,
-        current_user: CurrentUser,
-        repository_in: GitRepositoryCreate,
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
+    repository_in: GitRepositoryCreate,
 ) -> Any:
-    repository = GitRepository.model_validate(
-        repository_in,
-        update={"user_id": current_user.id},
+    service = RepositoryService(GitRepositoryRepository(session))
+    return service.repository_create(
+        repo_url=repository_in.repository_url,
+        token=repository_in.token,
+        token_expiration_days=repository_in.token_expiration_days,
+        user_id=current_user.id,
+        background_tasks=background_tasks,
     )
 
-    session.add(repository)
-    session.commit()
-    session.refresh(repository)
-
-    return repository
 
 # @router.put("/{id}", response_model=TodoPublic)
 # def update_todo(

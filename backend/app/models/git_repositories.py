@@ -20,6 +20,8 @@ class GitRepositoryProvider(str, Enum):
 
 class GitRepositoryStatus(str, Enum):
     pending = "pending"
+    cloning = "cloning"
+    cloned = "cloned"
     indexing = "indexing"
     ready = "ready"
     failed = "failed"
@@ -29,7 +31,7 @@ class GitRepositoryStatus(str, Enum):
 # Shared fields used by GitRepository create/public schemas and the DB model.
 class GitRepositoryBase(SQLModel):
     name: str = Field(min_length=1, max_length=255, index=True)
-    repository_url: str = Field(min_length=1, max_length=255)
+    repository_url: str = Field(min_length=1, max_length=2048)
     provider: GitRepositoryProvider = GitRepositoryProvider.other
     owner: str = Field(min_length=1, max_length=255)
     default_branch: str | None = Field(default=None, max_length=255)
@@ -37,9 +39,9 @@ class GitRepositoryBase(SQLModel):
 
 # Plain credentials are accepted only by request schemas.
 class GitRepositoryCreate(SQLModel):
-    repository_url: str = Field(min_length=1, max_length=255)
-    token: str | None = Field(default=None, min_length=1, max_length=255)
-    token_expiration_days: int
+    repository_url: str = Field(min_length=1, max_length=2048)
+    token: str = Field(min_length=1, max_length=2048)
+    token_expiration_days: int | None = Field(default=None, gt=0)
 
 
 class GitRepository(GitRepositoryBase, table=True):
@@ -63,14 +65,18 @@ class GitRepository(GitRepositoryBase, table=True):
         default=GitRepositoryStatus.pending,
         index=True,
     )
-    hashed_token: str | None = Field(default=None, nullable=True)
+    encrypted_token: str | None = Field(
+        default=None,
+        max_length=4096,
+        nullable=True,
+    )
     token_expiration_date: datetime | None = Field(
         default=None,
         sa_type=DateTime(timezone=True),  # type: ignore
     )
     # Useful for a single-worker deployment. For multiple workers, move local
     # clone state into a separate checkout table keyed by worker/host.
-    local_path: str | None = Field(default=None, max_length=255)
+    local_path: str | None = Field(default=None, max_length=4096)
     failed_reason: str | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

@@ -5,17 +5,33 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+from pydantic import ValidationError
 from sqlalchemy.orm import configure_mappers
 from sqlmodel import SQLModel
 
 from app.models.branch import Branch
-from app.models.git_repositories import GitRepository
+from app.models.git_repositories import GitRepository, GitRepositoryCreate
 from app.models.searches import SearchHistory, SearchSession
 
 
 def test_repository_token_fields_are_on_repository() -> None:
-    assert "hashed_token" in GitRepository.model_fields
+    assert "encrypted_token" in GitRepository.model_fields
     assert "token_expiration_date" in GitRepository.model_fields
+
+
+def test_repository_create_requires_token_and_allows_no_expiration() -> None:
+    repository = GitRepositoryCreate(
+        repository_url="git@github.com:openai/openai-python.git",
+        token="secret-token",
+    )
+
+    assert repository.token_expiration_days is None
+
+    with pytest.raises(ValidationError):
+        GitRepositoryCreate(
+            repository_url="git@github.com:openai/openai-python.git"
+        )
 
 
 def test_search_timestamps_are_timezone_aware() -> None:

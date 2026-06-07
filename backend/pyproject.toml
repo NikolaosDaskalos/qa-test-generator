@@ -5,6 +5,7 @@ description = ""
 requires-python = ">=3.10,<4.0"
 dependencies = [
   "alembic<2.0.0,>=1.12.1",
+  "cryptography>=44.0.0,<46.0.0",
   "email-validator<3.0.0.0,>=2.1.0.post1",
   "emails<1.0,>=0.6",
   "fastapi[standard]<1.0.0,>=0.114.2",
