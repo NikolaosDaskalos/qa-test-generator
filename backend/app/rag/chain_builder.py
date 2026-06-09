@@ -1,27 +1,21 @@
-"""
-generation/chain_builder.py
----------------------------
-Responsible for: building the LCEL chain + streaming answers.
+"""Build LCEL chains and stream standard or HyDE retrieval answers."""
 
-Supports two retrieval modes:
-  Standard : history-aware retrieval (reformulates follow-up questions)
-  HyDE     : generates a hypothetical document → embeds it → retrieves
-"""
-
-from typing import List, Dict, Generator
 import logging
+from collections.abc import Generator
+
+# pyrefly: ignore [missing-import]
+from langchain_core.messages import AIMessage, HumanMessage
+
+# pyrefly: ignore [missing-import]
+from langchain_core.output_parsers import StrOutputParser
 
 # pyrefly: ignore [missing-import]
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-# pyrefly: ignore [missing-import]
-from langchain_core.messages import HumanMessage, AIMessage
-# pyrefly: ignore [missing-import]
-from langchain_core.output_parsers import StrOutputParser
-# pyrefly: ignore [missing-import]
-from langchain_core.runnables import RunnableParallel, RunnableLambda
 
-from app.prompts.rag_prompts import QA_SYSTEM_PROMPT, CONTEXTUALIZE_PROMPT
 from app.core.config import settings
+
+# pyrefly: ignore [missing-import]
+from app.prompts.rag_prompts import CONTEXTUALIZE_PROMPT, QA_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 # TODO change this
@@ -31,61 +25,38 @@ COST_PER_TOKEN = 0.00000015
 # so it can be changed in one place without touching this file.
 
 # Prompt used to generate the hypothetical document in HyDE mode
-HYDE_PROMPT_TEMPLATE = (
-    "Write a short, factual passage (2-4 sentences) that directly answers "
-    "the following question. Imagine this is an excerpt from a relevant document.\n\n"
-    "Question: {question}\n\nPassage:"
-)
+HYDE_PROMPT_TEMPLATE = "Write a short, factual passage (2-4 sentences) that directly answers the following question. Imagine this is an excerpt from a relevant document.\n\nQuestion: {question}\n\nPassage:"
 
 
 class ChainBuilder:
-    """
-    Builds and owns the LCEL retrieval chain.
-    Supports Standard and HyDE retrieval modes.
-    """
+    """Build and own LCEL chains for standard and HyDE retrieval modes."""
 
-    def __init__(self, llm, vectorstore):
+    def __init__(self, llm, retriever):
+        """Initialize the builder with a language model and retriever."""
         self.llm = llm
-        self.vectorstore = vectorstore
+        self.retriever = retriever
         self._system_prompt = QA_SYSTEM_PROMPT
         self.chain = None
         self.build()
 
     # ── Chain Construction ────────────────────────────────────────
 
-    def build(self, system_prompt: str = None):
-        """
-        Update the system prompt.
-        Called on startup and when the user changes persona in Settings.
-        """
+    def build(self, system_prompt: str | None = None):
+        """Build contextualization prompts and optionally update the persona."""
         if system_prompt is not None:
             self._system_prompt = system_prompt
 
         # History-aware reformulation prompt (used in _stream_standard)
-        self._ctx_prompt = ChatPromptTemplate.from_messages([
-            ("system", CONTEXTUALIZE_PROMPT),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
+        self._ctx_prompt = ChatPromptTemplate.from_messages([("system", CONTEXTUALIZE_PROMPT), MessagesPlaceholder("chat_history"), ("human", "{input}")])
 
     # ── Public streaming entry point ──────────────────────────────
 
-    def answer_stream(
-            self,
-            question: str,
-            history: List[Dict] = None,
-            use_hyde: bool = False,
-    ) -> Generator:
-        """
-        Stream the answer token-by-token.
-
-        use_hyde=False → Standard history-aware LCEL chain
-        use_hyde=True  → HyDE: hypothetical doc → embed → retrieve → generate
+    def answer_stream(self, question: str, history: list[dict] | None = None, use_hyde: bool = False) -> Generator:
+        """Stream answer events using standard or HyDE retrieval.
 
         Yields:
-          {"type": "token",  "content": "<text>"}
-          {"type": "done",   "sources": [...], "token_info": "...",
-                             "hypothetical_doc": str | None}
+            Status, token, and completion event dictionaries.
+
         """
         lc_history = self._to_lc_messages(history or [])
 
@@ -97,36 +68,26 @@ class ChainBuilder:
     # ── Standard RAG ──────────────────────────────────────────
 
     def _stream_standard(self, question: str, lc_history: list) -> Generator:
-        """History-aware retrieval + generation with relevance scores."""
+        """Stream history-aware retrieval and generation events."""
         # Step 1: Reformulate question if there is chat history
         search_query = question
         if lc_history:
-            search_query = (
-                    self._ctx_prompt | self.llm | StrOutputParser()
-            ).invoke({"input": question, "chat_history": lc_history})
+            search_query = (self._ctx_prompt | self.llm | StrOutputParser()).invoke({"input": question, "chat_history": lc_history})
 
         # Step 2: Retrieve with scores, filter by threshold
-        results = self.vectorstore.similarity_search_with_relevance_scores(
-            search_query, k=settings.TOP_K
-        )
+        results = self.retriever.search_with_scores(search_query, k=settings.TOP_K)
         retrieved_docs = [doc for doc, score in results if score >= settings.MIN_RELEVANCE_SCORE]
         doc_scores = [score for _, score in results if score >= settings.MIN_RELEVANCE_SCORE]
         sources = self._extract_sources(retrieved_docs, doc_scores)
         context = self._format_docs(retrieved_docs)
 
         # Step 3: Build prompt and stream answer
-        qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", self._system_prompt + "\n\nContext:\n{context}"),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
+        qa_prompt = ChatPromptTemplate.from_messages(
+            [("system", self._system_prompt + "\n\nContext:\n{context}"), MessagesPlaceholder("chat_history"), ("human", "{input}")]
+        )
 
         collected = ""
-        for token in (qa_prompt | self.llm | StrOutputParser()).stream({
-            "input": question,
-            "chat_history": lc_history,
-            "context": context,
-        }):
+        for token in (qa_prompt | self.llm | StrOutputParser()).stream({"input": question, "chat_history": lc_history, "context": context}):
             collected += token
             yield {"type": "token", "content": token}
 
@@ -135,9 +96,7 @@ class ChainBuilder:
     # ── HyDE RAG ─────────────────────────────────────────────────
 
     def _stream_hyde(self, question: str, lc_history: list) -> Generator:
-        """
-        HyDE: generate hypothetical doc → embed → retrieve → generate.
-        """
+        """Stream HyDE generation, retrieval, and answer events."""
         # Signal the UI immediately so it shows a status (not a frozen screen)
         yield {"type": "status", "message": "⚗️ Generating hypothetical document…"}
 
@@ -148,28 +107,20 @@ class ChainBuilder:
 
         # Step 2 — Retrieve using hypothetical doc, filtered by relevance score
         threshold = settings.MIN_RELEVANCE_SCORE
-        results = self.vectorstore.similarity_search_with_relevance_scores(
-            hypothetical_doc, k=settings.TOP_K
-        )
+        results = self.retriever.search_with_scores(hypothetical_doc, k=settings.TOP_K)
         retrieved_docs = [doc for doc, score in results if score >= threshold]
         doc_scores = [score for _, score in results if score >= threshold]
         sources = self._extract_sources(retrieved_docs, doc_scores)
         context = self._format_docs(retrieved_docs)
 
         # Step 3 — Build a one-shot prompt (no chain needed, context is already ready)
-        qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", self._system_prompt + "\n\nContext:\n{context}"),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
+        qa_prompt = ChatPromptTemplate.from_messages(
+            [("system", self._system_prompt + "\n\nContext:\n{context}"), MessagesPlaceholder("chat_history"), ("human", "{input}")]
+        )
 
         # Step 4 — Stream the answer
         collected = ""
-        for token in (qa_prompt | self.llm | StrOutputParser()).stream({
-            "input": question,
-            "chat_history": lc_history,
-            "context": context,
-        }):
+        for token in (qa_prompt | self.llm | StrOutputParser()).stream({"input": question, "chat_history": lc_history, "context": context}):
             collected += token
             yield {"type": "token", "content": token}
 
@@ -184,10 +135,8 @@ class ChainBuilder:
 
     @staticmethod
     def _format_docs(docs) -> str:
-        return "\n\n---\n\n".join(
-            f"[Source: {d.metadata.get('source', '?')}]\n{d.page_content}"
-            for d in docs
-        )
+        """Format retrieved documents as source-labeled prompt context."""
+        return "\n\n---\n\n".join(f"[Source: {d.metadata.get('source', '?')}]\n{d.page_content}" for d in docs)
 
     @staticmethod
     def _extract_sources(docs, scores=None) -> list:
@@ -200,12 +149,12 @@ class ChainBuilder:
                 "chunk": doc.page_content,
                 "score": round(score, 2) if score is not None else None,
             }
-            for doc, score in zip(docs, _scores)
+            for doc, score in zip(docs, _scores, strict=True)
         ]
 
     @staticmethod
-    def _done_event(question: str, collected: str, sources: list,
-                    hypothetical_doc: str | None) -> dict:
+    def _done_event(question: str, collected: str, sources: list, hypothetical_doc: str | None) -> dict:
+        """Build the final stream event with sources and estimated cost."""
         est_tokens = (len(question) + len(collected)) // 4
         return {
             "type": "done",
@@ -215,7 +164,7 @@ class ChainBuilder:
         }
 
     @staticmethod
-    def _to_lc_messages(history: List[Dict]):
+    def _to_lc_messages(history: list[dict]):
         """Convert Gradio {role, content} dicts → LangChain message objects."""
         messages = []
         for msg in history[-6:]:

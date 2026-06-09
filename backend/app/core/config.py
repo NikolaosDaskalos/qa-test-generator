@@ -1,3 +1,5 @@
+"""Define application settings and environment-value normalization."""
+
 import secrets
 import warnings
 from base64 import urlsafe_b64encode
@@ -6,23 +8,20 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from cryptography.fernet import Fernet
-from pydantic import (
-    AnyUrl,
-    BeforeValidator,
-    EmailStr,
-    Field,
-    HttpUrl,
-    PostgresDsn,
-    computed_field,
-    model_validator,
-)
+from pydantic import AnyUrl, BeforeValidator, EmailStr, Field, HttpUrl, PostgresDsn, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
 
-BASE_PATH = Path(__file__).resolve().parents[2]
+PROJECT_PATH = Path(__file__).resolve().parents[3]
 
 
 def parse_cors(v: Any) -> list[str] | str:
+    """Normalize comma-separated or JSON-style CORS origin settings.
+
+    Raises:
+        ValueError: If the value is neither a string nor a list.
+
+    """
     if isinstance(v, str) and not v.startswith("["):
         return [i.strip() for i in v.split(",") if i.strip()]
     elif isinstance(v, list | str):
@@ -31,6 +30,8 @@ def parse_cors(v: Any) -> list[str] | str:
 
 
 class Settings(BaseSettings):
+    """Load and validate runtime configuration from environment sources."""
+
     model_config = SettingsConfigDict(
         # Use top level .env file (one level above ./backend/)
         env_file="../.env",
@@ -46,16 +47,13 @@ class Settings(BaseSettings):
     FRONTEND_HOST: str = "http://localhost:5173"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
 
-    BACKEND_CORS_ORIGINS: Annotated[
-        list[AnyUrl] | str, BeforeValidator(parse_cors)
-    ] = []
+    BACKEND_CORS_ORIGINS: Annotated[list[AnyUrl] | str, BeforeValidator(parse_cors)] = []
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def all_cors_origins(self) -> list[str]:
-        return [str(origin).rstrip("/") for origin in self.BACKEND_CORS_ORIGINS] + [
-            self.FRONTEND_HOST
-        ]
+        """Return normalized backend and frontend CORS origins."""
+        return [str(origin).rstrip("/") for origin in self.BACKEND_CORS_ORIGINS] + [self.FRONTEND_HOST]
 
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
@@ -68,6 +66,7 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> PostgresDsn:
+        """Build the PostgreSQL connection URI from database settings."""
         return PostgresDsn.build(
             scheme="postgresql+psycopg",
             username=self.POSTGRES_USER,
@@ -88,6 +87,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _set_default_emails_from(self) -> Self:
+        """Use the project name as the default email sender name."""
         if not self.EMAILS_FROM_NAME:
             self.EMAILS_FROM_NAME = self.PROJECT_NAME
         return self
@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def emails_enabled(self) -> bool:
+        """Return whether enough SMTP settings exist to send email."""
         return bool(self.SMTP_HOST and self.EMAILS_FROM_EMAIL)
 
     EMAIL_TEST_USER: EmailStr = "test@example.com"
@@ -104,11 +105,9 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER_PASSWORD: str
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
+        """Reject placeholder secrets outside local development."""
         if value == "changethis":
-            message = (
-                f'The value of {var_name} is "changethis", '
-                "for security, please change it, at least for deployments."
-            )
+            message = f'The value of {var_name} is "changethis", for security, please change it, at least for deployments.'
             if self.ENVIRONMENT == "local":
                 warnings.warn(message, stacklevel=1)
             else:
@@ -116,27 +115,25 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _enforce_non_default_secrets(self) -> Self:
+        """Validate deployment secrets and repository token encryption."""
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
         self._check_default_secret("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD)
-        self._check_default_secret(
-            "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
-        )
+        self._check_default_secret("FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD)
+
         if self.ENVIRONMENT != "local" and not self.REPOSITORY_TOKEN_ENCRYPTION_KEY:
-            raise ValueError(
-                "REPOSITORY_TOKEN_ENCRYPTION_KEY must be configured outside local development"
-            )
+            raise ValueError("REPOSITORY_TOKEN_ENCRYPTION_KEY must be configured outside local development")
+
         if self.REPOSITORY_TOKEN_ENCRYPTION_KEY:
             try:
                 Fernet(self.REPOSITORY_TOKEN_ENCRYPTION_KEY.encode())
             except ValueError as exc:
-                raise ValueError(
-                    "REPOSITORY_TOKEN_ENCRYPTION_KEY must be a valid Fernet key"
-                ) from exc
+                raise ValueError("REPOSITORY_TOKEN_ENCRYPTION_KEY must be a valid Fernet key") from exc
 
         return self
 
     @property
     def repository_token_encryption_key(self) -> bytes:
+        """Return the configured key or a stable local-development key."""
         if self.REPOSITORY_TOKEN_ENCRYPTION_KEY:
             return self.REPOSITORY_TOKEN_ENCRYPTION_KEY.encode()
 
@@ -163,22 +160,28 @@ class Settings(BaseSettings):
     TOP_K: int | None = 4
     MIN_RELEVANCE_SCORE: float = 0.15
 
-    CHROMA_DB_PATH: Path = Field(default_factory=lambda: BASE_PATH / ".tmp/chroma_db")
-    REPO_PATH: Path = Field(default_factory=lambda: BASE_PATH / ".tmp/repositories")
+    WEAVIATE_HTTP_HOST: str = "localhost"
+    WEAVIATE_HTTP_PORT: int = 8081
+    WEAVIATE_HTTP_SECURE: bool = False
+    WEAVIATE_GRPC_HOST: str = "localhost"
+    WEAVIATE_GRPC_PORT: int = 50051
+    WEAVIATE_GRPC_SECURE: bool = False
+    WEAVIATE_API_KEY: str | None = None
+    WEAVIATE_COLLECTION: str = "Document"
+    # alpha value: 1.0 -> Pure vector search, 0.0 -> pure BM25 search
+    HYBRID_SEARCH_ALPHA: float = Field(default=0.7, ge=0.0, le=1.0)
+
+    REPO_PATH: Path = Field(default_factory=lambda: PROJECT_PATH / ".tmp/repositories")
 
     def model_post_init(self, __context) -> None:
-        self.CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
+        """Create the local repository storage directory after validation."""
         self.REPO_PATH.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: Any,
-        env_settings: Any,
-        dotenv_settings: Any,
-        file_secret_settings: Any,
+        cls, settings_cls: type[BaseSettings], init_settings: Any, env_settings: Any, dotenv_settings: Any, file_secret_settings: Any
     ) -> tuple[Any, ...]:
+        """Prioritize dotenv values over process environment variables."""
         # .env file takes priority over system/process environment variables
         return (init_settings, dotenv_settings, env_settings, file_secret_settings)
 

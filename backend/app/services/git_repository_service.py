@@ -8,35 +8,22 @@ and repository status transitions are coordinated here.
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.core.db import engine
-from app.core.security import (
-    decrypt_repository_token,
-    encrypt_repository_token,
-)
+from app.core.security import decrypt_repository_token, encrypt_repository_token
+from app.core.weaviate_init import WeaviateResources
 from app.errors.git_errors import GitError
 from app.git.git_commands import GitCommands
 from app.git.repository_url import ParsedRepositoryUrl, parse_repository_url
-from app.models.git_repositories import (
-    GitRepository,
-    GitRepositoryProvider,
-    GitRepositoryStatus,
-)
+from app.models.git_repositories import GitRepository, GitRepositoryProvider, GitRepositoryStatus
+from app.rag.ingestor import DocumentIngestor
 from app.repositories.git_repository_repository import GitRepositoryRepository
 
 logger = logging.getLogger(__name__)
-
-
-def build_document_ingestor() -> Any:
-    """Build the document ingestor lazily to avoid heavy imports at API startup."""
-    from app.rag.ingestor import build_document_ingestor as build
-
-    return build()
 
 
 class RepositoryService:
@@ -54,6 +41,7 @@ class RepositoryService:
         token_expiration_days: int | None,
         user_id: uuid.UUID,
         background_tasks: BackgroundTasks,
+        weaviate_resources: WeaviateResources,
     ) -> GitRepository:
         """Validate and persist a pending repository for one user.
 
@@ -68,16 +56,10 @@ class RepositoryService:
         try:
             parsed_url = parse_repository_url(repo_url)
         except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=str(exc),
-            ) from exc
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
         if self._find_duplicate(parsed_url.canonical_url, user_id):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Repository already exists",
-            )
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository already exists")
 
         expiration_date = None
         if token_expiration_days is not None:
@@ -98,40 +80,28 @@ class RepositoryService:
             self.db_repo.save(repository)
         except IntegrityError as exc:
             self.db_repo.session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Repository already exists",
-            ) from exc
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository already exists") from exc
 
-        background_tasks.add_task(process_repository, repository.id)
+        background_tasks.add_task(process_repository, repository.id, weaviate_resources)
         return repository
 
-    def _find_duplicate(
-        self,
-        canonical_url: str,
-        user_id: uuid.UUID,
-    ) -> GitRepository | None:
-        repository = self.db_repo.get_by_url_and_user_id(
-            canonical_url,
-            user_id,
-        )
+    def _find_duplicate(self, canonical_url: str, user_id: uuid.UUID) -> GitRepository | None:
+        """Find a canonical or legacy-equivalent repository for one user."""
+        repository = self.db_repo.get_by_url_and_user_id(canonical_url, user_id)
         if repository:
             return repository
 
         # Catch records created before canonical HTTPS storage was enforced.
         for candidate in self.db_repo.get_by_user_id(user_id):
             try:
-                if (
-                    parse_repository_url(candidate.repository_url).canonical_url
-                    == canonical_url
-                ):
+                if parse_repository_url(candidate.repository_url).canonical_url == canonical_url:
                     return candidate
             except ValueError:
                 continue
         return None
 
 
-def process_repository(repository_id: uuid.UUID) -> None:
+def process_repository(repository_id: uuid.UUID, weaviate_resources: WeaviateResources) -> None:
     """Clone and index a pending repository while persisting status transitions.
 
     This function is suitable for FastAPI background-task execution. Failures
@@ -147,49 +117,24 @@ def process_repository(repository_id: uuid.UUID) -> None:
 
         try:
             token = _active_token(repository)
-            repositories.update_status(
-                repository,
-                GitRepositoryStatus.cloning,
-            )
+            repositories.update_status(repository, GitRepositoryStatus.cloning)
 
             parsed_url = parse_repository_url(repository.repository_url)
             git = GitCommands(parsed_url, repository.user_id)
             git.clone(token)
             repository.local_path = str(git.repo_path)
             repository.default_branch = git.get_default_branch()
-            repositories.update_status(
-                repository,
-                GitRepositoryStatus.cloned,
-            )
+            repositories.update_status(repository, GitRepositoryStatus.cloned)
 
-            repositories.update_status(
-                repository,
-                GitRepositoryStatus.indexing,
-            )
-            ingestor = build_document_ingestor()
-            ingestor.ingest(
-                git.repo_path,
-                repository.id,
-                repository.default_branch,
-            )
-            repositories.update_status(
-                repository,
-                GitRepositoryStatus.ready,
-            )
+            repositories.update_status(repository, GitRepositoryStatus.indexing)
+            DocumentIngestor(weaviate_resources).ingest(git.repo_path, repository.id, repository.default_branch, repository.user_id)
+            repositories.update_status(repository, GitRepositoryStatus.ready)
         except Exception as exc:
             session.rollback()
             repository = repositories.get_by_id(repository_id)
             if repository:
-                repositories.update_status(
-                    repository,
-                    GitRepositoryStatus.failed,
-                    failed_reason=_sanitized_failure(exc, token),
-                )
-            logger.error(
-                "Repository processing failed for repository_id=%s: %s",
-                repository_id,
-                _sanitized_failure(exc, token),
-            )
+                repositories.update_status(repository, GitRepositoryStatus.failed, failed_reason=_sanitized_failure(exc, token))
+            logger.error("Repository processing failed for repository_id=%s: %s", repository_id, _sanitized_failure(exc, token))
 
 
 def _active_token(repository: GitRepository) -> str:
@@ -209,11 +154,7 @@ def _active_token(repository: GitRepository) -> str:
 
 def _provider_for(parsed_url: ParsedRepositoryUrl) -> GitRepositoryProvider:
     """Map an allowlisted repository host to its persisted provider enum."""
-    providers = {
-        "github.com": GitRepositoryProvider.github,
-        "gitlab.com": GitRepositoryProvider.gitlab,
-        "bitbucket.org": GitRepositoryProvider.bitbucket,
-    }
+    providers = {"github.com": GitRepositoryProvider.github, "gitlab.com": GitRepositoryProvider.gitlab, "bitbucket.org": GitRepositoryProvider.bitbucket}
     return providers[parsed_url.host]
 
 

@@ -1,16 +1,13 @@
+"""Expose API endpoints for registering and reading Git repositories."""
+
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from sqlmodel import func, select
 
-from app.dependencies import CurrentUser, SessionDep
-from app.models.git_repositories import (
-    GitRepositoriesPublic,
-    GitRepository,
-    GitRepositoryCreate,
-    GitRepositoryPublic,
-)
+from app.dependencies import CurrentUser, SessionDep, WeaviateResourcesDep
+from app.models.git_repositories import GitRepositoriesPublic, GitRepository, GitRepositoryCreate, GitRepositoryPublic
 from app.repositories.git_repository_repository import GitRepositoryRepository
 from app.services.git_repository_service import RepositoryService
 
@@ -18,12 +15,8 @@ router = APIRouter(prefix="/repositories", tags=["repositories"])
 
 
 @router.get("/", response_model=GitRepositoriesPublic)
-def read_repositories(
-    session: SessionDep,
-    current_user: CurrentUser,
-    skip: int = 0,
-    limit: int = 100,
-) -> Any:
+def read_repositories(session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 100) -> Any:
+    """Return a paginated repository list visible to the current user."""
     if current_user.is_superuser:
         count_statement = select(func.count()).select_from(GitRepository)
         count = session.exec(count_statement).one()
@@ -32,30 +25,23 @@ def read_repositories(
         repositories = session.exec(statement).all()
 
     else:
-        count_statement = (
-            select(func.count())
-            .select_from(GitRepository)
-            .where(GitRepository.user_id == current_user.id)
-        )
+        count_statement = select(func.count()).select_from(GitRepository).where(GitRepository.user_id == current_user.id)
         count = session.exec(count_statement).one()
 
-        statement = (
-            select(GitRepository)
-            .where(GitRepository.user_id == current_user.id)
-            .offset(skip)
-            .limit(limit)
-        )
+        statement = select(GitRepository).where(GitRepository.user_id == current_user.id).offset(skip).limit(limit)
         repositories = session.exec(statement).all()
 
     return GitRepositoriesPublic(data=repositories, count=count)
 
 
 @router.get("/{id}", response_model=GitRepositoryPublic)
-def read_repository(
-    session: SessionDep,
-    current_user: CurrentUser,
-    id: uuid.UUID,
-) -> Any:
+def read_repository(session: SessionDep, current_user: CurrentUser, id: uuid.UUID) -> Any:
+    """Return one repository after enforcing ownership permissions.
+
+    Raises:
+        HTTPException: If the repository does not exist or is not accessible.
+
+    """
     repository = session.get(GitRepository, id)
 
     if not repository:
@@ -67,18 +53,16 @@ def read_repository(
     return repository
 
 
-@router.post(
-    "/",
-    response_model=GitRepositoryPublic,
-    status_code=status.HTTP_202_ACCEPTED,
-)
+@router.post("/", response_model=GitRepositoryPublic, status_code=status.HTTP_202_ACCEPTED)
 def create_repository(
     *,
     session: SessionDep,
     current_user: CurrentUser,
+    weaviate_resources: WeaviateResourcesDep,
     background_tasks: BackgroundTasks,
     repository_in: GitRepositoryCreate,
 ) -> Any:
+    """Register a repository and schedule its cloning and indexing."""
     service = RepositoryService(GitRepositoryRepository(session))
     return service.repository_create(
         repo_url=repository_in.repository_url,
@@ -86,6 +70,7 @@ def create_repository(
         token_expiration_days=repository_in.token_expiration_days,
         user_id=current_user.id,
         background_tasks=background_tasks,
+        weaviate_resources=weaviate_resources,
     )
 
 
