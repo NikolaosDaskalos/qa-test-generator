@@ -9,7 +9,7 @@ from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
-from app.core import weaviate_init
+from app.core import vector_db
 from app.core.config import settings
 
 
@@ -25,11 +25,11 @@ if settings.SENTRY_DSN and settings.ENVIRONMENT != "local":
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize Weaviate at startup and close it during shutdown."""
-    weaviate_init.initialize_weaviate()
+    vector_db.initialize_weaviate()
     try:
         yield
     finally:
-        weaviate_init.close_weaviate()
+        vector_db.close_weaviate()
 
 
 app = FastAPI(

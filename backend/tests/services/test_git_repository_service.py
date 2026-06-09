@@ -9,7 +9,7 @@ import pytest
 from fastapi import BackgroundTasks, HTTPException
 
 from app.core.security import decrypt_repository_token, encrypt_repository_token
-from app.core.weaviate_init import WeaviateResources
+from app.core.vector_db import WeaviateResources
 from app.errors.git_errors import GitError
 from app.git.repository_url import ParsedRepositoryUrl
 from app.models.git_repositories import GitRepository, GitRepositoryStatus

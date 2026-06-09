@@ -13,7 +13,7 @@ from sqlmodel import Session
 from app.core import security
 from app.core.config import settings
 from app.core.db import engine
-from app.core.weaviate_init import WeaviateResources, get_weaviate_resources
+from app.core.vector_db import WeaviateResources, get_weaviate_resources
 from app.models.authentication import TokenPayload
 from app.models.users import User
 

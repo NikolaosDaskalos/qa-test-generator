@@ -6,7 +6,7 @@ from langchain_core.documents import Document
 from weaviate.classes.query import Filter
 
 from app.core.config import settings
-from app.core.weaviate_init import METADATA_PROPERTIES, TEXT_PROPERTY, WeaviateResources
+from app.core.vector_db import METADATA_PROPERTIES, TEXT_PROPERTY, WeaviateResources
 
 
 class DocumentRetriever:

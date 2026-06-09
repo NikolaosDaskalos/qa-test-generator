@@ -10,8 +10,8 @@ from app import main
 def test_lifespan_initializes_and_closes_weaviate(monkeypatch) -> None:
     """Initialize before serving and close resources afterward."""
     events = []
-    monkeypatch.setattr(main.weaviate_init, "initialize_weaviate", lambda: events.append("initialized"))
-    monkeypatch.setattr(main.weaviate_init, "close_weaviate", lambda: events.append("closed"))
+    monkeypatch.setattr(main.vector_db, "initialize_weaviate", lambda: events.append("initialized"))
+    monkeypatch.setattr(main.vector_db, "close_weaviate", lambda: events.append("closed"))
 
     async def run_lifespan():
         """Run the application lifespan while recording the active phase."""
@@ -30,7 +30,7 @@ def test_lifespan_propagates_startup_failure(monkeypatch) -> None:
         """Simulate an unavailable Weaviate service."""
         raise RuntimeError("Weaviate unavailable")
 
-    monkeypatch.setattr(main.weaviate_init, "initialize_weaviate", fail_initialization)
+    monkeypatch.setattr(main.vector_db, "initialize_weaviate", fail_initialization)
 
     async def run_lifespan():
         """Enter the application lifespan under test."""

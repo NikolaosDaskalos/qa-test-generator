@@ -9,7 +9,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 
 from app.core.config import settings
-from app.core.weaviate_init import WeaviateResources
+from app.core.vector_db import WeaviateResources
 from app.prompts.rag_prompts import QA_SYSTEM_PROMPT
 from app.rag.chain_builder import ChainBuilder
 from app.rag.ingestor import DocumentIngestor

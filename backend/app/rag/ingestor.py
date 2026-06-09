@@ -14,7 +14,7 @@ from weaviate.classes.query import Filter
 from weaviate.classes.tenants import Tenant
 
 from app.core.config import settings
-from app.core.weaviate_init import WeaviateResources
+from app.core.vector_db import WeaviateResources
 
 # Avoid the warning emitted when the tokenizer receives a token only as an argument.
 os.environ.setdefault("HF_TOKEN", settings.HF_TOKEN)

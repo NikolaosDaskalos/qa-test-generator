@@ -8,7 +8,7 @@ import pytest
 from langchain_core.documents import Document
 
 from app.core.config import settings
-from app.core.weaviate_init import WeaviateResources
+from app.core.vector_db import WeaviateResources
 from app.rag.ingestor import DocumentIngestor
 
 

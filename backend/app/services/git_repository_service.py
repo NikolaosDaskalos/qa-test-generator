@@ -15,7 +15,7 @@ from sqlmodel import Session
 
 from app.core.db import engine
 from app.core.security import decrypt_repository_token, encrypt_repository_token
-from app.core.weaviate_init import WeaviateResources
+from app.core.vector_db import WeaviateResources
 from app.errors.git_errors import GitError
 from app.git.git_commands import GitCommands
 from app.git.repository_url import ParsedRepositoryUrl, parse_repository_url
