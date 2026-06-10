@@ -1,4 +1,4 @@
-"""Load, split, and persist repository documents in Weaviate."""
+"""Load, split, and persist Git repository documents in Weaviate."""
 
 import os
 import uuid
@@ -28,7 +28,7 @@ class DocumentIngestor:
         self.resources = resources
 
     def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str, user_id: uuid.UUID) -> int:
-        """Replace a repository's indexed chunks for one user tenant.
+        """Replace a Git repository's indexed chunks for one user tenant.
 
         Returns:
             The number of chunks written to Weaviate.
@@ -67,7 +67,7 @@ class DocumentIngestor:
         return self._add_documents(documents, ids=ids, tenant=tenant)
 
     def delete_by_repository(self, repository_id: uuid.UUID | str, *, user_id: uuid.UUID) -> None:
-        """Delete all indexed chunks for a repository and user tenant."""
+        """Delete all indexed chunks for a Git repository and user tenant."""
         tenant = str(user_id)
         if not self._tenant_exists(tenant):
             return
@@ -109,7 +109,7 @@ class DocumentIngestor:
         return self.resources.vector_store.add_documents(list(documents), ids=list(ids), tenant=tenant)
 
     def _delete_by_repository(self, repository_id: str, *, tenant: str) -> None:
-        """Delete repository objects from an existing tenant."""
+        """Delete Git repository objects from an existing tenant."""
         self._collection().with_tenant(tenant).data.delete_many(where=Filter.by_property("repository_id").equal(repository_id))
 
     def _ensure_tenant(self, tenant: str) -> None:
@@ -133,7 +133,7 @@ class DocumentIngestor:
         return self.resources.client.collections.get(settings.WEAVIATE_COLLECTION)
 
     def _load(self, repo_path: Path, repository_id: uuid.UUID, branch: str) -> list[Document]:
-        """Load Python files and attach repository-level metadata."""
+        """Load Python files and attach Git repository metadata."""
         loader = GitLoader(repo_path=str(repo_path), branch=branch, file_filter=lambda file_path: str(file_path).endswith(".py"))
         raw_docs: list[Document] = loader.load()
         repository_key = str(repository_id)

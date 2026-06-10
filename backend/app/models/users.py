@@ -7,8 +7,8 @@ from sqlalchemy import DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
-    from app.models.git_repositories import GitRepository
     from app.models.items import Item
+    from app.models.repository import Repository
     from app.models.searches import SearchSession
     from app.models.todos import Todo
 
@@ -74,13 +74,8 @@ class User(UserBase, table=True):
     # `cascade_delete=True` means related records are deleted when the user is deleted.
     items: list["Item"] = Relationship(back_populates="owner", cascade_delete=True)
     todos: list["Todo"] = Relationship(back_populates="owner", cascade_delete=True)
-    search_sessions: list["SearchSession"] = Relationship(
-        back_populates="owner", cascade_delete=True
-    )
-    repositories: list["GitRepository"] = Relationship(
-        back_populates="user",
-        cascade_delete=True,
-    )
+    search_sessions: list["SearchSession"] = Relationship(back_populates="owner", cascade_delete=True)
+    repositories: list["Repository"] = Relationship(back_populates="user", cascade_delete=True)
 
 
 # API response schema: public representation of a user.

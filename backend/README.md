@@ -13,6 +13,12 @@ Start the local development environment with Docker Compose following the guide 
 
 By default, the dependencies are managed with [uv](https://docs.astral.sh/uv/), go there and install it.
 
+### Naming convention
+
+- `Repository` and `repository` refer to a GitHub, GitLab, or Bitbucket repository registered in the application.
+- Database access lives under `app/persistence/` and uses `Store` names, such as `RepositoryStore`.
+- Use the `Store` suffix for persistence abstractions so `Repository` remains the domain model.
+
 From `./backend/` you can install all the dependencies with:
 
 ```console

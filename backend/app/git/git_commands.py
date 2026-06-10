@@ -33,15 +33,15 @@ class GitCommands:
     ``GIT_ASKPASS`` and are never included in command-line arguments.
     """
 
-    def __init__(self, repository: ParsedRepositoryUrl, user_id: uuid.UUID) -> None:
-        """Build the checkout path for a repository owned by an application user."""
-        self.repository = repository
+    def __init__(self, parsed_repository_url: ParsedRepositoryUrl, user_id: uuid.UUID) -> None:
+        """Build the checkout path for a Git repository owned by an application user."""
+        self.parsed_repository_url = parsed_repository_url
         self.repo_path = (
-                settings.REPO_PATH
-                / str(user_id)
-                / self.repository.host
-                / self.repository.owner
-                / self.repository.name
+            settings.REPO_PATH
+            / str(user_id)
+            / self.parsed_repository_url.host
+            / self.parsed_repository_url.owner
+            / self.parsed_repository_url.name
         )
 
     def clone(self, token: str) -> GitResult | None:
@@ -64,7 +64,7 @@ class GitCommands:
         """
         if self._is_git_repository():
             remote_url = self._run("git", "remote", "get-url", "origin", cwd=self.repo_path).stdout
-            if parse_repository_url(remote_url).canonical_url != self.repository.canonical_url:
+            if parse_repository_url(remote_url).canonical_url != self.parsed_repository_url.canonical_url:
                 raise GitError("A different repository already exists at the clone path")
             return None
 
@@ -76,7 +76,7 @@ class GitCommands:
             self.repo_path.rmdir()
 
         try:
-            return self._run("git", "clone", self.repository.canonical_url, str(self.repo_path), cwd=self.repo_path.parent, token=token)
+            return self._run("git", "clone", self.parsed_repository_url.canonical_url, str(self.repo_path), cwd=self.repo_path.parent, token=token)
         except GitError:
             if self.repo_path.exists() and not self._is_git_repository():
                 shutil.rmtree(self.repo_path)
@@ -194,7 +194,7 @@ class GitCommands:
                 check=True,
                 shell=False,
                 capture_output=True,
-                env=environment
+                env=environment,
             )
         except subprocess.TimeoutExpired as exc:
             raise GitError("Git command timed out") from exc
@@ -212,4 +212,4 @@ class GitCommands:
             "gitlab.com": "oauth2",
             "bitbucket.org": "x-token-auth",
         }
-        return usernames[self.repository.host]
+        return usernames[self.parsed_repository_url.host]

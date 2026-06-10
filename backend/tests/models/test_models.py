@@ -11,36 +11,27 @@ from sqlalchemy.orm import configure_mappers
 from sqlmodel import SQLModel
 
 from app.models.branch import Branch
-from app.models.git_repositories import GitRepository, GitRepositoryCreate
+from app.models.repository import Repository, RepositoryCreate
 from app.models.searches import SearchHistory, SearchSession
 
 
 def test_repository_token_fields_are_on_repository() -> None:
-    assert "encrypted_token" in GitRepository.model_fields
-    assert "token_expiration_date" in GitRepository.model_fields
+    assert "encrypted_token" in Repository.model_fields
+    assert "token_expiration_date" in Repository.model_fields
 
 
 def test_repository_create_requires_token_and_allows_no_expiration() -> None:
-    repository = GitRepositoryCreate(
-        repository_url="git@github.com:openai/openai-python.git",
-        token="secret-token",
-    )
+    repository_in = RepositoryCreate(repository_url="git@github.com:openai/openai-python.git", token="secret-token")
 
-    assert repository.token_expiration_days is None
+    assert repository_in.token_expiration_days is None
 
     with pytest.raises(ValidationError):
-        GitRepositoryCreate(
-            repository_url="git@github.com:openai/openai-python.git"
-        )
+        RepositoryCreate(repository_url="git@github.com:openai/openai-python.git")
 
 
 def test_search_timestamps_are_timezone_aware() -> None:
     session = SearchSession(owner_id=uuid.uuid4())
-    history = SearchHistory(
-        session_id=session.id,
-        owner_id=session.owner_id,
-        query="query",
-    )
+    history = SearchHistory(session_id=session.id, owner_id=session.owner_id, query="query")
 
     assert session.created_at.tzinfo is timezone.utc
     assert session.updated_at.tzinfo is timezone.utc
@@ -50,17 +41,9 @@ def test_search_timestamps_are_timezone_aware() -> None:
 def test_all_database_models_are_registered() -> None:
     configure_mappers()
 
-    assert {
-        "branch",
-        "git_repository",
-        "item",
-        "search_history",
-        "search_session",
-        "todo",
-        "user",
-    } <= set(SQLModel.metadata.tables)
+    assert {"branch", "repository", "item", "search_history", "search_session", "todo", "user"} <= set(SQLModel.metadata.tables)
     branch_table = cast(Any, Branch).__table__
-    assert branch_table.c.git_repository_id.foreign_keys
+    assert branch_table.c.repository_id.foreign_keys
 
 
 def test_importing_one_model_registers_all_relationship_targets() -> None:

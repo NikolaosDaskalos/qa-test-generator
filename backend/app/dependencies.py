@@ -16,9 +16,9 @@ from app.core.db import engine
 from app.core.vector_db import WeaviateResources, get_weaviate_resources
 from app.models.authentication import TokenPayload
 from app.models.users import User
+from app.persistence.repository_store import RepositoryStore
 from app.rag.ingestor import DocumentIngestor
-from app.repositories.git_repository_repository import GitRepositoryRepository
-from app.services.git_repository_service import RepositoryService
+from app.services.repository_service import RepositoryService
 
 reusable_oauth2 = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 
@@ -34,12 +34,12 @@ TokenDep = Annotated[str, Depends(reusable_oauth2)]
 WeaviateResourcesDep = Annotated[WeaviateResources, Depends(get_weaviate_resources)]
 
 
-def get_git_repository_repository(session: SessionDep) -> GitRepositoryRepository:
-    """Build the PostgreSQL repository adapter for one request."""
-    return GitRepositoryRepository(session)
+def get_repository_store(session: SessionDep) -> RepositoryStore:
+    """Build the PostgreSQL store for Git repository records."""
+    return RepositoryStore(session)
 
 
-GitRepositoryRepositoryDep = Annotated[GitRepositoryRepository, Depends(get_git_repository_repository)]
+RepositoryStoreDep = Annotated[RepositoryStore, Depends(get_repository_store)]
 
 
 def get_document_ingestor(weaviate_resources: WeaviateResourcesDep) -> DocumentIngestor:
@@ -50,9 +50,9 @@ def get_document_ingestor(weaviate_resources: WeaviateResourcesDep) -> DocumentI
 DocumentIngestorDep = Annotated[DocumentIngestor, Depends(get_document_ingestor)]
 
 
-def get_repository_service(repository: GitRepositoryRepositoryDep, ingestor: DocumentIngestorDep) -> RepositoryService:
-    """Compose the repository application service."""
-    return RepositoryService(repository, ingestor)
+def get_repository_service(repository_store: RepositoryStoreDep, ingestor: DocumentIngestorDep) -> RepositoryService:
+    """Compose the Git repository application service."""
+    return RepositoryService(repository_store, ingestor)
 
 
 RepositoryServiceDep = Annotated[RepositoryService, Depends(get_repository_service)]

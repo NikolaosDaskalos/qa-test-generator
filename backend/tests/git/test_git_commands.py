@@ -11,15 +11,15 @@ from app.git.git_commands import GitCommands, GitResult
 from app.git.repository_url import parse_repository_url
 
 
-def test_repository_checkout_paths_are_isolated_by_user(monkeypatch, tmp_path: Path) -> None:
+def test_git_repository_checkout_paths_are_isolated_by_user(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings, "REPO_PATH", tmp_path)
     first_user = uuid.uuid4()
     second_user = uuid.uuid4()
     repo_url = "https://github.com/openai/openai-python.git"
 
-    repository = parse_repository_url(repo_url)
-    first = GitCommands(repository, first_user)
-    second = GitCommands(repository, second_user)
+    parsed_repository_url = parse_repository_url(repo_url)
+    first = GitCommands(parsed_repository_url, first_user)
+    second = GitCommands(parsed_repository_url, second_user)
 
     assert first.repo_path != second.repo_path
     assert first.repo_path == (tmp_path / str(first_user) / "github.com" / "openai" / "openai-python")

@@ -14,8 +14,8 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
-git_repository_provider = sa.Enum("github", "gitlab", "bitbucket", name="gitrepositoryprovider")
-git_repository_status = sa.Enum("pending", "cloning", "cloned", "indexing", "ready", "failed", name="gitrepositorystatus")
+repository_provider = sa.Enum("github", "gitlab", "bitbucket", name="repositoryprovider")
+repository_status = sa.Enum("pending", "cloning", "cloned", "indexing", "ready", "failed", name="repositorystatus")
 
 
 def upgrade() -> None:
@@ -68,15 +68,15 @@ def upgrade() -> None:
     )
 
     op.create_table(
-        "git_repository",
+        "repository",
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("repository_url", sa.String(length=2048), nullable=False),
-        sa.Column("provider", git_repository_provider, nullable=False),
+        sa.Column("provider", repository_provider, nullable=False),
         sa.Column("owner", sa.String(length=255), nullable=False),
         sa.Column("default_branch", sa.String(length=255), nullable=True),
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("user_id", sa.Uuid(), nullable=False),
-        sa.Column("status", git_repository_status, nullable=False),
+        sa.Column("status", repository_status, nullable=False),
         sa.Column("encrypted_token", sa.String(length=4096), nullable=True),
         sa.Column("token_expiration_date", sa.DateTime(timezone=True), nullable=True),
         sa.Column("local_path", sa.String(length=4096), nullable=True),
@@ -87,23 +87,23 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("user_id", "repository_url", name="uq_user_id_repository_url"),
     )
-    op.create_index(op.f("ix_git_repository_name"), "git_repository", ["name"], unique=False)
-    op.create_index(op.f("ix_git_repository_status"), "git_repository", ["status"], unique=False)
-    op.create_index(op.f("ix_git_repository_user_id"), "git_repository", ["user_id"], unique=False)
+    op.create_index(op.f("ix_repository_name"), "repository", ["name"], unique=False)
+    op.create_index(op.f("ix_repository_status"), "repository", ["status"], unique=False)
+    op.create_index(op.f("ix_repository_user_id"), "repository", ["user_id"], unique=False)
 
     op.create_table(
         "branch",
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("git_repository_id", sa.Uuid(), nullable=False),
+        sa.Column("repository_id", sa.Uuid(), nullable=False),
         sa.Column("local_head_sha", sa.String(length=64), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["git_repository_id"], ["git_repository.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["repository_id"], ["repository.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("git_repository_id", "name", name="uq_git_repository_branch_name"),
+        sa.UniqueConstraint("repository_id", "name", name="uq_repository_branch_name"),
     )
-    op.create_index(op.f("ix_branch_git_repository_id"), "branch", ["git_repository_id"], unique=False)
+    op.create_index(op.f("ix_branch_repository_id"), "branch", ["repository_id"], unique=False)
 
     op.create_table(
         "search_history",
@@ -121,12 +121,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("branch")
-    op.drop_table("git_repository")
+    op.drop_table("repository")
     op.drop_table("search_history")
     op.drop_table("todo")
     op.drop_table("search_session")
     op.drop_table("item")
     op.drop_index(op.f("ix_user_email"), table_name="user")
     op.drop_table("user")
-    git_repository_status.drop(op.get_bind(), checkfirst=True)
-    git_repository_provider.drop(op.get_bind(), checkfirst=True)
+    repository_status.drop(op.get_bind(), checkfirst=True)
+    repository_provider.drop(op.get_bind(), checkfirst=True)

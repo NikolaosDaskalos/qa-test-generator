@@ -1,10 +1,10 @@
-"""Test repository persistence operations without infrastructure."""
+"""Test Git repository persistence operations without infrastructure."""
 
 from datetime import UTC, datetime
 
 from app.core.security import encrypt_repository_token
-from app.models.git_repositories import GitRepository, GitRepositoryStatus
-from app.repositories.git_repository_repository import GitRepositoryRepository
+from app.models.repository import Repository, RepositoryStatus
+from app.persistence.repository_store import RepositoryStore
 
 
 class FakeSession:
@@ -33,30 +33,26 @@ class FakeSession:
         self.rollbacks += 1
 
 
-def _repository() -> GitRepository:
-    return GitRepository(
+def _repository() -> Repository:
+    return Repository(
         user_id="d72745e5-958f-436c-8fc2-d8c2596b33ee",
         name="openai-python",
         repository_url="https://github.com/openai/openai-python.git",
         owner="openai",
         encrypted_token=encrypt_repository_token("old-token"),
-        status=GitRepositoryStatus.ready,
+        status=RepositoryStatus.ready,
     )
 
 
 def test_update_credentials_persists_only_credential_fields() -> None:
-    """Persist encrypted token fields through the repository adapter."""
+    """Persist encrypted token fields through the Git repository store."""
     session = FakeSession()
-    adapter = GitRepositoryRepository(session)
+    repository_store = RepositoryStore(session)
     repository = _repository()
     original_status = repository.status
     expiration = datetime.now(UTC)
 
-    adapter.update_token(
-        repository,
-        encrypted_token="encrypted-replacement",
-        token_expiration_date=expiration,
-    )
+    repository_store.update_token(repository, encrypted_token="encrypted-replacement", token_expiration_date=expiration)
 
     assert repository.encrypted_token == "encrypted-replacement"
     assert repository.token_expiration_date == expiration
@@ -67,13 +63,13 @@ def test_update_credentials_persists_only_credential_fields() -> None:
 
 
 def test_delete_and_rollback_delegate_to_session() -> None:
-    """Keep transaction primitives inside the repository adapter."""
+    """Keep transaction primitives inside the Git repository store."""
     session = FakeSession()
-    adapter = GitRepositoryRepository(session)
+    repository_store = RepositoryStore(session)
     repository = _repository()
 
-    adapter.delete(repository)
-    adapter.rollback()
+    repository_store.delete(repository)
+    repository_store.rollback()
 
     assert session.deleted == [repository]
     assert session.commits == 1

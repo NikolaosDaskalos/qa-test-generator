@@ -1,4 +1,4 @@
-"""Orchestrate repository ingestion, retrieval, and answer generation."""
+"""Orchestrate Git repository ingestion, retrieval, and answer generation."""
 
 import logging
 import uuid
@@ -41,7 +41,7 @@ class RAGPipeline:
         self.chain_builder.build(system_prompt=prompt.strip() or QA_SYSTEM_PROMPT)
 
     def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str) -> int:
-        """Index a repository for this pipeline's user tenant."""
+        """Index a Git repository for this pipeline's user tenant."""
         return self.ingestor.ingest(repo_path, repository_id, branch, self.user_id)
 
     def answer_stream(self, question: str, history: list[dict[str, Any]] | None = None, use_hyde: bool = False) -> Generator:
