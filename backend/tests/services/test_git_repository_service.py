@@ -54,7 +54,7 @@ class FakeRepositoryStore:
         self.saved.append(repository)
         return repository
 
-    def update_credentials(self, repository, *, encrypted_token, token_expiration_date):
+    def update_token(self, repository, *, encrypted_token, token_expiration_date):
         repository.encrypted_token = encrypted_token
         repository.token_expiration_date = token_expiration_date
         return self.save(repository)

@@ -26,8 +26,19 @@ Configure:
 1. BackgroundTasks can be replaced with more robust mechanism like celery
 2. Git repositories saved locally on server machine storage not the best option
 
-# TODO
+## TODO
+
+### RAG Flows
 1. Add parent document retrieval
-2. add re-ranking
-3. RAGAS framework 
-4. Sanitize rag ingestion inputs and outputs 
+2. add more metadata to embeddings
+3. citations
+4. query transformations:
+   - multi query
+   - Decomposition
+
+4. add re-ranking 
+5. RAGAS framework 
+6. Sanitize rag ingestion inputs and outputs 
+
+### Agentic Flows
+
