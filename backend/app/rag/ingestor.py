@@ -26,12 +26,6 @@ class DocumentIngestor:
     def __init__(self, resources: WeaviateResources) -> None:
         """Create an ingestor backed by shared Weaviate resources."""
         self.resources = resources
-        self._splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-            tokenizer=AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL_TOKENIZER),
-            separators=RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON),
-            chunk_size=settings.CHUNK_SIZE,
-            chunk_overlap=settings.CHUNK_OVERLAP,
-        )
 
     def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str, user_id: uuid.UUID) -> int:
         """Replace a repository's indexed chunks for one user tenant.
@@ -75,7 +69,8 @@ class DocumentIngestor:
     def delete_by_repository(self, repository_id: uuid.UUID | str, *, user_id: uuid.UUID) -> None:
         """Delete all indexed chunks for a repository and user tenant."""
         tenant = str(user_id)
-        self._ensure_tenant(tenant)
+        if not self._tenant_exists(tenant):
+            return
         self._delete_by_repository(str(repository_id), tenant=tenant)
 
     def delete_embeddings(self, ids: str | Iterable[str], *, user_id: uuid.UUID) -> None:
@@ -126,6 +121,13 @@ class DocumentIngestor:
         if tenant_name not in collection.tenants.get_by_names([tenant_name]):
             collection.tenants.create([Tenant(name=tenant_name)])
 
+    def _tenant_exists(self, tenant: str) -> bool:
+        """Return whether a non-empty tenant already exists."""
+        tenant_name = tenant.strip()
+        if not tenant_name:
+            raise ValueError("tenant cannot be empty")
+        return tenant_name in self._collection().tenants.get_by_names([tenant_name])
+
     def _collection(self) -> Any:
         """Return the configured Weaviate collection."""
         return self.resources.client.collections.get(settings.WEAVIATE_COLLECTION)
@@ -143,4 +145,10 @@ class DocumentIngestor:
 
     def _split(self, raw_docs: list[Document]) -> list[Document]:
         """Split loaded documents into embedding-sized Python chunks."""
-        return self._splitter.split_documents(raw_docs)
+        splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+            tokenizer=AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL_TOKENIZER),
+            separators=RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON),
+            chunk_size=settings.CHUNK_SIZE,
+            chunk_overlap=settings.CHUNK_OVERLAP,
+        )
+        return splitter.split_documents(raw_docs)

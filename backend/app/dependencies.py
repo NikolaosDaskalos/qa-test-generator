@@ -16,6 +16,9 @@ from app.core.db import engine
 from app.core.vector_db import WeaviateResources, get_weaviate_resources
 from app.models.authentication import TokenPayload
 from app.models.users import User
+from app.rag.ingestor import DocumentIngestor
+from app.repositories.git_repository_repository import GitRepositoryRepository
+from app.services.git_repository_service import RepositoryService
 
 reusable_oauth2 = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 
@@ -29,6 +32,30 @@ def get_db() -> Generator[Session, None, None]:
 SessionDep = Annotated[Session, Depends(get_db)]
 TokenDep = Annotated[str, Depends(reusable_oauth2)]
 WeaviateResourcesDep = Annotated[WeaviateResources, Depends(get_weaviate_resources)]
+
+
+def get_git_repository_repository(session: SessionDep) -> GitRepositoryRepository:
+    """Build the PostgreSQL repository adapter for one request."""
+    return GitRepositoryRepository(session)
+
+
+GitRepositoryRepositoryDep = Annotated[GitRepositoryRepository, Depends(get_git_repository_repository)]
+
+
+def get_document_ingestor(weaviate_resources: WeaviateResourcesDep) -> DocumentIngestor:
+    """Build a lazy repository document ingestor for one request."""
+    return DocumentIngestor(weaviate_resources)
+
+
+DocumentIngestorDep = Annotated[DocumentIngestor, Depends(get_document_ingestor)]
+
+
+def get_repository_service(repository: GitRepositoryRepositoryDep, ingestor: DocumentIngestorDep) -> RepositoryService:
+    """Compose the repository application service."""
+    return RepositoryService(repository, ingestor)
+
+
+RepositoryServiceDep = Annotated[RepositoryService, Depends(get_repository_service)]
 
 
 def get_current_user(session: SessionDep, token: TokenDep) -> User:

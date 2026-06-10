@@ -21,3 +21,13 @@ Configure:
     * Pull requests: Read and Write (if creating PRs)
     * Workflows: Read and Write (only if modifying workflow files) 
 
+
+## Improvements to be made
+1. BackgroundTasks can be replaced with more robust mechanism like celery
+2. Git repositories saved locally on server machine storage not the best option
+
+# TODO
+1. Add parent document retrieval
+2. add re-ranking
+3. RAGAS framework 
+4. Sanitize rag ingestion inputs and outputs 

@@ -11,10 +11,7 @@ from app.git.git_commands import GitCommands, GitResult
 from app.git.repository_url import parse_repository_url
 
 
-def test_repository_checkout_paths_are_isolated_by_user(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
+def test_repository_checkout_paths_are_isolated_by_user(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings, "REPO_PATH", tmp_path)
     first_user = uuid.uuid4()
     second_user = uuid.uuid4()
@@ -25,15 +22,10 @@ def test_repository_checkout_paths_are_isolated_by_user(
     second = GitCommands(repository, second_user)
 
     assert first.repo_path != second.repo_path
-    assert first.repo_path == (
-        tmp_path / str(first_user) / "github.com" / "openai" / "openai-python"
-    )
+    assert first.repo_path == (tmp_path / str(first_user) / "github.com" / "openai" / "openai-python")
 
 
-def test_token_is_passed_only_through_askpass_environment(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
+def test_token_is_passed_only_through_askpass_environment(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
 
     def fake_run(args, **kwargs):
@@ -42,10 +34,7 @@ def test_token_is_passed_only_through_askpass_environment(
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    git = GitCommands(
-        parse_repository_url("https://github.com/openai/openai-python.git"),
-        uuid.uuid4(),
-    )
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
     token = "secret-token"
 
     git._run("git", "fetch", "origin", cwd=tmp_path, token=token)
@@ -58,26 +47,16 @@ def test_token_is_passed_only_through_askpass_environment(
 
 
 def test_push_rejects_the_remote_default_branch(monkeypatch) -> None:
-    git = GitCommands(
-        parse_repository_url("https://github.com/openai/openai-python.git"),
-        uuid.uuid4(),
-    )
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
     monkeypatch.setattr(git, "get_default_branch", lambda: "trunk")
-    monkeypatch.setattr(
-        git,
-        "_run",
-        lambda *args, **kwargs: GitResult(stdout="trunk", stderr=""),
-    )
+    monkeypatch.setattr(git, "_run", lambda *args, **kwargs: GitResult(stdout="trunk", stderr=""))
 
     with pytest.raises(GitError, match="default branch"):
         git.push_current_branch("secret-token")
 
 
 def test_push_allows_a_non_default_branch(monkeypatch) -> None:
-    git = GitCommands(
-        parse_repository_url("https://github.com/openai/openai-python.git"),
-        uuid.uuid4(),
-    )
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
     calls: list[tuple[str, ...]] = []
 
     def fake_run(*args: str, **_kwargs) -> GitResult:
@@ -95,46 +74,48 @@ def test_push_allows_a_non_default_branch(monkeypatch) -> None:
     assert calls[-1] == ("git", "push", "origin", "HEAD")
 
 
-def test_clone_accepts_equivalent_existing_origin(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
+def test_clone_accepts_equivalent_existing_origin(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings, "REPO_PATH", tmp_path)
-    git = GitCommands(
-        parse_repository_url("https://github.com/openai/openai-python.git"),
-        uuid.uuid4(),
-    )
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
     (git.repo_path / ".git").mkdir(parents=True)
-    monkeypatch.setattr(
-        git,
-        "_run",
-        lambda *args, **kwargs: GitResult(
-            stdout="git@github.com:openai/openai-python.git",
-            stderr="",
-        ),
-    )
+    monkeypatch.setattr(git, "_run", lambda *args, **kwargs: GitResult(stdout="git@github.com:openai/openai-python.git", stderr=""))
 
     assert git.clone("secret-token") is None
 
 
-def test_clone_rejects_different_existing_origin(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
+def test_clone_rejects_different_existing_origin(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(settings, "REPO_PATH", tmp_path)
-    git = GitCommands(
-        parse_repository_url("https://github.com/openai/openai-python.git"),
-        uuid.uuid4(),
-    )
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
     (git.repo_path / ".git").mkdir(parents=True)
-    monkeypatch.setattr(
-        git,
-        "_run",
-        lambda *args, **kwargs: GitResult(
-            stdout="https://github.com/openai/openai-node.git",
-            stderr="",
-        ),
-    )
+    monkeypatch.setattr(git, "_run", lambda *args, **kwargs: GitResult(stdout="https://github.com/openai/openai-node.git", stderr=""))
 
     with pytest.raises(GitError, match="different repository"):
         git.clone("secret-token")
+
+
+def test_delete_checkout_is_idempotent(monkeypatch, tmp_path: Path) -> None:
+    """Delete only the deterministic checkout and tolerate a retry."""
+    monkeypatch.setattr(settings, "REPO_PATH", tmp_path)
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
+    git.repo_path.mkdir(parents=True)
+    (git.repo_path / "module.py").write_text("print('test')", encoding="utf-8")
+
+    git.delete_checkout()
+    git.delete_checkout()
+
+    assert not git.repo_path.exists()
+
+
+def test_delete_checkout_rejects_symlinks(monkeypatch, tmp_path: Path) -> None:
+    """Refuse recursive deletion through a checkout-path symlink."""
+    monkeypatch.setattr(settings, "REPO_PATH", tmp_path / "repositories")
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    git.repo_path.parent.mkdir(parents=True)
+    git.repo_path.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(GitError, match="symlink"):
+        git.delete_checkout()
+
+    assert outside.exists()

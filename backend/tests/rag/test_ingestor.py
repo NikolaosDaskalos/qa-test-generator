@@ -138,6 +138,32 @@ def test_empty_ingestion_clears_existing_repository_chunks() -> None:
     assert resources.vector_store.add_calls == []
 
 
+def test_repository_deletion_is_idempotent_when_tenant_is_missing() -> None:
+    """Do not create a tenant solely to delete absent repository chunks."""
+    resources = _resources()
+    ingestor = DocumentIngestor(resources)
+    user_id = uuid.uuid4()
+
+    ingestor.delete_by_repository(uuid.uuid4(), user_id=user_id)
+
+    collection = resources.client.collections.get(settings.WEAVIATE_COLLECTION)
+    assert collection.tenants.names == set()
+    assert collection.tenant_collections == {}
+
+
+def test_repository_deletion_uses_existing_user_tenant() -> None:
+    """Delete repository chunks only within the owner's existing tenant."""
+    resources = _resources()
+    ingestor = DocumentIngestor(resources)
+    user_id = uuid.uuid4()
+    collection = resources.client.collections.get(settings.WEAVIATE_COLLECTION)
+    collection.tenants.names.add(str(user_id))
+
+    ingestor.delete_by_repository(uuid.uuid4(), user_id=user_id)
+
+    assert len(collection.with_tenant(str(user_id)).deleted_filters) == 1
+
+
 def test_ingestion_uses_shared_resources_when_write_fails() -> None:
     """Keep the shared resource instance when a write propagates failure."""
     resources = _resources()

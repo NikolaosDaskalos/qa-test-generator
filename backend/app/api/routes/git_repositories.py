@@ -1,120 +1,48 @@
-"""Expose API endpoints for registering and reading Git repositories."""
+"""Expose injected API endpoints for Git repository workflows."""
 
 import uuid
-from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
-from sqlmodel import func, select
+from fastapi import APIRouter, BackgroundTasks, Response, status
 
-from app.dependencies import CurrentUser, SessionDep, WeaviateResourcesDep
-from app.models.git_repositories import GitRepositoriesPublic, GitRepository, GitRepositoryCreate, GitRepositoryPublic
-from app.repositories.git_repository_repository import GitRepositoryRepository
-from app.services.git_repository_service import RepositoryService
+from app.dependencies import CurrentUser, RepositoryServiceDep, WeaviateResourcesDep
+from app.models.git_repositories import GitRepositoriesPublic, GitRepository, GitRepositoryCreate, GitRepositoryPublic, GitRepositoryUpdate
 
 router = APIRouter(prefix="/repositories", tags=["repositories"])
 
 
 @router.get("/", response_model=GitRepositoriesPublic)
-def read_repositories(session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 100) -> Any:
+def read_repositories(service: RepositoryServiceDep, current_user: CurrentUser, skip: int = 0, limit: int = 100) -> GitRepositoriesPublic:
     """Return a paginated repository list visible to the current user."""
-    if current_user.is_superuser:
-        count_statement = select(func.count()).select_from(GitRepository)
-        count = session.exec(count_statement).one()
-
-        statement = select(GitRepository).offset(skip).limit(limit)
-        repositories = session.exec(statement).all()
-
-    else:
-        count_statement = select(func.count()).select_from(GitRepository).where(GitRepository.user_id == current_user.id)
-        count = session.exec(count_statement).one()
-
-        statement = select(GitRepository).where(GitRepository.user_id == current_user.id).offset(skip).limit(limit)
-        repositories = session.exec(statement).all()
-
-    return GitRepositoriesPublic(data=repositories, count=count)
+    return service.repository_list(user=current_user, skip=skip, limit=limit)
 
 
 @router.get("/{id}", response_model=GitRepositoryPublic)
-def read_repository(session: SessionDep, current_user: CurrentUser, id: uuid.UUID) -> Any:
-    """Return one repository after enforcing ownership permissions.
-
-    Raises:
-        HTTPException: If the repository does not exist or is not accessible.
-
-    """
-    repository = session.get(GitRepository, id)
-
-    if not repository:
-        raise HTTPException(status_code=404, detail="Repository not found")
-
-    if not current_user.is_superuser and repository.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
-    return repository
+def read_repository(service: RepositoryServiceDep, current_user: CurrentUser, id: uuid.UUID) -> GitRepository:
+    """Return one repository after enforcing ownership permissions."""
+    return service.repository_get(repository_id=id, user=current_user)
 
 
 @router.post("/", response_model=GitRepositoryPublic, status_code=status.HTTP_202_ACCEPTED)
 def create_repository(
     *,
-    session: SessionDep,
+    service: RepositoryServiceDep,
     current_user: CurrentUser,
     weaviate_resources: WeaviateResourcesDep,
     background_tasks: BackgroundTasks,
     repository_in: GitRepositoryCreate,
-) -> Any:
+) -> GitRepository:
     """Register a repository and schedule its cloning and indexing."""
-    service = RepositoryService(GitRepositoryRepository(session))
-    return service.repository_create(
-        repo_url=repository_in.repository_url,
-        token=repository_in.token,
-        token_expiration_days=repository_in.token_expiration_days,
-        user_id=current_user.id,
-        background_tasks=background_tasks,
-        weaviate_resources=weaviate_resources,
-    )
+    return service.repository_create(repository=repository_in, user=current_user, background_tasks=background_tasks, weaviate_resources=weaviate_resources)
 
 
-# @router.put("/{id}", response_model=TodoPublic)
-# def update_todo(
-#         *,
-#         session: SessionDep,
-#         current_user: CurrentUser,
-#         id: uuid.UUID,
-#         todo_in: TodoUpdate,
-# ) -> Any:
-#     todo = session.get(Todo, id)
-#
-#     if not todo:
-#         raise HTTPException(status_code=404, detail="Todo not found")
-#
-#     if not current_user.is_superuser and todo.owner_id != current_user.id:
-#         raise HTTPException(status_code=403, detail="Not enough permissions")
-#
-#     update_dict = todo_in.model_dump(exclude_unset=True)
-#     todo.sqlmodel_update(update_dict)
-#
-#     session.add(todo)
-#     session.commit()
-#     session.refresh(todo)
-#
-#     return todo
-#
-#
-# @router.delete("/{id}", response_model=Message)
-# def delete_todo(
-#         session: SessionDep,
-#         current_user: CurrentUser,
-#         id: uuid.UUID,
-# ) -> Message:
-#     todo = session.get(Todo, id)
-#
-#     if not todo:
-#         raise HTTPException(status_code=404, detail="Todo not found")
-#
-#     if not current_user.is_superuser and todo.owner_id != current_user.id:
-#         raise HTTPException(status_code=403, detail="Not enough permissions")
-#
-#     session.delete(todo)
-#     session.commit()
-#
-#     return Message(message="Todo deleted successfully")
+@router.put("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def update_repository(*, service: RepositoryServiceDep, current_user: CurrentUser, id: uuid.UUID, repository_in: GitRepositoryUpdate) -> Response:
+    """Replace only repository credentials."""
+    service.repository_update(repository_id=id, repository=repository_in, user=current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_repository(service: RepositoryServiceDep, current_user: CurrentUser, id: uuid.UUID) -> None:
+    """Delete repository state from local checkout, vector db, and relational db."""
+    service.repository_delete(repository_id=id, user=current_user)
