@@ -5,11 +5,11 @@ from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
 import app.models.branch  # noqa: F401
-import app.models.items  # noqa: F401
+import app.models.item  # noqa: F401
 import app.models.repository  # noqa: F401
-import app.models.searches  # noqa: F401
-import app.models.todos  # noqa: F401
-import app.models.users  # noqa: F401
+import app.models.search  # noqa: F401
+import app.models.todo  # noqa: F401
+import app.models.user  # noqa: F401
 from app.core.config import settings
 
 # this is the Alembic Config object, which provides

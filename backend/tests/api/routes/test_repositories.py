@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routes.repositories import create_repository, read_repositories, read_repository, router
 from app.dependencies import get_current_user, get_repository_service
-from app.models.repository import RepositoryCreate
+from app.schemas.repository import RepositoryCreate
 
 
 class FakeRepositoryService:

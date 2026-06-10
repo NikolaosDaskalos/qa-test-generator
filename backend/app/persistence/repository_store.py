@@ -3,7 +3,8 @@ from datetime import datetime
 
 from sqlmodel import Session, func, select
 
-from app.models.repository import Repository, RepositoryStatus
+from app.enums.repository import RepositoryStatus
+from app.models.repository import Repository
 
 
 class RepositoryStore:

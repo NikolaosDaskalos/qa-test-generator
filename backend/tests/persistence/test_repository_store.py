@@ -3,7 +3,8 @@
 from datetime import UTC, datetime
 
 from app.core.security import encrypt_repository_token
-from app.models.repository import Repository, RepositoryStatus
+from app.enums.repository import RepositoryStatus
+from app.models.repository import Repository
 from app.persistence.repository_store import RepositoryStore
 
 

@@ -10,9 +10,11 @@ from pydantic import ValidationError
 from sqlalchemy.orm import configure_mappers
 from sqlmodel import SQLModel
 
+from app.enums.repository import RepositoryProvider, RepositoryStatus
 from app.models.branch import Branch
-from app.models.repository import Repository, RepositoryCreate
-from app.models.searches import SearchHistory, SearchSession
+from app.models.repository import Repository
+from app.models.search import SearchHistory, SearchSession
+from app.schemas.repository import RepositoryCreate, RepositoryPublic
 
 
 def test_repository_token_fields_are_on_repository() -> None:
@@ -27,6 +29,22 @@ def test_repository_create_requires_token_and_allows_no_expiration() -> None:
 
     with pytest.raises(ValidationError):
         RepositoryCreate(repository_url="git@github.com:openai/openai-python.git")
+
+
+def test_repository_schema_serializes_enums_as_strings() -> None:
+    repository = Repository(
+        name="openai-python",
+        repository_url="https://github.com/openai/openai-python.git",
+        provider=RepositoryProvider.github,
+        owner="openai",
+        user_id=uuid.uuid4(),
+        status=RepositoryStatus.ready,
+    )
+
+    repository_data = RepositoryPublic.model_validate(repository).model_dump(mode="json")
+
+    assert repository_data["provider"] == "github"
+    assert repository_data["status"] == "ready"
 
 
 def test_search_timestamps_are_timezone_aware() -> None:
@@ -54,7 +72,7 @@ def test_importing_one_model_registers_all_relationship_targets() -> None:
             "-c",
             (
                 "from sqlalchemy.orm import configure_mappers;"
-                "from app.models.users import User;"
+                "from app.models.user import User;"
                 "configure_mappers()"
             ),
         ],

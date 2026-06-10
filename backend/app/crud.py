@@ -4,8 +4,10 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.core.security import get_password_hash, verify_password
-from app.models.items import Item, ItemCreate
-from app.models.users import User, UserCreate, UserUpdate
+from app.models.item import Item
+from app.models.user import User
+from app.schemas.item import ItemCreate
+from app.schemas.user import UserCreate, UserUpdate
 
 
 def create_user(*, session: Session, user_create: UserCreate) -> User:

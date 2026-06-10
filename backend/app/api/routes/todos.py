@@ -5,14 +5,9 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import func, select
 
 from app.dependencies import CurrentUser, SessionDep
-from app.models.authentication import Message
-from app.models.todos import (
-    Todo,
-    TodoCreate,
-    TodoPublic,
-    TodosPublic,
-    TodoUpdate,
-)
+from app.models.todo import Todo
+from app.schemas.authentication import Message
+from app.schemas.todo import TodoCreate, TodoPublic, TodosPublic, TodoUpdate
 
 router = APIRouter(prefix="/todos", tags=["todos"])
 
@@ -47,7 +42,7 @@ def read_todos(
         )
         todos = session.exec(statement).all()
 
-    return TodosPublic(data=todos, count=count)
+    return TodosPublic(data=todos, count=count)  # type: ignore[arg-type]
 
 
 @router.get("/{id}", response_model=TodoPublic)

@@ -12,13 +12,15 @@ from sqlmodel import Session
 from app.core.db import engine
 from app.core.security import encrypt_repository_token
 from app.core.vector_db import WeaviateResources
+from app.enums.repository import RepositoryProvider, RepositoryStatus
 from app.errors.git_errors import GitError
 from app.git.git_commands import GitCommands
 from app.git.repository_url import ParsedRepositoryUrl, parse_repository_url
-from app.models.repository import RepositoriesPublic, Repository, RepositoryCreate, RepositoryProvider, RepositoryStatus, RepositoryUpdate
-from app.models.users import User
+from app.models.repository import Repository
+from app.models.user import User
 from app.persistence.repository_store import RepositoryStore
 from app.rag.ingestor import DocumentIngestor
+from app.schemas.repository import RepositoriesPublic, RepositoryCreate, RepositoryUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ class RepositoryService:
         """Return the Git repositories visible to a user."""
         owner_id = None if user.is_superuser else user.id
         repositories = self.repository_store.get_page(skip=skip, limit=limit, user_id=owner_id)
-        return RepositoriesPublic(data=repositories, count=self.repository_store.count(user_id=owner_id))
+        return RepositoriesPublic(data=repositories, count=self.repository_store.count(user_id=owner_id))  # type: ignore[arg-type]
 
     def get_repository(self, *, repository_id: uuid.UUID, user: User) -> Repository:
         """Return one accessible Git repository."""

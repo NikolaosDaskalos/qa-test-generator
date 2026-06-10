@@ -14,10 +14,10 @@ from app.core import security
 from app.core.config import settings
 from app.core.db import engine
 from app.core.vector_db import WeaviateResources, get_weaviate_resources
-from app.models.authentication import TokenPayload
-from app.models.users import User
+from app.models.user import User
 from app.persistence.repository_store import RepositoryStore
 from app.rag.ingestor import DocumentIngestor
+from app.schemas.authentication import TokenPayload
 from app.services.repository_service import RepositoryService
 
 reusable_oauth2 = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")

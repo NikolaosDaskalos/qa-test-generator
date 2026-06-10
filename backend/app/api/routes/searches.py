@@ -9,14 +9,8 @@ from sqlmodel import func, select
 
 from app.agent.graph import run_agent_on_session
 from app.dependencies import CurrentUser, SessionDep
-from app.models.searches import (
-    AgentChatRequest,
-    AgentChatResponse,
-    SearchSession,
-    SearchSessionCreate,
-    SearchSessionPublic,
-    SearchSessionsPublic,
-)
+from app.models.search import SearchSession
+from app.schemas.search import AgentChatRequest, AgentChatResponse, SearchSessionCreate, SearchSessionPublic, SearchSessionsPublic
 
 router = APIRouter(prefix="/searches", tags=["searches"])
 
@@ -46,7 +40,7 @@ def read_searches(
         )
         sessions = session.exec(statement).all()
 
-    return SearchSessionsPublic(data=sessions, count=count)
+    return SearchSessionsPublic(data=sessions, count=count)  # type: ignore[arg-type]
 
 
 ## Create new search session

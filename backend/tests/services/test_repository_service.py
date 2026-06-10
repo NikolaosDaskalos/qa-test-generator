@@ -10,10 +10,12 @@ from fastapi import BackgroundTasks, HTTPException
 
 from app.core.security import decrypt_repository_token, encrypt_repository_token
 from app.core.vector_db import WeaviateResources
+from app.enums.repository import RepositoryStatus
 from app.errors.git_errors import GitError
 from app.git.repository_url import ParsedRepositoryUrl
-from app.models.repository import Repository, RepositoryCreate, RepositoryStatus, RepositoryUpdate
-from app.models.users import User
+from app.models.repository import Repository
+from app.models.user import User
+from app.schemas.repository import RepositoryCreate, RepositoryUpdate
 from app.services.repository_service import RepositoryService
 
 
