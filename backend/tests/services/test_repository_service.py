@@ -10,7 +10,7 @@ from fastapi import BackgroundTasks, HTTPException
 
 from app.core.security import decrypt_repository_token, encrypt_repository_token
 from app.core.vector_db import WeaviateResources
-from app.enums.repository import RepositoryStatus
+from app.enums.repository import RepositoryProvider, RepositoryStatus
 from app.errors.git_errors import GitError
 from app.git.repository_url import ParsedRepositoryUrl
 from app.models.repository import Repository
@@ -80,10 +80,13 @@ class FakeIngestor:
 
     def __init__(self):
         self.ingest_calls = []
+        self.ingest_error: Exception | None = None
         self.delete_calls = []
         self.delete_error: Exception | None = None
 
     def ingest(self, repo_path, repository_id, branch, user_id):
+        if self.ingest_error:
+            raise self.ingest_error
         self.ingest_calls.append((repo_path, repository_id, branch, user_id))
 
     def delete_by_repository(self, repository_id, *, user_id):
@@ -137,6 +140,7 @@ def test_create_persists_pending_repository_and_enqueues_worker() -> None:
     )
 
     assert repository.repository_url == ("https://github.com/openai/openai-python.git")
+    assert repository.provider == RepositoryProvider.github
     assert repository.status == RepositoryStatus.pending
     assert repository.token_expiration_date is None
     assert decrypt_repository_token(repository.encrypted_token or "") == ("secret-token")
@@ -192,16 +196,20 @@ def test_process_repository_follows_successful_status_sequence(tmp_path: Path) -
         def get_default_branch(self):
             return "main"
 
+        def get_current_commit_sha(self):
+            return "a" * 40
+
     ingestor = FakeIngestor()
     make_service(store, ingestor=ingestor, git_factory=FakeGit).process_repository(repository.id, "secret-token")
 
-    assert store.statuses == [RepositoryStatus.cloning, RepositoryStatus.cloned, RepositoryStatus.indexing, RepositoryStatus.ready]
+    assert store.statuses == [RepositoryStatus.cloning, RepositoryStatus.indexing, RepositoryStatus.ready]
     assert repository.default_branch == "main"
     assert repository.local_path == str(tmp_path)
+    assert repository.indexed_commit_sha == "a" * 40
     assert ingestor.ingest_calls == [(tmp_path, repository.id, "main", repository.user_id)]
 
 
-def test_process_repository_marks_failure_without_persisting_token() -> None:
+def test_process_repository_marks_failure_without_exposing_token(caplog) -> None:
     token = "secret-token"
     repository = make_repository(encrypted_token=encrypt_repository_token(token))
     store = FakeRepositoryStore(repository)
@@ -218,7 +226,33 @@ def test_process_repository_marks_failure_without_persisting_token() -> None:
     assert repository.status == RepositoryStatus.failed
     assert token not in (repository.failed_reason or "")
     assert "[REDACTED]" in (repository.failed_reason or "")
+    assert token not in caplog.text
     assert store.rolled_back
+
+
+def test_process_repository_does_not_advance_indexed_commit_when_ingestion_fails(tmp_path: Path) -> None:
+    repository = make_repository()
+    store = FakeRepositoryStore(repository)
+    ingestor = FakeIngestor()
+    ingestor.ingest_error = RuntimeError("index unavailable")
+
+    class FakeGit:
+        def __init__(self, parsed_url, user_id):
+            self.repo_path = tmp_path
+
+        def clone(self, token):
+            pass
+
+        def get_default_branch(self):
+            return "main"
+
+        def get_current_commit_sha(self):
+            return "a" * 40
+
+    make_service(store, ingestor=ingestor, git_factory=FakeGit).process_repository(repository.id, "secret-token")
+
+    assert repository.status == RepositoryStatus.failed
+    assert repository.indexed_commit_sha is None
 
 
 def test_process_repository_uses_caller_supplied_token(tmp_path: Path) -> None:
@@ -234,6 +268,9 @@ def test_process_repository_uses_caller_supplied_token(tmp_path: Path) -> None:
 
         def get_default_branch(self):
             return "main"
+
+        def get_current_commit_sha(self):
+            return "b" * 40
 
     make_service(store, git_factory=FakeGit).process_repository(repository.id, "caller-token")
 
@@ -270,7 +307,7 @@ def test_update_with_null_expiration_clears_expiration() -> None:
     assert repository.token_expiration_date is None
 
 
-@pytest.mark.parametrize("repository_status", [RepositoryStatus.pending, RepositoryStatus.cloning, RepositoryStatus.cloned, RepositoryStatus.indexing])
+@pytest.mark.parametrize("repository_status", [RepositoryStatus.pending, RepositoryStatus.cloning, RepositoryStatus.indexing])
 def test_delete_rejects_active_processing_states(repository_status) -> None:
     repository = make_repository(status=repository_status)
     store = FakeRepositoryStore(repository)
@@ -339,6 +376,8 @@ def test_vector_cleanup_failure_preserves_database_record() -> None:
 def test_repository_access_enforces_owner_and_allows_superuser() -> None:
     repository = make_repository(status=RepositoryStatus.ready)
     service = make_service(FakeRepositoryStore(repository))
+
+    assert service.get_repository(repository_id=repository.id, user=make_user(user_id=repository.user_id)) is repository
 
     with pytest.raises(HTTPException) as exc_info:
         service.get_repository(repository_id=repository.id, user=make_user())

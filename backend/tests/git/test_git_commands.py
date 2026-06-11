@@ -46,6 +46,20 @@ def test_token_is_passed_only_through_askpass_environment(monkeypatch, tmp_path:
     assert captured["env"]["GIT_ASKPASS"].endswith("git_askpass.py")
 
 
+def test_get_current_commit_sha_resolves_head(monkeypatch) -> None:
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, **_kwargs) -> GitResult:
+        calls.append(args)
+        return GitResult(stdout="a" * 40, stderr="")
+
+    monkeypatch.setattr(git, "_run", fake_run)
+
+    assert git.get_current_commit_sha() == "a" * 40
+    assert calls == [("git", "rev-parse", "HEAD")]
+
+
 def test_push_rejects_the_remote_default_branch(monkeypatch) -> None:
     git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
     monkeypatch.setattr(git, "get_default_branch", lambda: "trunk")

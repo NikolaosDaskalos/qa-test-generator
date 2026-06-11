@@ -8,8 +8,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from app.enums.repository import RepositoryProvider, RepositoryStatus
 
 if TYPE_CHECKING:
-    from app.models import Branch
-    from app.models import User
+    from app.models import Branch, User
 
 
 class Repository(SQLModel, table=True):
@@ -21,6 +20,7 @@ class Repository(SQLModel, table=True):
     provider: RepositoryProvider | None = Field(default=None, min_length=1, max_length=255)
     owner: str = Field(min_length=1, max_length=255)
     default_branch: str | None = Field(default=None, max_length=255)
+    indexed_commit_sha: str | None = Field(default=None, min_length=40, max_length=40)
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, index=True, ondelete="CASCADE")
     status: RepositoryStatus = Field(default=RepositoryStatus.pending, index=True)

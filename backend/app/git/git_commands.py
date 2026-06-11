@@ -28,6 +28,9 @@ class GitResult:
     stderr: str
 
 
+SHA_LENGTH: int = 40
+
+
 class GitCommands:
     """Execute Git operations within a user-isolated local checkout.
 
@@ -40,7 +43,7 @@ class GitCommands:
         """Build the checkout path for a Git repository owned by an application user."""
         self.parsed_repository_url = parsed_repository_url
         self.repo_path = (
-            settings.REPO_PATH / str(user_id) / self.parsed_repository_url.host / self.parsed_repository_url.owner / self.parsed_repository_url.name
+                settings.REPO_PATH / str(user_id) / self.parsed_repository_url.host / self.parsed_repository_url.owner / self.parsed_repository_url.name
         )
 
     def clone(self, token: str) -> GitResult | None:
@@ -107,6 +110,15 @@ class GitCommands:
         except GitError as exc:
             logger.error("Could not resolve repository default branch path=%s", self.repo_path)
             raise GitError("Default branch not found") from exc
+
+    def get_current_commit_sha(self) -> str:
+        """Return the full commit SHA currently checked out at ``HEAD``."""
+        result = self._run("git", "rev-parse", "HEAD", cwd=self.repo_path)
+        commit_sha = result.stdout
+        if len(commit_sha) != SHA_LENGTH:
+            logger.error("Git returned an invalid current commit SHA path=%s", self.repo_path)
+            raise GitError("Current commit not found")
+        return commit_sha
 
     def fetch(self, token: str) -> GitResult:
         """Fetch updates from ``origin`` using non-interactive authentication."""
@@ -230,5 +242,4 @@ class GitCommands:
         return GitResult(stdout=result.stdout.strip(), stderr=result.stderr.strip())
 
     def _credential_username(self) -> str:
-        usernames = {"github.com": "x-access-token", "gitlab.com": "oauth2", "bitbucket.org": "x-token-auth"}
-        return usernames[self.parsed_repository_url.host]
+        return "x-access-token"

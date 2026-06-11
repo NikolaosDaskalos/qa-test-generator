@@ -14,7 +14,7 @@ from giturlparse import GitUrlParsed
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_REPOSITORY_HOSTS = frozenset({"bitbucket.org", "github.com", "gitlab.com"})
+SUPPORTED_REPOSITORY_HOSTS = frozenset({"github.com"})
 
 
 @dataclass(frozen=True)

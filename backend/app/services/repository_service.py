@@ -25,7 +25,7 @@ from app.schemas.repository import RepositoriesPublic, RepositoryCreate, Reposit
 logger = logging.getLogger(__name__)
 
 GitCommandsFactory = Callable[[ParsedRepositoryUrl, uuid.UUID], GitCommands]
-ACTIVE_PROCESSING_STATUSES = {RepositoryStatus.pending, RepositoryStatus.cloning, RepositoryStatus.cloned, RepositoryStatus.indexing}
+ACTIVE_PROCESSING_STATUSES = {RepositoryStatus.pending, RepositoryStatus.cloning, RepositoryStatus.indexing}
 
 
 class RepositoryService:
@@ -132,17 +132,17 @@ class RepositoryService:
             git.clone(token)
             repository.local_path = str(git.repo_path)
             repository.default_branch = git.get_default_branch()
-            self.repository_store.update_status(repository, RepositoryStatus.cloned)
+            checkout_commit_sha = git.get_current_commit_sha()
+
+            self.repository_store.update_status(repository, RepositoryStatus.indexing)
             logger.info(
                 "Repository status changed repository_id=%s status=%s default_branch=%s",
                 repository.id,
-                RepositoryStatus.cloned.value,
+                RepositoryStatus.indexing.value,
                 repository.default_branch,
             )
-
-            self.repository_store.update_status(repository, RepositoryStatus.indexing)
-            logger.info("Repository status changed repository_id=%s status=%s", repository.id, RepositoryStatus.indexing.value)
             chunk_count = self.ingestor.ingest(git.repo_path, repository.id, repository.default_branch, repository.user_id)
+            repository.indexed_commit_sha = checkout_commit_sha
             self.repository_store.update_status(repository, RepositoryStatus.ready)
             logger.info("Repository processing completed repository_id=%s status=%s chunk_count=%s", repository.id, RepositoryStatus.ready.value, chunk_count)
         except Exception as exc:
@@ -191,8 +191,9 @@ def _expiration_date(token_expiration_days: int | None) -> datetime | None:
 
 
 def _provider_for(parsed_url: ParsedRepositoryUrl) -> RepositoryProvider:
-    providers = {"github.com": RepositoryProvider.github, "gitlab.com": RepositoryProvider.gitlab, "bitbucket.org": RepositoryProvider.bitbucket}
-    return providers[parsed_url.host]
+    if parsed_url.host != "github.com":
+        raise ValueError("Repository provider is not supported")
+    return RepositoryProvider.github
 
 
 def _sanitized_failure(exc: Exception, token: str | None) -> str:

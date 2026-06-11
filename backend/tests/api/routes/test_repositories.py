@@ -7,14 +7,18 @@ from fastapi import BackgroundTasks, FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.routes.repositories import create_repository, read_repositories, read_repository, router
+from app.core.vector_db import get_weaviate_resources
 from app.dependencies import get_current_user, get_repository_service
+from app.enums.repository import RepositoryStatus
+from app.models.repository import Repository
 from app.schemas.repository import RepositoryCreate
 
 
 class FakeRepositoryService:
     """Record mutation endpoint calls."""
 
-    def __init__(self) -> None:
+    def __init__(self, repository: Repository | None = None) -> None:
+        self.repository = repository
         self.list_calls = []
         self.get_calls = []
         self.create_calls = []
@@ -27,11 +31,11 @@ class FakeRepositoryService:
 
     def get_repository(self, **kwargs):
         self.get_calls.append(kwargs)
-        return None
+        return self.repository
 
     def create_repository(self, **kwargs):
         self.create_calls.append(kwargs)
-        return None
+        return self.repository
 
     def update_repository(self, **kwargs) -> None:
         self.update_calls.append(kwargs)
@@ -46,6 +50,7 @@ def _client(repository_service: FakeRepositoryService, user_id: uuid.UUID) -> tu
     user = SimpleNamespace(id=user_id, is_superuser=False)
     app.dependency_overrides[get_repository_service] = lambda: repository_service
     app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_weaviate_resources] = object
     return TestClient(app), user
 
 
@@ -70,6 +75,51 @@ def test_read_repository_passes_user_object() -> None:
     assert repository_service.get_calls == [{"repository_id": repository_id, "user": user}]
 
 
+def test_read_repository_exposes_failed_status_without_credential() -> None:
+    user_id = uuid.uuid4()
+    repository = Repository(
+        user_id=user_id,
+        name="openai-python",
+        repository_url="https://github.com/openai/openai-python.git",
+        owner="openai",
+        status=RepositoryStatus.failed,
+        encrypted_token="encrypted-secret",
+        failed_reason="Authentication failed",
+    )
+    client, _ = _client(FakeRepositoryService(repository), user_id)
+
+    with client:
+        response = client.get(f"/repositories/{repository.id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["failed_reason"] == "Authentication failed"
+    assert "encrypted_token" not in response.json()
+
+
+def test_read_repository_exposes_fetch_ready_checkout_information() -> None:
+    user_id = uuid.uuid4()
+    repository = Repository(
+        user_id=user_id,
+        name="openai-python",
+        repository_url="https://github.com/openai/openai-python.git",
+        owner="openai",
+        status=RepositoryStatus.ready,
+        default_branch="main",
+        indexed_commit_sha="a" * 40,
+        local_path="/private/checkouts/openai-python",
+    )
+    client, _ = _client(FakeRepositoryService(repository), user_id)
+
+    with client:
+        response = client.get(f"/repositories/{repository.id}")
+
+    assert response.status_code == 200
+    assert response.json()["default_branch"] == "main"
+    assert response.json()["indexed_commit_sha"] == "a" * 40
+    assert "local_path" not in response.json()
+
+
 def test_create_repository_passes_request_and_user_objects() -> None:
     """Pass validated create input and user intact to the service."""
     repository_service = FakeRepositoryService()
@@ -85,6 +135,40 @@ def test_create_repository_passes_request_and_user_objects() -> None:
     assert repository_service.create_calls == [
         {"repository_in": repository_in, "user": user, "background_tasks": background_tasks, "weaviate_resources": resources}
     ]
+
+
+def test_create_repository_returns_accepted_pending_response_without_credential() -> None:
+    user_id = uuid.uuid4()
+    repository = Repository(
+        user_id=user_id,
+        name="openai-python",
+        repository_url="https://github.com/openai/openai-python.git",
+        owner="openai",
+        status=RepositoryStatus.pending,
+        encrypted_token="encrypted-secret",
+    )
+    client, _ = _client(FakeRepositoryService(repository), user_id)
+
+    with client:
+        response = client.post("/repositories/", json={"repository_url": "git@github.com:openai/openai-python.git", "token": "secret-token"})
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "pending"
+    assert response.json()["repository_url"] == "https://github.com/openai/openai-python.git"
+    assert "encrypted_token" not in response.json()
+    assert "token" not in response.json()
+
+
+def test_create_repository_requires_authentication() -> None:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_service] = FakeRepositoryService
+    app.dependency_overrides[get_weaviate_resources] = object
+
+    with TestClient(app) as client:
+        response = client.post("/repositories/", json={"repository_url": "https://github.com/openai/openai-python.git", "token": "secret-token"})
+
+    assert response.status_code == 401
 
 
 def test_update_repository_returns_empty_204() -> None:
