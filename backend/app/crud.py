@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Any
 
@@ -9,14 +10,15 @@ from app.models.user import User
 from app.schemas.item import ItemCreate
 from app.schemas.user import UserCreate, UserUpdate
 
+logger = logging.getLogger(__name__)
+
 
 def create_user(*, session: Session, user_create: UserCreate) -> User:
-    db_obj = User.model_validate(
-        user_create, update={"hashed_password": get_password_hash(user_create.password)}
-    )
+    db_obj = User.model_validate(user_create, update={"hashed_password": get_password_hash(user_create.password)})
     session.add(db_obj)
     session.commit()
     session.refresh(db_obj)
+    logger.info("User created user_id=%s", db_obj.id)
     return db_obj
 
 
@@ -31,6 +33,7 @@ def update_user(*, session: Session, db_user: User, user_in: UserUpdate) -> Any:
     session.add(db_user)
     session.commit()
     session.refresh(db_user)
+    logger.info("User updated user_id=%s fields=%s", db_user.id, sorted(user_data))
     return db_user
 
 
@@ -51,15 +54,19 @@ def authenticate(*, session: Session, email: str, password: str) -> User | None:
         # Prevent timing attacks by running password verification even when user doesn't exist
         # This ensures the response time is similar whether or not the email exists
         verify_password(password, DUMMY_HASH)
+        logger.warning("Authentication failed because the user was not found")
         return None
     verified, updated_password_hash = verify_password(password, db_user.hashed_password)
     if not verified:
+        logger.warning("Authentication failed because the password did not match user_id=%s", db_user.id)
         return None
     if updated_password_hash:
         db_user.hashed_password = updated_password_hash
         session.add(db_user)
         session.commit()
         session.refresh(db_user)
+        logger.info("User password hash upgraded user_id=%s", db_user.id)
+    logger.info("Authentication succeeded user_id=%s", db_user.id)
     return db_user
 
 
@@ -68,4 +75,5 @@ def create_item(*, session: Session, item_in: ItemCreate, owner_id: uuid.UUID) -
     session.add(db_item)
     session.commit()
     session.refresh(db_item)
+    logger.info("Item created item_id=%s owner_id=%s", db_item.id, owner_id)
     return db_item

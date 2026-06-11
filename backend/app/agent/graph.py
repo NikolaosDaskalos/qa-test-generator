@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -12,12 +13,10 @@ from app.agent.tools import web_search
 from app.core.config import settings
 from app.models.search import SearchHistory, SearchSession
 
+logger = logging.getLogger(__name__)
+
 # LLM initialize
-llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    temperature=0.2,
-    api_key=settings.OPENAI_API_KEY,
-)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, api_key=settings.OPENAI_API_KEY)
 
 
 agent_app = create_agent(
@@ -52,6 +51,7 @@ def _load_memory_from_session(search_session: SearchSession) -> list[dict[str, s
         data = json.loads(raw)
 
         if not isinstance(data, list):
+            logger.warning("Search session memory ignored because it is not a list session_id=%s", search_session.id)
             return []
 
         cleaned_messages: list[dict[str, str]] = []
@@ -64,16 +64,13 @@ def _load_memory_from_session(search_session: SearchSession) -> list[dict[str, s
             content = item.get("content")
 
             if role in {"user", "assistant"} and isinstance(content, str):
-                cleaned_messages.append(
-                    {
-                        "role": role,
-                        "content": content,
-                    }
-                )
+                cleaned_messages.append({"role": role, "content": content})
 
+        logger.info("Search session memory loaded session_id=%s message_count=%s", search_session.id, len(cleaned_messages))
         return cleaned_messages
 
     except json.JSONDecodeError:
+        logger.warning("Search session memory ignored because it contains invalid JSON session_id=%s", search_session.id)
         return []
 
 
@@ -136,67 +133,35 @@ def _extract_final_reply(result: dict[str, Any]) -> str:
     return _message_content_to_text(content)
 
 
-def _append_and_trim_memory(
-    existing: list[dict[str, str]],
-    user_message: str,
-    assistant_message: str,
-    max_messages: int = 50,
-) -> list[dict[str, str]]:
-    updated = [
-        *existing,
-        {
-            "role": "user",
-            "content": user_message,
-        },
-        {
-            "role": "assistant",
-            "content": assistant_message,
-        },
-    ]
+def _append_and_trim_memory(existing: list[dict[str, str]], user_message: str, assistant_message: str, max_messages: int = 50) -> list[dict[str, str]]:
+    updated = [*existing, {"role": "user", "content": user_message}, {"role": "assistant", "content": assistant_message}]
 
     return updated[-max_messages:]
 
 
-def _save_memory_to_session(
-    session_db: Session,
-    search_session: SearchSession,
-    messages: list[dict[str, str]],
-) -> None:
+def _save_memory_to_session(session_db: Session, search_session: SearchSession, messages: list[dict[str, str]]) -> None:
     search_session.memory = json.dumps(messages, ensure_ascii=False)
     search_session.updated_at = _utc_now()
 
     session_db.add(search_session)
     session_db.commit()
     session_db.refresh(search_session)
+    logger.info("Search session memory saved session_id=%s message_count=%s", search_session.id, len(messages))
 
 
-def _save_search_history(
-    session_db: Session,
-    search_session: SearchSession,
-    current_user_id: uuid.UUID,
-    user_message: str,
-    reply_text: str,
-) -> None:
-    history = SearchHistory(
-        session_id=search_session.id,
-        owner_id=current_user_id,
-        query=user_message,
-        result=reply_text,
-    )
+def _save_search_history(session_db: Session, search_session: SearchSession, current_user_id: uuid.UUID, user_message: str, reply_text: str) -> None:
+    history = SearchHistory(session_id=search_session.id, owner_id=current_user_id, query=user_message, result=reply_text)
 
     session_db.add(history)
     session_db.commit()
+    logger.info("Search history saved session_id=%s history_id=%s user_id=%s", search_session.id, history.id, current_user_id)
 
 
 # Main Executor
 
 
-async def run_agent_on_session(
-    session_db: Session,
-    search_session: SearchSession,
-    current_user_id: uuid.UUID,
-    user_message: str,
-) -> str:
+async def run_agent_on_session(session_db: Session, search_session: SearchSession, current_user_id: uuid.UUID, user_message: str) -> str:
+    logger.info("Search agent run started session_id=%s user_id=%s", search_session.id, current_user_id)
     # Step 1: Load previous memory
     memory_messages = _load_memory_from_session(search_session)
 
@@ -205,34 +170,25 @@ async def run_agent_on_session(
     lc_messages.append(HumanMessage(content=user_message))
 
     # Step 3: Invoke LangChain v1 agent
-    result = await agent_app.ainvoke(
-        {
-            "messages": lc_messages,
-        }
-    )
+    try:
+        result = await agent_app.ainvoke({"messages": lc_messages})
+    except Exception:
+        logger.error("Search agent invocation failed session_id=%s user_id=%s", search_session.id, current_user_id, exc_info=True)
+        raise
 
     reply_text = _extract_final_reply(result)
+    if not reply_text:
+        logger.warning("Search agent returned an empty reply session_id=%s user_id=%s", search_session.id, current_user_id)
 
     # Step 4: Update session memory
-    new_memory = _append_and_trim_memory(
-        existing=memory_messages,
-        user_message=user_message,
-        assistant_message=reply_text,
-    )
+    new_memory = _append_and_trim_memory(existing=memory_messages, user_message=user_message, assistant_message=reply_text)
 
-    _save_memory_to_session(
-        session_db=session_db,
-        search_session=search_session,
-        messages=new_memory,
-    )
+    _save_memory_to_session(session_db=session_db, search_session=search_session, messages=new_memory)
 
     # Step 5: Record search history
     _save_search_history(
-        session_db=session_db,
-        search_session=search_session,
-        current_user_id=current_user_id,
-        user_message=user_message,
-        reply_text=reply_text,
+        session_db=session_db, search_session=search_session, current_user_id=current_user_id, user_message=user_message, reply_text=reply_text
     )
 
+    logger.info("Search agent run completed session_id=%s user_id=%s reply_length=%s", search_session.id, current_user_id, len(reply_text))
     return reply_text

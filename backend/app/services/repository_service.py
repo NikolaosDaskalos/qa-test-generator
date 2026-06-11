@@ -40,10 +40,13 @@ class RepositoryService:
         """Return the Git repositories visible to a user."""
         owner_id = None if user.is_superuser else user.id
         repositories = self.repository_store.get_page(skip=skip, limit=limit, user_id=owner_id)
-        return RepositoriesPublic(data=repositories, count=self.repository_store.count(user_id=owner_id))  # type: ignore[arg-type]
+        count = self.repository_store.count(user_id=owner_id)
+        logger.info("Listed repositories user_id=%s returned_count=%s total_count=%s", user.id, len(repositories), count)
+        return RepositoriesPublic(data=repositories, count=count)  # type: ignore[arg-type]
 
     def get_repository(self, *, repository_id: uuid.UUID, user: User) -> Repository:
         """Return one accessible Git repository."""
+        logger.info("Getting repository repository_id=%s user_id=%s", repository_id, user.id)
         return self._get_accessible(repository_id, user)
 
     def create_repository(
@@ -53,9 +56,13 @@ class RepositoryService:
         try:
             parsed_url = parse_repository_url(repository_in.repository_url)
         except ValueError as exc:
+            logger.warning("Repository creation rejected for user_id=%s: %s", user.id, exc)
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
         if self._find_duplicate(parsed_url.canonical_url, user.id):
+            logger.warning(
+                "Duplicate repository creation rejected user_id=%s host=%s owner=%s repository=%s", user.id, parsed_url.host, parsed_url.owner, parsed_url.name
+            )
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository already exists")
 
         repository = Repository(
@@ -73,9 +80,11 @@ class RepositoryService:
             self.repository_store.save(repository)
         except IntegrityError as exc:
             self.repository_store.rollback()
+            logger.warning("Repository creation hit a uniqueness conflict user_id=%s repository_id=%s", user.id, repository.id)
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository already exists") from exc
 
         background_tasks.add_task(process_repository, repository.id, repository_in.token, weaviate_resources)
+        logger.info("Repository created and processing scheduled repository_id=%s user_id=%s", repository.id, user.id)
         return repository
 
     def update_repository(self, *, repository_id: uuid.UUID, repository_in: RepositoryUpdate, user: User) -> None:
@@ -86,27 +95,37 @@ class RepositoryService:
             encrypted_token=encrypt_repository_token(repository_in.token),
             token_expiration_date=_expiration_date(repository_in.token_expiration_days),
         )
+        logger.info("Repository credentials updated repository_id=%s user_id=%s", repository.id, user.id)
 
     def delete_repository(self, *, repository_id: uuid.UUID, user: User) -> None:
         """Delete local, vector, and relational Git repository state."""
         repository = self._get_accessible(repository_id, user)
         if repository.status in ACTIVE_PROCESSING_STATUSES:
+            logger.warning("Repository deletion blocked while processing repository_id=%s status=%s", repository.id, repository.status.value)
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository cannot be deleted while processing")
 
+        logger.info("Repository deletion started repository_id=%s user_id=%s", repository.id, repository.user_id)
         parsed_url = parse_repository_url(repository.repository_url)
         git = self.git_commands_factory(parsed_url, repository.user_id)
         git.delete_checkout()
         self.ingestor.delete_by_repository(repository.id, user_id=repository.user_id)
         self.repository_store.delete(repository)
+        logger.info("Repository deletion completed repository_id=%s user_id=%s", repository.id, repository.user_id)
 
     def process_repository(self, repository_id: uuid.UUID, token: str) -> None:
         """Clone and index a pending Git repository, persisting each transition."""
         repository = self.repository_store.get_by_id(repository_id)
-        if not repository or repository.status == RepositoryStatus.ready:
+        if not repository:
+            logger.warning("Repository processing skipped because the record does not exist repository_id=%s", repository_id)
+            return
+        if repository.status == RepositoryStatus.ready:
+            logger.info("Repository processing skipped because it is already ready repository_id=%s", repository_id)
             return
 
         try:
+            logger.info("Repository processing started repository_id=%s user_id=%s", repository.id, repository.user_id)
             self.repository_store.update_status(repository, RepositoryStatus.cloning)
+            logger.info("Repository status changed repository_id=%s status=%s", repository.id, RepositoryStatus.cloning.value)
 
             parsed_url = parse_repository_url(repository.repository_url)
             git = self.git_commands_factory(parsed_url, repository.user_id)
@@ -114,10 +133,18 @@ class RepositoryService:
             repository.local_path = str(git.repo_path)
             repository.default_branch = git.get_default_branch()
             self.repository_store.update_status(repository, RepositoryStatus.cloned)
+            logger.info(
+                "Repository status changed repository_id=%s status=%s default_branch=%s",
+                repository.id,
+                RepositoryStatus.cloned.value,
+                repository.default_branch,
+            )
 
             self.repository_store.update_status(repository, RepositoryStatus.indexing)
-            self.ingestor.ingest(git.repo_path, repository.id, repository.default_branch, repository.user_id)
+            logger.info("Repository status changed repository_id=%s status=%s", repository.id, RepositoryStatus.indexing.value)
+            chunk_count = self.ingestor.ingest(git.repo_path, repository.id, repository.default_branch, repository.user_id)
             self.repository_store.update_status(repository, RepositoryStatus.ready)
+            logger.info("Repository processing completed repository_id=%s status=%s chunk_count=%s", repository.id, RepositoryStatus.ready.value, chunk_count)
         except Exception as exc:
             self.repository_store.rollback()
             repository = self.repository_store.get_by_id(repository_id)
@@ -128,8 +155,10 @@ class RepositoryService:
     def _get_accessible(self, repository_id: uuid.UUID, user: User) -> Repository:
         repository = self.repository_store.get_by_id(repository_id)
         if not repository:
+            logger.warning("Repository access failed because it was not found repository_id=%s user_id=%s", repository_id, user.id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
         if not user.is_superuser and repository.user_id != user.id:
+            logger.warning("Repository access denied repository_id=%s user_id=%s", repository_id, user.id)
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
         return repository
 
@@ -149,8 +178,10 @@ class RepositoryService:
 
 def process_repository(repository_id: uuid.UUID, token: str, weaviate_resources: WeaviateResources) -> None:
     """Compose fresh request-independent dependencies for background work."""
+    logger.info("Repository background task opened repository_id=%s", repository_id)
     with Session(engine) as session:
         RepositoryService(RepositoryStore(session), DocumentIngestor(weaviate_resources)).process_repository(repository_id, token)
+    logger.info("Repository background task closed repository_id=%s", repository_id)
 
 
 def _expiration_date(token_expiration_days: int | None) -> datetime | None:

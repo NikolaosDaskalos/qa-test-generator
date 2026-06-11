@@ -33,19 +33,23 @@ class RAGPipeline:
         self.ingestor = DocumentIngestor(self.weaviate_resources)
         self.document_retriever = DocumentRetriever(self.weaviate_resources, tenant=str(user_id))
         self.chain_builder = ChainBuilder(self.llm, self.document_retriever)
+        logger.info("RAG pipeline initialized user_id=%s model=%s", user_id, settings.LLM_MODEL)
 
     # ── Public API (delegates to components) ─────────────────────
 
     def set_system_prompt(self, prompt: str):
         """Set the answer persona, falling back to the default prompt."""
         self.chain_builder.build(system_prompt=prompt.strip() or QA_SYSTEM_PROMPT)
+        logger.info("RAG system prompt configured user_id=%s custom_prompt=%s", self.user_id, bool(prompt.strip()))
 
     def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str) -> int:
         """Index a Git repository for this pipeline's user tenant."""
+        logger.info("RAG pipeline ingestion requested user_id=%s repository_id=%s branch=%s", self.user_id, repository_id, branch)
         return self.ingestor.ingest(repo_path, repository_id, branch, self.user_id)
 
     def answer_stream(self, question: str, history: list[dict[str, Any]] | None = None, use_hyde: bool = False) -> Generator:
         """Return a generator that streams answer events."""
+        logger.info("RAG answer stream requested user_id=%s history_count=%s use_hyde=%s", self.user_id, len(history or []), use_hyde)
         return self.chain_builder.answer_stream(question, history, use_hyde)
 
     def get_stats(self) -> dict[str, Any]:

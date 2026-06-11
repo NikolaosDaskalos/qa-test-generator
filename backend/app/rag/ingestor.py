@@ -1,5 +1,6 @@
 """Load, split, and persist Git repository documents in Weaviate."""
 
+import logging
 import os
 import uuid
 from collections.abc import Iterable, Sequence
@@ -15,6 +16,8 @@ from weaviate.classes.tenants import Tenant
 
 from app.core.config import settings
 from app.core.vector_db import WeaviateResources
+
+logger = logging.getLogger(__name__)
 
 # Avoid the warning emitted when the tokenizer receives a token only as an argument.
 os.environ.setdefault("HF_TOKEN", settings.HF_TOKEN)
@@ -34,6 +37,7 @@ class DocumentIngestor:
             The number of chunks written to Weaviate.
 
         """
+        logger.info("Repository ingestion started repository_id=%s user_id=%s branch=%s", repository_id, user_id, branch)
         raw_docs = self._load(repo_path, repository_id, branch)
         chunked_docs = self._split(raw_docs) if raw_docs else []
         repository_key = str(repository_id)
@@ -42,10 +46,18 @@ class DocumentIngestor:
         self._ensure_tenant(tenant)
         self._delete_by_repository(repository_key, tenant=tenant)
         if not chunked_docs:
+            logger.warning("Repository ingestion found no Python documents repository_id=%s user_id=%s", repository_id, user_id)
             return 0
 
         ids = [str(uuid.uuid5(repository_id, f"{doc.metadata['source']}:{index}")) for index, doc in enumerate(chunked_docs)]
         self._add_documents(chunked_docs, ids=ids, tenant=tenant)
+        logger.info(
+            "Repository ingestion completed repository_id=%s user_id=%s document_count=%s chunk_count=%s",
+            repository_id,
+            user_id,
+            len(raw_docs),
+            len(chunked_docs),
+        )
         return len(chunked_docs)
 
     def add_documents(self, documents: Sequence[Document], *, ids: Sequence[str], user_id: uuid.UUID) -> list[str]:
@@ -56,21 +68,30 @@ class DocumentIngestor:
 
         """
         if not documents:
+            logger.warning("Document add skipped because no documents were provided user_id=%s", user_id)
             return []
         if len(ids) != len(documents):
+            logger.warning(
+                "Document add rejected because ID and document counts differ user_id=%s id_count=%s document_count=%s", user_id, len(ids), len(documents)
+            )
             raise ValueError("ids length must match documents length")
         if any(not embedding_id for embedding_id in ids):
+            logger.warning("Document add rejected because an embedding ID is empty user_id=%s", user_id)
             raise ValueError("ids cannot contain empty values")
 
         tenant = str(user_id)
         self._ensure_tenant(tenant)
-        return self._add_documents(documents, ids=ids, tenant=tenant)
+        added_ids = self._add_documents(documents, ids=ids, tenant=tenant)
+        logger.info("Documents added user_id=%s document_count=%s", user_id, len(documents))
+        return added_ids
 
     def delete_by_repository(self, repository_id: uuid.UUID | str, *, user_id: uuid.UUID) -> None:
         """Delete all indexed chunks for a Git repository and user tenant."""
         tenant = str(user_id)
         if not self._tenant_exists(tenant):
+            logger.warning("Repository embedding deletion skipped because tenant does not exist repository_id=%s user_id=%s", repository_id, user_id)
             return
+        logger.info("Deleting repository embeddings repository_id=%s user_id=%s", repository_id, user_id)
         self._delete_by_repository(str(repository_id), tenant=tenant)
 
     def delete_embeddings(self, ids: str | Iterable[str], *, user_id: uuid.UUID) -> None:
@@ -82,13 +103,16 @@ class DocumentIngestor:
         """
         normalized_ids = [ids] if isinstance(ids, str) else list(ids)
         if not normalized_ids:
+            logger.warning("Embedding deletion skipped because no IDs were provided user_id=%s", user_id)
             return
         if any(not embedding_id for embedding_id in normalized_ids):
+            logger.warning("Embedding deletion rejected because an ID is empty user_id=%s", user_id)
             raise ValueError("ids cannot contain empty values")
 
         tenant = str(user_id)
         self._ensure_tenant(tenant)
         self.resources.vector_store.delete(ids=normalized_ids, tenant=tenant)
+        logger.info("Embeddings deleted user_id=%s embedding_count=%s", user_id, len(normalized_ids))
 
     def delete_embeddings_by_parent_id(self, parent_id: str, *, user_id: uuid.UUID) -> None:
         """Delete chunks associated with a parent document.
@@ -98,11 +122,13 @@ class DocumentIngestor:
 
         """
         if not parent_id:
+            logger.warning("Parent embedding deletion rejected because parent_id is empty user_id=%s", user_id)
             raise ValueError("parent_id cannot be empty")
 
         tenant = str(user_id)
         self._ensure_tenant(tenant)
         self._collection().with_tenant(tenant).data.delete_many(where=Filter.by_property("parent_document_id").equal(parent_id))
+        logger.info("Parent embeddings deleted user_id=%s parent_id=%s", user_id, parent_id)
 
     def _add_documents(self, documents: Sequence[Document], *, ids: Sequence[str], tenant: str) -> list[str]:
         """Write documents and IDs to an existing tenant."""
@@ -119,6 +145,7 @@ class DocumentIngestor:
             raise ValueError("tenant cannot be empty")
         collection = self._collection()
         if tenant_name not in collection.tenants.get_by_names([tenant_name]):
+            logger.info("Creating Weaviate tenant=%s", tenant_name)
             collection.tenants.create([Tenant(name=tenant_name)])
 
     def _tenant_exists(self, tenant: str) -> bool:
@@ -136,6 +163,7 @@ class DocumentIngestor:
         """Load Python files and attach Git repository metadata."""
         loader = GitLoader(repo_path=str(repo_path), branch=branch, file_filter=lambda file_path: str(file_path).endswith(".py"))
         raw_docs: list[Document] = loader.load()
+        logger.info("Loaded repository Python documents repository_id=%s branch=%s document_count=%s", repository_id, branch, len(raw_docs))
         repository_key = str(repository_id)
         for raw_doc in raw_docs:
             source = raw_doc.metadata["source"]
@@ -151,4 +179,6 @@ class DocumentIngestor:
             chunk_size=settings.CHUNK_SIZE,
             chunk_overlap=settings.CHUNK_OVERLAP,
         )
-        return splitter.split_documents(raw_docs)
+        chunked_docs = splitter.split_documents(raw_docs)
+        logger.info("Split repository documents document_count=%s chunk_count=%s", len(raw_docs), len(chunked_docs))
+        return chunked_docs

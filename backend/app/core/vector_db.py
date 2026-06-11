@@ -1,5 +1,6 @@
 """Create and manage shared Weaviate application resources."""
 
+import logging
 from dataclasses import dataclass
 from threading import Lock
 
@@ -10,6 +11,8 @@ from weaviate.client import WeaviateClient
 
 from app.core.config import settings
 from app.core.weaviate_client import METADATA_PROPERTIES, TEXT_PROPERTY, create_weaviate_client
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -30,12 +33,17 @@ def initialize_weaviate() -> None:
 
     with _weaviate_lock:
         if _shared_weaviate_resources is None:
+            logger.info("Initializing shared Weaviate resources")
             _shared_weaviate_resources = _create_weaviate_resources()
+            logger.info("Shared Weaviate resources initialized")
+        else:
+            logger.warning("Shared Weaviate resources are already initialized")
 
 
 def get_weaviate_resources() -> WeaviateResources:
     """Return the resources initialized during application startup."""
     if _shared_weaviate_resources is None:
+        logger.error("Weaviate resources requested before initialization")
         raise RuntimeError("Weaviate has not been initialized")
     return _shared_weaviate_resources
 
@@ -49,11 +57,16 @@ def close_weaviate() -> None:
         _shared_weaviate_resources = None
 
     if resources is not None:
+        logger.info("Closing shared Weaviate client")
         resources.client.close()
+        logger.info("Shared Weaviate client closed")
+    else:
+        logger.warning("Weaviate close requested before initialization")
 
 
 def _create_weaviate_resources() -> WeaviateResources:
     """Connect to Weaviate and construct the shared vector store."""
+    logger.info("Connecting to Weaviate collection=%s", settings.WEAVIATE_COLLECTION)
     client = create_weaviate_client()
 
     try:
@@ -70,5 +83,6 @@ def _create_weaviate_resources() -> WeaviateResources:
         )
         return WeaviateResources(client=client, vector_store=vector_store)
     except Exception:
+        logger.error("Failed to create Weaviate resources", exc_info=True)
         client.close()
         raise

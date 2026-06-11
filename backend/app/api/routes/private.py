@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from fastapi import APIRouter
@@ -7,6 +8,8 @@ from app.core.security import get_password_hash
 from app.dependencies import SessionDep
 from app.models.user import User
 from app.schemas.user import UserPublic
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["private"], prefix="/private")
 
@@ -24,13 +27,10 @@ def create_user(user_in: PrivateUserCreate, session: SessionDep) -> Any:
     Create a new user.
     """
 
-    user = User(
-        email=user_in.email,
-        full_name=user_in.full_name,
-        hashed_password=get_password_hash(user_in.password),
-    )
+    user = User(email=user_in.email, full_name=user_in.full_name, hashed_password=get_password_hash(user_in.password))
 
     session.add(user)
     session.commit()
 
+    logger.info("Private user created user_id=%s", user.id)
     return user

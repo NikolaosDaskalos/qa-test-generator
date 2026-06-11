@@ -1,5 +1,6 @@
 """Configure the FastAPI application and process-wide resource lifecycle."""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,8 @@ from app.api.main import api_router
 from app.core import vector_db
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 def custom_generate_unique_id(route: APIRoute) -> str:
     """Build a stable OpenAPI operation ID from the route tag and name."""
@@ -20,16 +23,23 @@ def custom_generate_unique_id(route: APIRoute) -> str:
 
 if settings.SENTRY_DSN and settings.ENVIRONMENT != "local":
     sentry_sdk.init(dsn=str(settings.SENTRY_DSN), enable_tracing=True)
+    logger.info("Sentry monitoring initialized for environment=%s", settings.ENVIRONMENT)
+else:
+    logger.info("Sentry monitoring disabled for environment=%s", settings.ENVIRONMENT)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize Weaviate at startup and close it during shutdown."""
+    logger.info("Application startup started")
     vector_db.initialize_weaviate()
+    logger.info("Application startup completed")
     try:
         yield
     finally:
+        logger.info("Application shutdown started")
         vector_db.close_weaviate()
+        logger.info("Application shutdown completed")
 
 
 app = FastAPI(
@@ -39,5 +49,7 @@ app = FastAPI(
 # Set all CORS enabled origins
 if settings.all_cors_origins:
     app.add_middleware(CORSMiddleware, allow_origins=settings.all_cors_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+    logger.info("CORS middleware configured with origin_count=%s", len(settings.all_cors_origins))
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+logger.info("API router registered with prefix=%s", settings.API_V1_STR)

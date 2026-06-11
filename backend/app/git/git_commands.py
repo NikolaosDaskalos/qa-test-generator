@@ -5,6 +5,7 @@ process timeouts, and error sanitization. Raw user URLs must be validated by
 ``parse_repository_url`` before constructing ``GitCommands``.
 """
 
+import logging
 import os
 import shutil
 import subprocess
@@ -15,6 +16,8 @@ from pathlib import Path
 from app.core.config import settings
 from app.errors.git_errors import GitError
 from app.git.repository_url import ParsedRepositoryUrl, parse_repository_url
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -37,11 +40,7 @@ class GitCommands:
         """Build the checkout path for a Git repository owned by an application user."""
         self.parsed_repository_url = parsed_repository_url
         self.repo_path = (
-            settings.REPO_PATH
-            / str(user_id)
-            / self.parsed_repository_url.host
-            / self.parsed_repository_url.owner
-            / self.parsed_repository_url.name
+            settings.REPO_PATH / str(user_id) / self.parsed_repository_url.host / self.parsed_repository_url.owner / self.parsed_repository_url.name
         )
 
     def clone(self, token: str) -> GitResult | None:
@@ -63,12 +62,16 @@ class GitCommands:
 
         """
         if self._is_git_repository():
+            logger.info("Existing Git checkout found path=%s", self.repo_path)
             remote_url = self._run("git", "remote", "get-url", "origin", cwd=self.repo_path).stdout
             if parse_repository_url(remote_url).canonical_url != self.parsed_repository_url.canonical_url:
+                logger.error("Existing Git checkout has an unexpected origin path=%s", self.repo_path)
                 raise GitError("A different repository already exists at the clone path")
+            logger.info("Reusing existing Git checkout path=%s", self.repo_path)
             return None
 
         if self.repo_path.exists() and any(self.repo_path.iterdir()):
+            logger.error("Clone path is non-empty and is not a Git repository path=%s", self.repo_path)
             raise GitError("Clone path exists and is not a Git repository")
 
         self.repo_path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,9 +79,16 @@ class GitCommands:
             self.repo_path.rmdir()
 
         try:
+            logger.info(
+                "Cloning Git repository host=%s owner=%s repository=%s",
+                self.parsed_repository_url.host,
+                self.parsed_repository_url.owner,
+                self.parsed_repository_url.name,
+            )
             return self._run("git", "clone", self.parsed_repository_url.canonical_url, str(self.repo_path), cwd=self.repo_path.parent, token=token)
         except GitError:
             if self.repo_path.exists() and not self._is_git_repository():
+                logger.warning("Removing partial Git checkout path=%s", self.repo_path)
                 shutil.rmtree(self.repo_path)
             raise
 
@@ -91,12 +101,16 @@ class GitCommands:
         """
         try:
             result = self._run("git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD", cwd=self.repo_path)
-            return result.stdout.removeprefix("origin/")
+            branch = result.stdout.removeprefix("origin/")
+            logger.info("Resolved repository default branch=%s path=%s", branch, self.repo_path)
+            return branch
         except GitError as exc:
+            logger.error("Could not resolve repository default branch path=%s", self.repo_path)
             raise GitError("Default branch not found") from exc
 
     def fetch(self, token: str) -> GitResult:
         """Fetch updates from ``origin`` using non-interactive authentication."""
+        logger.info("Fetching Git repository path=%s", self.repo_path)
         return self._run("git", "fetch", "origin", cwd=self.repo_path, token=token)
 
     def delete_checkout(self) -> None:
@@ -109,17 +123,23 @@ class GitCommands:
         """
         repository_root = settings.REPO_PATH.resolve()
         if self.repo_path.is_symlink():
+            logger.error("Refusing to delete symlinked repository checkout path=%s", self.repo_path)
             raise GitError("Repository checkout path cannot be a symlink")
 
         checkout_path = self.repo_path.resolve()
         if checkout_path == repository_root or not checkout_path.is_relative_to(repository_root):
+            logger.error("Refusing to delete checkout outside repository root path=%s", checkout_path)
             raise GitError("Repository checkout path is outside the repository root")
         if not checkout_path.exists():
+            logger.warning("Repository checkout does not exist path=%s", checkout_path)
             return
         if not checkout_path.is_dir():
+            logger.error("Repository checkout path is not a directory path=%s", checkout_path)
             raise GitError("Repository checkout path is not a directory")
 
+        logger.info("Deleting repository checkout path=%s", checkout_path)
         shutil.rmtree(checkout_path)
+        logger.info("Repository checkout deleted path=%s", checkout_path)
 
     def commit(self, commit_msg: str) -> GitResult:
         """Stage all checkout changes and create a local commit.
@@ -129,7 +149,9 @@ class GitCommands:
 
         """
         if not commit_msg:
+            logger.warning("Git commit rejected because the commit message is empty path=%s", self.repo_path)
             raise GitError("Commit message cannot be empty")
+        logger.info("Creating Git commit path=%s", self.repo_path)
         self._run("git", "add", ".", cwd=self.repo_path)
         return self._run("git", "commit", "-m", commit_msg, cwd=self.repo_path)
 
@@ -147,9 +169,12 @@ class GitCommands:
         branch = self._run("git", "branch", "--show-current", cwd=self.repo_path).stdout
 
         if not branch:
+            logger.error("Cannot push because the current branch could not be determined path=%s", self.repo_path)
             raise GitError("Current branch not found")
         if branch == self.get_default_branch():
+            logger.warning("Blocked push to default branch=%s path=%s", branch, self.repo_path)
             raise GitError("Push to the default branch is not supported")
+        logger.info("Pushing Git branch=%s path=%s", branch, self.repo_path)
         return self._run("git", "push", "origin", "HEAD", cwd=self.repo_path, token=token)
 
     def checkout(self, branch_name: str) -> GitResult:
@@ -161,7 +186,9 @@ class GitCommands:
         """
         branch_name = branch_name.strip()
         if not branch_name:
+            logger.warning("Git checkout rejected because the branch name is empty path=%s", self.repo_path)
             raise GitError("Branch name cannot be empty")
+        logger.info("Checking out Git branch=%s path=%s", branch_name, self.repo_path)
         return self._run("git", "checkout", "-B", branch_name, f"origin/{branch_name}", cwd=self.repo_path)
 
     def _is_git_repository(self) -> bool:
@@ -173,6 +200,8 @@ class GitCommands:
         Tokens are passed through a child-process-only environment and redacted
         from captured failures before the error reaches application logs.
         """
+        command = " ".join(args[:2])
+        logger.info("Running Git command=%s cwd=%s authenticated=%s", command, cwd, token is not None)
         environment = os.environ.copy()
         if token is not None:
             environment.update(
@@ -186,30 +215,20 @@ class GitCommands:
             )
 
         try:
-            result = subprocess.run(
-                [*args],
-                cwd=cwd.resolve(),
-                timeout=120,
-                text=True,
-                check=True,
-                shell=False,
-                capture_output=True,
-                env=environment,
-            )
+            result = subprocess.run([*args], cwd=cwd.resolve(), timeout=120, text=True, check=True, shell=False, capture_output=True, env=environment)
         except subprocess.TimeoutExpired as exc:
+            logger.error("Git command timed out command=%s cwd=%s", command, cwd)
             raise GitError("Git command timed out") from exc
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or exc.stdout or "Git command failed").strip()
             if token:
                 detail = detail.replace(token, "[REDACTED]")
+            logger.error("Git command failed command=%s cwd=%s return_code=%s", command, cwd, exc.returncode)
             raise GitError(detail[:1000]) from exc
 
+        logger.info("Git command completed command=%s cwd=%s", command, cwd)
         return GitResult(stdout=result.stdout.strip(), stderr=result.stderr.strip())
 
     def _credential_username(self) -> str:
-        usernames = {
-            "github.com": "x-access-token",
-            "gitlab.com": "oauth2",
-            "bitbucket.org": "x-token-auth",
-        }
+        usernames = {"github.com": "x-access-token", "gitlab.com": "oauth2", "bitbucket.org": "x-token-auth"}
         return usernames[self.parsed_repository_url.host]

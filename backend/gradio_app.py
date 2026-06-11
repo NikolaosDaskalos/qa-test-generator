@@ -8,8 +8,13 @@ Run:
     python gradio_app.py
 """
 
-import httpx
+import logging
+
 import gradio as gr
+import httpx
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -26,39 +31,39 @@ SEARCHES_URL = f"{API_BASE}/searches"
 def api_login(email: str, password: str) -> tuple[str | None, str]:
     """Authenticate and return (access_token, status_message)."""
     try:
-        resp = httpx.post(
-            LOGIN_URL,
-            data={"username": email, "password": password},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=15,
-        )
+        logger.info("Gradio login request started")
+        resp = httpx.post(LOGIN_URL, data={"username": email, "password": password}, headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=15)
         if resp.status_code == 200:
             token = resp.json().get("access_token")
+            logger.info("Gradio login request succeeded")
             return token, "✅ Logged in successfully!"
         else:
             detail = resp.json().get("detail", resp.text)
+            logger.warning("Gradio login request rejected status_code=%s", resp.status_code)
             return None, f"❌ Login failed: {detail}"
     except httpx.ConnectError:
+        logger.error("Gradio login request could not connect to the backend")
         return None, "❌ Cannot reach the backend. Is it running on localhost:8000?"
     except Exception as exc:
+        logger.error("Gradio login request failed: %s", exc)
         return None, f"❌ Unexpected error: {exc}"
 
 
 def api_create_session(token: str, title: str = "Gradio Session") -> str | None:
     """Create a new SearchSession and return its UUID."""
-    resp = httpx.post(
-        f"{SEARCHES_URL}/",
-        json={"title": title},
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=15,
-    )
+    logger.info("Gradio search session creation started")
+    resp = httpx.post(f"{SEARCHES_URL}/", json={"title": title}, headers={"Authorization": f"Bearer {token}"}, timeout=15)
     if resp.status_code == 200:
-        return resp.json().get("id")
+        session_id = resp.json().get("id")
+        logger.info("Gradio search session created session_id=%s", session_id)
+        return session_id
+    logger.warning("Gradio search session creation failed status_code=%s", resp.status_code)
     return None
 
 
 def api_chat(token: str, session_id: str, message: str) -> str:
     """Send a message to the agent and return the reply."""
+    logger.info("Gradio chat request started session_id=%s message_length=%s", session_id, len(message))
     resp = httpx.post(
         f"{SEARCHES_URL}/{session_id}/chat",
         json={"message": message},
@@ -66,19 +71,22 @@ def api_chat(token: str, session_id: str, message: str) -> str:
         timeout=120,  # agent may take a while
     )
     if resp.status_code == 200:
-        return resp.json().get("reply", "")
+        reply = resp.json().get("reply", "")
+        logger.info("Gradio chat request completed session_id=%s reply_length=%s", session_id, len(reply))
+        return reply
+    logger.warning("Gradio chat request failed session_id=%s status_code=%s", session_id, resp.status_code)
     return f"⚠️ Error {resp.status_code}: {resp.text}"
 
 
 def api_list_sessions(token: str) -> list[dict]:
     """Fetch all search sessions for the current user."""
-    resp = httpx.get(
-        f"{SEARCHES_URL}/",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=15,
-    )
+    logger.info("Gradio search session listing started")
+    resp = httpx.get(f"{SEARCHES_URL}/", headers={"Authorization": f"Bearer {token}"}, timeout=15)
     if resp.status_code == 200:
-        return resp.json().get("data", [])
+        sessions = resp.json().get("data", [])
+        logger.info("Gradio search session listing completed session_count=%s", len(sessions))
+        return sessions
+    logger.warning("Gradio search session listing failed status_code=%s", resp.status_code)
     return []
 
 
@@ -197,9 +205,7 @@ CUSTOM_CSS = """
 
 
 def build_app() -> gr.Blocks:
-    with gr.Blocks(
-        title="🔍 Search Agent Chat",
-    ) as app:
+    with gr.Blocks(title="🔍 Search Agent Chat") as app:
         # ── Shared state ──
         token_state = gr.State(value=None)  # JWT access token
         session_state = gr.State(value=None)  # current search session UUID
@@ -211,16 +217,8 @@ def build_app() -> gr.Blocks:
             gr.Markdown("🔍 Search Agent", elem_id="login-title")
             gr.Markdown("Sign in to start chatting", elem_id="login-subtitle")
 
-            email_box = gr.Textbox(
-                label="Email",
-                placeholder="you@example.com",
-                type="email",
-            )
-            password_box = gr.Textbox(
-                label="Password",
-                placeholder="••••••••",
-                type="password",
-            )
+            email_box = gr.Textbox(label="Email", placeholder="you@example.com", type="email")
+            password_box = gr.Textbox(label="Password", placeholder="••••••••", type="password")
             login_btn = gr.Button("Sign In", variant="primary", elem_id="login-btn")
             login_status = gr.Markdown("", elem_id="login-status")
 
@@ -231,39 +229,14 @@ def build_app() -> gr.Blocks:
             gr.Markdown("🔍 Search Agent Chat", elem_id="chat-header")
 
             with gr.Row(elem_id="session-bar"):
-                session_dropdown = gr.Dropdown(
-                    label="Session",
-                    choices=[],
-                    interactive=True,
-                    scale=4,
-                )
-                new_session_btn = gr.Button(
-                    "＋ New Session",
-                    elem_id="new-session-btn",
-                    scale=1,
-                )
-                logout_btn = gr.Button(
-                    "Logout",
-                    elem_id="logout-btn",
-                    scale=1,
-                )
+                session_dropdown = gr.Dropdown(label="Session", choices=[], interactive=True, scale=4)
+                new_session_btn = gr.Button("＋ New Session", elem_id="new-session-btn", scale=1)
+                logout_btn = gr.Button("Logout", elem_id="logout-btn", scale=1)
 
-            chatbot = gr.Chatbot(
-                label="Conversation",
-                height=460,
-                avatar_images=(
-                    None,
-                    "https://api.dicebear.com/9.x/bottts-neutral/svg?seed=agent",
-                ),
-            )
+            chatbot = gr.Chatbot(label="Conversation", height=460, avatar_images=(None, "https://api.dicebear.com/9.x/bottts-neutral/svg?seed=agent"))
 
             with gr.Row():
-                msg_box = gr.Textbox(
-                    placeholder="Ask anything… e.g. 'Latest news about AI'",
-                    show_label=False,
-                    scale=6,
-                    lines=1,
-                )
+                msg_box = gr.Textbox(placeholder="Ask anything… e.g. 'Latest news about AI'", show_label=False, scale=6, lines=1)
                 send_btn = gr.Button("Send ➤", variant="primary", scale=1)
 
         # ──────────────────────────────────────────────────────────────
@@ -273,6 +246,7 @@ def build_app() -> gr.Blocks:
         def handle_login(email: str, password: str):
             """Attempt login → on success, switch to chat view."""
             if not email or not password:
+                logger.warning("Gradio login form rejected because required fields are empty")
                 return (
                     gr.update(visible=True),  # login_view
                     gr.update(visible=False),  # chat_view
@@ -285,15 +259,8 @@ def build_app() -> gr.Blocks:
 
             token, msg = api_login(email, password)
             if token is None:
-                return (
-                    gr.update(visible=True),
-                    gr.update(visible=False),
-                    msg,
-                    None,
-                    None,
-                    gr.update(choices=[], value=None),
-                    [],
-                )
+                logger.warning("Gradio login callback did not receive an access token")
+                return (gr.update(visible=True), gr.update(visible=False), msg, None, None, gr.update(choices=[], value=None), [])
 
             # Fetch existing sessions
             sessions = api_list_sessions(token)
@@ -303,6 +270,7 @@ def build_app() -> gr.Blocks:
             current_session = None
             if choices:
                 current_session = choices[0][1]
+                logger.info("Gradio selected existing search session session_id=%s", current_session)
             else:
                 new_id = api_create_session(token, "Gradio Session")
                 if new_id:
@@ -322,95 +290,61 @@ def build_app() -> gr.Blocks:
         login_btn.click(
             fn=handle_login,
             inputs=[email_box, password_box],
-            outputs=[
-                login_view,
-                chat_view,
-                login_status,
-                token_state,
-                session_state,
-                session_dropdown,
-                chatbot,
-            ],
+            outputs=[login_view, chat_view, login_status, token_state, session_state, session_dropdown, chatbot],
         )
 
         # Also trigger login on Enter key in password field
         password_box.submit(
             fn=handle_login,
             inputs=[email_box, password_box],
-            outputs=[
-                login_view,
-                chat_view,
-                login_status,
-                token_state,
-                session_state,
-                session_dropdown,
-                chatbot,
-            ],
+            outputs=[login_view, chat_view, login_status, token_state, session_state, session_dropdown, chatbot],
         )
 
         # ── New session ──
-        def handle_new_session(token: str, current_choices):
+        def handle_new_session(token: str, _current_choices):
             if not token:
+                logger.warning("Gradio search session creation rejected because the user is not authenticated")
                 return None, gr.update(), []
 
             new_id = api_create_session(token, "Gradio Session")
             if not new_id:
+                logger.warning("Gradio search session callback could not create a session")
                 return None, gr.update(), []
 
             # Refresh full list
             sessions = api_list_sessions(token)
             choices = [(f"{s['title']}  ({s['id'][:8]}…)", s["id"]) for s in sessions]
 
-            return (
-                new_id,
-                gr.update(choices=choices, value=new_id),
-                [],
-            )
+            return (new_id, gr.update(choices=choices, value=new_id), [])
 
-        new_session_btn.click(
-            fn=handle_new_session,
-            inputs=[token_state, session_dropdown],
-            outputs=[session_state, session_dropdown, chatbot],
-        )
+        new_session_btn.click(fn=handle_new_session, inputs=[token_state, session_dropdown], outputs=[session_state, session_dropdown, chatbot])
 
         # ── Switch session ──
         def handle_switch_session(selected_id):
             # Clear chat when switching – the backend keeps memory per session
+            logger.info("Gradio switched search session session_id=%s", selected_id)
             return selected_id, []
 
-        session_dropdown.change(
-            fn=handle_switch_session,
-            inputs=[session_dropdown],
-            outputs=[session_state, chatbot],
-        )
+        session_dropdown.change(fn=handle_switch_session, inputs=[session_dropdown], outputs=[session_state, chatbot])
 
         # ── Send message ──
-        def handle_send(
-            user_msg: str,
-            history: list,
-            token: str,
-            session_id: str,
-        ):
+        def handle_send(user_msg: str, history: list, token: str, session_id: str):
             if not user_msg or not user_msg.strip():
+                logger.warning("Gradio chat submission ignored because the message is empty")
                 yield history, gr.update()
                 return
 
             if not token or not session_id:
+                logger.warning("Gradio chat submission rejected because there is no active session")
                 history = history + [
                     {"role": "user", "content": user_msg},
-                    {
-                        "role": "assistant",
-                        "content": "⚠️ No active session. Please log in and select a session.",
-                    },
+                    {"role": "assistant", "content": "⚠️ No active session. Please log in and select a session."},
                 ]
                 yield history, gr.update(value="")
                 return
 
             # Show user message + typing indicator immediately
-            history = history + [
-                {"role": "user", "content": user_msg},
-                {"role": "assistant", "content": "⏳ Thinking…"},
-            ]
+            history = history + [{"role": "user", "content": user_msg}, {"role": "assistant", "content": "⏳ Thinking…"}]
             yield history, gr.update(value="")
 
             # Call the agent
@@ -420,20 +354,13 @@ def build_app() -> gr.Blocks:
             history[-1] = {"role": "assistant", "content": reply}
             yield history, gr.update(value="")
 
-        send_btn.click(
-            fn=handle_send,
-            inputs=[msg_box, chatbot, token_state, session_state],
-            outputs=[chatbot, msg_box],
-        )
+        send_btn.click(fn=handle_send, inputs=[msg_box, chatbot, token_state, session_state], outputs=[chatbot, msg_box])
 
-        msg_box.submit(
-            fn=handle_send,
-            inputs=[msg_box, chatbot, token_state, session_state],
-            outputs=[chatbot, msg_box],
-        )
+        msg_box.submit(fn=handle_send, inputs=[msg_box, chatbot, token_state, session_state], outputs=[chatbot, msg_box])
 
         # ── Logout ──
         def handle_logout():
+            logger.info("Gradio user logged out")
             return (
                 gr.update(visible=True),  # show login
                 gr.update(visible=False),  # hide chat
@@ -444,19 +371,7 @@ def build_app() -> gr.Blocks:
                 "",  # clear login_status
             )
 
-        logout_btn.click(
-            fn=handle_logout,
-            inputs=[],
-            outputs=[
-                login_view,
-                chat_view,
-                token_state,
-                session_state,
-                session_dropdown,
-                chatbot,
-                login_status,
-            ],
-        )
+        logout_btn.click(fn=handle_logout, inputs=[], outputs=[login_view, chat_view, token_state, session_state, session_dropdown, chatbot, login_status])
 
     return app
 
@@ -466,12 +381,8 @@ def build_app() -> gr.Blocks:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    _theme = gr.themes.Soft(
-        primary_hue="indigo",
-        secondary_hue="violet",
-        neutral_hue="slate",
-        font=gr.themes.GoogleFont("Inter"),
-    ).set(
+    logger.info("Starting Gradio application server_port=%s", 9987)
+    _theme = gr.themes.Soft(primary_hue="indigo", secondary_hue="violet", neutral_hue="slate", font=gr.themes.GoogleFont("Inter")).set(
         body_background_fill="#0f0f1a",
         body_background_fill_dark="#0f0f1a",
         block_background_fill="#1a1a2e",
@@ -484,11 +395,4 @@ if __name__ == "__main__":
     )
 
     demo = build_app()
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=9987,
-        share=False,
-        show_error=True,
-        theme=_theme,
-        css=CUSTOM_CSS,
-    )
+    demo.launch(server_name="0.0.0.0", server_port=9987, share=False, show_error=True, theme=_theme, css=CUSTOM_CSS)

@@ -1,5 +1,6 @@
 """Provide FastAPI dependencies for database, authentication, and Weaviate."""
 
+import logging
 from collections.abc import Generator
 from typing import Annotated
 
@@ -19,6 +20,8 @@ from app.persistence.repository_store import RepositoryStore
 from app.rag.ingestor import DocumentIngestor
 from app.schemas.authentication import TokenPayload
 from app.services.repository_service import RepositoryService
+
+logger = logging.getLogger(__name__)
 
 reusable_oauth2 = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 
@@ -69,12 +72,16 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[security.ALGORITHM])
         token_data = TokenPayload(**payload)
     except (InvalidTokenError, ValidationError):
+        logger.warning("Authentication rejected because the bearer token is invalid")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate credentials")
     user = session.get(User, token_data.sub)
     if not user:
+        logger.warning("Authentication rejected because the token user was not found user_id=%s", token_data.sub)
         raise HTTPException(status_code=404, detail="User not found")
     if not user.is_active:
+        logger.warning("Authentication rejected because the user is inactive user_id=%s", user.id)
         raise HTTPException(status_code=400, detail="Inactive user")
+    logger.info("User authenticated user_id=%s", user.id)
     return user
 
 
@@ -89,5 +96,7 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
 
     """
     if not current_user.is_superuser:
+        logger.warning("Superuser authorization denied user_id=%s", current_user.id)
         raise HTTPException(status_code=403, detail="The user doesn't have enough privileges")
+    logger.info("Superuser authorization granted user_id=%s", current_user.id)
     return current_user

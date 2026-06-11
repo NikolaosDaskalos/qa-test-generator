@@ -45,6 +45,7 @@ class ChainBuilder:
         """Build contextualization prompts and optionally update the persona."""
         if system_prompt is not None:
             self._system_prompt = system_prompt
+            logger.info("RAG chain system prompt updated")
 
         # History-aware reformulation prompt (used in _stream_standard)
         self._ctx_prompt = ChatPromptTemplate.from_messages([("system", CONTEXTUALIZE_PROMPT), MessagesPlaceholder("chat_history"), ("human", "{input}")])
@@ -59,6 +60,7 @@ class ChainBuilder:
 
         """
         lc_history = self._to_lc_messages(history or [])
+        logger.info("RAG answer generation started mode=%s history_message_count=%s", "hyde" if use_hyde else "standard", len(lc_history))
 
         if use_hyde:
             yield from self._stream_hyde(question, lc_history)
@@ -72,6 +74,7 @@ class ChainBuilder:
         # Step 1: Reformulate question if there is chat history
         search_query = question
         if lc_history:
+            logger.info("Reformulating RAG query using conversation history")
             search_query = (self._ctx_prompt | self.llm | StrOutputParser()).invoke({"input": question, "chat_history": lc_history})
 
         # Step 2: Retrieve with scores, filter by threshold
@@ -80,6 +83,9 @@ class ChainBuilder:
         doc_scores = [score for _, score in results if score >= settings.MIN_RELEVANCE_SCORE]
         sources = self._extract_sources(retrieved_docs, doc_scores)
         context = self._format_docs(retrieved_docs)
+        logger.info("Standard RAG retrieval completed result_count=%s accepted_count=%s", len(results), len(retrieved_docs))
+        if not retrieved_docs:
+            logger.warning("Standard RAG retrieval returned no documents above the relevance threshold")
 
         # Step 3: Build prompt and stream answer
         qa_prompt = ChatPromptTemplate.from_messages(
@@ -91,6 +97,7 @@ class ChainBuilder:
             collected += token
             yield {"type": "token", "content": token}
 
+        logger.info("Standard RAG answer generation completed source_count=%s response_length=%s", len(sources), len(collected))
         yield self._done_event(question, collected, sources, hypothetical_doc=None)
 
     # ── HyDE RAG ─────────────────────────────────────────────────
@@ -101,9 +108,9 @@ class ChainBuilder:
         yield {"type": "status", "message": "⚗️ Generating hypothetical document…"}
 
         # Step 1 — Generate hypothetical document
-        logger.info("HyDE: generating hypothetical document…")
+        logger.info("HyDE hypothetical document generation started")
         hypothetical_doc = self._generate_hypothetical_doc(question)
-        logger.info(f"HyDE doc: {hypothetical_doc[:80]}…")
+        logger.info("HyDE hypothetical document generation completed document_length=%s", len(hypothetical_doc))
 
         # Step 2 — Retrieve using hypothetical doc, filtered by relevance score
         threshold = settings.MIN_RELEVANCE_SCORE
@@ -112,6 +119,9 @@ class ChainBuilder:
         doc_scores = [score for _, score in results if score >= threshold]
         sources = self._extract_sources(retrieved_docs, doc_scores)
         context = self._format_docs(retrieved_docs)
+        logger.info("HyDE retrieval completed result_count=%s accepted_count=%s", len(results), len(retrieved_docs))
+        if not retrieved_docs:
+            logger.warning("HyDE retrieval returned no documents above the relevance threshold")
 
         # Step 3 — Build a one-shot prompt (no chain needed, context is already ready)
         qa_prompt = ChatPromptTemplate.from_messages(
@@ -124,6 +134,7 @@ class ChainBuilder:
             collected += token
             yield {"type": "token", "content": token}
 
+        logger.info("HyDE answer generation completed source_count=%s response_length=%s", len(sources), len(collected))
         yield self._done_event(question, collected, sources, hypothetical_doc)
 
     # ── Helpers ───────────────────────────────────────────────────

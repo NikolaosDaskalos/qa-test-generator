@@ -5,19 +5,16 @@ are safe to persist and compare because credentials, query strings, fragments,
 and alternate SSH syntax are removed.
 """
 
+import logging
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
 import giturlparse  # type: ignore[import-untyped]
 from giturlparse import GitUrlParsed
 
-SUPPORTED_REPOSITORY_HOSTS = frozenset(
-    {
-        "bitbucket.org",
-        "github.com",
-        "gitlab.com",
-    }
-)
+logger = logging.getLogger(__name__)
+
+SUPPORTED_REPOSITORY_HOSTS = frozenset({"bitbucket.org", "github.com", "gitlab.com"})
 
 
 @dataclass(frozen=True)
@@ -56,21 +53,20 @@ def parse_repository_url(repo_url: str) -> ParsedRepositoryUrl:
 
     """
     if not repo_url or not repo_url.strip():
+        logger.warning("Repository URL validation failed because the value is empty")
         raise ValueError("Repository URL cannot be empty")
 
     parsed: GitUrlParsed = giturlparse.parse(repo_url.strip())
     if not parsed.valid:
+        logger.warning("Repository URL validation failed because the value is malformed")
         raise ValueError("Repository URL is not valid")
 
     host = parsed.host.lower()
     if host not in SUPPORTED_REPOSITORY_HOSTS:
+        logger.warning("Repository URL validation rejected unsupported host=%s", host)
         raise ValueError("Repository provider is not supported")
 
     split_url = urlsplit(parsed.url2https)
     canonical_url = urlunsplit(("https", host, split_url.path.rstrip("/"), "", ""))
-    return ParsedRepositoryUrl(
-        canonical_url=canonical_url,
-        host=host,
-        owner=parsed.owner,
-        name=parsed.name,
-    )
+    logger.info("Repository URL validated host=%s owner=%s repository=%s", host, parsed.owner, parsed.name)
+    return ParsedRepositoryUrl(canonical_url=canonical_url, host=host, owner=parsed.owner, name=parsed.name)
