@@ -108,7 +108,7 @@ class RepositoryService:
         parsed_url = parse_repository_url(repository.repository_url)
         git = self.git_commands_factory(parsed_url, repository.user_id)
         git.delete_checkout()
-        self.ingestor.delete_by_repository(repository.id, user_id=repository.user_id)
+        self.ingestor.delete_repository(repository.id, user_id=repository.user_id)
         self.repository_store.delete(repository)
         logger.info("Repository deletion completed repository_id=%s user_id=%s", repository.id, repository.user_id)
 

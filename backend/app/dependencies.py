@@ -20,6 +20,7 @@ from app.persistence.repository_store import RepositoryStore
 from app.rag.ingestor import DocumentIngestor
 from app.schemas.authentication import TokenPayload
 from app.services.repository_service import RepositoryService
+from persistence.source_document_store import SourceDocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,17 @@ def get_repository_store(session: SessionDep) -> RepositoryStore:
 RepositoryStoreDep = Annotated[RepositoryStore, Depends(get_repository_store)]
 
 
-def get_document_ingestor(weaviate_resources: WeaviateResourcesDep) -> DocumentIngestor:
+def get_source_document_store(session: SessionDep) -> SourceDocumentStore:
+    """Build the PostgreSQL store for git document records."""
+    return SourceDocumentStore(session)
+
+
+SourceDocumentStoreDep = Annotated[SourceDocumentStore, Depends(get_source_document_store)]
+
+
+def get_document_ingestor(weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStore) -> DocumentIngestor:
     """Build a lazy repository document ingestor for one request."""
-    return DocumentIngestor(weaviate_resources)
+    return DocumentIngestor(weaviate_resources, source_document_store)
 
 
 DocumentIngestorDep = Annotated[DocumentIngestor, Depends(get_document_ingestor)]

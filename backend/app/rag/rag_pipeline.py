@@ -14,6 +14,7 @@ from app.prompts.rag_prompts import QA_SYSTEM_PROMPT
 from app.rag.chain_builder import ChainBuilder
 from app.rag.ingestor import DocumentIngestor
 from app.rag.retriever import DocumentRetriever
+from dependencies import SourceDocumentStoreDep
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 class RAGPipeline:
     """Coordinate the RAG components for a single user tenant."""
 
-    def __init__(self, user_id: uuid.UUID, weaviate_resources: WeaviateResources):
+    def __init__(self, user_id: uuid.UUID, weaviate_resources: WeaviateResources, source_document_store: SourceDocumentStoreDep):
         """Initialize model, ingestion, retrieval, and chain components."""
         self.user_id = user_id
         self.llm = ChatOpenAI(
@@ -30,7 +31,7 @@ class RAGPipeline:
 
         # ── Components ───────────────────────────────────────────
         self.weaviate_resources = weaviate_resources
-        self.ingestor = DocumentIngestor(self.weaviate_resources)
+        self.ingestor = DocumentIngestor(self.weaviate_resources, source_document_store)
         self.document_retriever = DocumentRetriever(self.weaviate_resources, tenant=str(user_id))
         self.chain_builder = ChainBuilder(self.llm, self.document_retriever)
         logger.info("RAG pipeline initialized user_id=%s model=%s", user_id, settings.LLM_MODEL)

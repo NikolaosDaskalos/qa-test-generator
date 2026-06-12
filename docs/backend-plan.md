@@ -47,7 +47,7 @@ Advance `indexed_commit_sha` only after every vector operation succeeds. Expose 
 ## Indexing And Retrieval
 
 - Use the existing Python-aware recursive splitter.
-- Store `repository_id`, `commit_sha`, `source`, and `parent_document_id` on every chunk.
+- Store `repository_id`, `commit_sha`, `source`, and `parent_id` on every chunk.
 - Keep Weaviate tenancy per user.
 - Require a `repository_id` filter on every retrieval query.
 - Return file-level citations; symbol extraction and line-level citations are not required.

@@ -74,7 +74,7 @@ class DocumentRetriever:
             self._collection()
             .with_tenant(self.tenant)
             .query.fetch_objects(
-                filters=Filter.by_property("parent_document_id").equal(parent_id), limit=10_000, return_properties=[TEXT_PROPERTY, *METADATA_PROPERTIES]
+                filters=Filter.by_property("parent_id").equal(parent_id), limit=10_000, return_properties=[TEXT_PROPERTY, *METADATA_PROPERTIES]
             )
         )
         result = {

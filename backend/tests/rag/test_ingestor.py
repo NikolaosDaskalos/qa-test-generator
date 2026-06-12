@@ -173,7 +173,7 @@ def test_repository_deletion_is_idempotent_when_tenant_is_missing() -> None:
     ingestor = DocumentIngestor(resources)
     user_id = uuid.uuid4()
 
-    ingestor.delete_by_repository(uuid.uuid4(), user_id=user_id)
+    ingestor.delete_repository(uuid.uuid4(), user_id=user_id)
 
     collection = resources.client.collections.get(settings.WEAVIATE_COLLECTION)
     assert collection.tenants.names == set()
@@ -188,7 +188,7 @@ def test_repository_deletion_uses_existing_user_tenant() -> None:
     collection = resources.client.collections.get(settings.WEAVIATE_COLLECTION)
     collection.tenants.names.add(str(user_id))
 
-    ingestor.delete_by_repository(uuid.uuid4(), user_id=user_id)
+    ingestor.delete_repository(uuid.uuid4(), user_id=user_id)
 
     assert len(collection.with_tenant(str(user_id)).deleted_filters) == 1
 

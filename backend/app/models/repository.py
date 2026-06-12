@@ -8,20 +8,20 @@ from sqlmodel import Field, Relationship, SQLModel
 from app.enums.repository import RepositoryProvider, RepositoryStatus
 
 if TYPE_CHECKING:
-    from app.models import Branch, User
+    from app.models import Branch, User, SourceDocument
 
 
 class Repository(SQLModel, table=True):
     __tablename__ = "repository"
     __table_args__ = (UniqueConstraint("user_id", "repository_url", name="uq_user_id_repository_url"),)
 
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str = Field(min_length=1, max_length=255, index=True)
     repository_url: str = Field(min_length=1, max_length=2048)
     provider: RepositoryProvider | None = Field(default=None, min_length=1, max_length=255)
     owner: str = Field(min_length=1, max_length=255)
     default_branch: str | None = Field(default=None, max_length=255)
     indexed_commit_sha: str | None = Field(default=None, min_length=40, max_length=40)
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, index=True, ondelete="CASCADE")
     status: RepositoryStatus = Field(default=RepositoryStatus.pending, index=True)
     encrypted_token: str | None = Field(default=None, max_length=4096, nullable=True)
@@ -34,6 +34,6 @@ class Repository(SQLModel, table=True):
         sa_type=DateTime(timezone=True),  # type: ignore
         sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
     )
-
     user: "User" = Relationship(back_populates="repositories")
     branches: list["Branch"] = Relationship(back_populates="repository", cascade_delete=True)
+    source_documents: list["SourceDocument"] = Relationship(back_populates="repository")
