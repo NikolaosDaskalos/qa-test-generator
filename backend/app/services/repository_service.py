@@ -132,6 +132,7 @@ class RepositoryService:
             git.clone(token)
             repository.local_path = str(git.repo_path)
             repository.default_branch = git.get_default_branch()
+            git.checkout(repository.default_branch)
             checkout_commit_sha = git.get_current_commit_sha()
 
             self.repository_store.update_status(repository, RepositoryStatus.indexing)
@@ -141,9 +142,10 @@ class RepositoryService:
                 RepositoryStatus.indexing.value,
                 repository.default_branch,
             )
-            chunk_count = self.ingestor.ingest(git.repo_path, repository.id, repository.default_branch, repository.user_id)
-            repository.indexed_commit_sha = checkout_commit_sha
-            self.repository_store.update_status(repository, RepositoryStatus.ready)
+            chunk_count = self.ingestor.ingest(git.repo_path, repository.id, repository.default_branch, checkout_commit_sha, repository.user_id)
+            if chunk_count == 0:
+                raise ValueError("Repository contains no usable Python files")
+            self.repository_store.mark_ready(repository, indexed_commit_sha=checkout_commit_sha)
             logger.info("Repository processing completed repository_id=%s status=%s chunk_count=%s", repository.id, RepositoryStatus.ready.value, chunk_count)
         except Exception as exc:
             self.repository_store.rollback()

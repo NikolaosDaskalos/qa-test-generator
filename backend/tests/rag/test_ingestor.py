@@ -111,13 +111,14 @@ def test_ingestion_replaces_repository_chunks_with_deterministic_ids() -> None:
     """Replace existing chunks while preserving deterministic IDs."""
     repository_id = uuid.uuid4()
     user_id = uuid.uuid4()
+    commit_sha = "a" * 40
     resources = _resources()
     documents = [Document(page_content="print('one')", metadata={"source": "one.py"}), Document(page_content="print('two')", metadata={"source": "two.py"})]
     ingestor = _bare_ingestor(documents, resources)
 
-    first_count = ingestor.ingest(Path("/repo"), repository_id, "main", user_id)
+    first_count = ingestor.ingest(Path("/repo"), repository_id, "main", commit_sha, user_id)
     first_ids = resources.vector_store.add_calls[0][1]["ids"]
-    second_count = ingestor.ingest(Path("/repo"), repository_id, "main", user_id)
+    second_count = ingestor.ingest(Path("/repo"), repository_id, "main", commit_sha, user_id)
 
     assert first_count == second_count == 2
     collection = resources.client.collections.get(settings.WEAVIATE_COLLECTION)
@@ -127,12 +128,40 @@ def test_ingestion_replaces_repository_chunks_with_deterministic_ids() -> None:
     assert len(collection.with_tenant(str(user_id)).deleted_filters) == 2
 
 
+def test_ingestion_stores_repository_snapshot_metadata_and_ids() -> None:
+    """Identify every Code Chunk by Repository, commit SHA, and source path."""
+    repository_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    resources = _resources()
+    documents = [Document(page_content="print('one')", metadata={"source": "one.py"})]
+    ingestor = _bare_ingestor(documents, resources)
+
+    ingestor.ingest(Path("/repo"), repository_id, "main", "a" * 40, user_id)
+    first_documents, first_options = resources.vector_store.add_calls[0]
+    first_metadata = dict(first_documents[0].metadata)
+    ingestor.ingest(Path("/repo"), repository_id, "main", "b" * 40, user_id)
+    second_documents, second_options = resources.vector_store.add_calls[1]
+    second_metadata = dict(second_documents[0].metadata)
+    ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", "a" * 40, user_id)
+    third_options = resources.vector_store.add_calls[2][1]
+
+    assert first_metadata == {
+        "source": "one.py",
+        "repository_id": str(repository_id),
+        "commit_sha": "a" * 40,
+        "parent_document_id": str(uuid.uuid5(repository_id, f"{'a' * 40}:one.py")),
+    }
+    assert second_metadata["commit_sha"] == "b" * 40
+    assert first_options["ids"] != second_options["ids"]
+    assert first_options["ids"] != third_options["ids"]
+
+
 def test_empty_ingestion_clears_existing_repository_chunks() -> None:
     """Clear stale chunks when a repository contains no documents."""
     resources = _resources()
     ingestor = _bare_ingestor([], resources)
 
-    count = ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", uuid.uuid4())
+    count = ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", "a" * 40, uuid.uuid4())
 
     assert count == 0
     assert resources.vector_store.add_calls == []
@@ -171,7 +200,7 @@ def test_ingestion_uses_shared_resources_when_write_fails() -> None:
     resources.vector_store.add_documents = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("write failed"))
 
     with pytest.raises(RuntimeError, match="write failed"):
-        ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", uuid.uuid4())
+        ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", "a" * 40, uuid.uuid4())
 
     assert ingestor.resources is resources
 

@@ -48,6 +48,13 @@ class RepositoryStore:
         repository.token_expiration_date = token_expiration_date
         return self.save(repository)
 
+    def mark_ready(self, repository: Repository, *, indexed_commit_sha: str) -> Repository:
+        """Publish successfully indexed Repository Evidence."""
+        repository.indexed_commit_sha = indexed_commit_sha
+        repository.status = RepositoryStatus.ready
+        repository.failed_reason = None
+        return self.save(repository)
+
     def delete(self, repository: Repository) -> None:
         self.session.delete(repository)
         self.session.commit()

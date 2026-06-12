@@ -42,10 +42,10 @@ class RAGPipeline:
         self.chain_builder.build(system_prompt=prompt.strip() or QA_SYSTEM_PROMPT)
         logger.info("RAG system prompt configured user_id=%s custom_prompt=%s", self.user_id, bool(prompt.strip()))
 
-    def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str) -> int:
+    def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str, commit_sha: str) -> int:
         """Index a Git repository for this pipeline's user tenant."""
         logger.info("RAG pipeline ingestion requested user_id=%s repository_id=%s branch=%s", self.user_id, repository_id, branch)
-        return self.ingestor.ingest(repo_path, repository_id, branch, self.user_id)
+        return self.ingestor.ingest(repo_path, repository_id, branch, commit_sha, self.user_id)
 
     def answer_stream(self, question: str, history: list[dict[str, Any]] | None = None, use_hyde: bool = False) -> Generator:
         """Return a generator that streams answer events."""

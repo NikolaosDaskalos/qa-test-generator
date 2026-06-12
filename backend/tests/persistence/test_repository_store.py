@@ -63,6 +63,22 @@ def test_update_credentials_persists_only_credential_fields() -> None:
     assert session.refreshes == [repository]
 
 
+def test_mark_ready_persists_indexed_commit_and_status_together() -> None:
+    """Publish Repository Evidence and its exact commit in one transaction."""
+    session = FakeSession()
+    repository_store = RepositoryStore(session)
+    repository = _repository()
+    repository.status = RepositoryStatus.indexing
+
+    repository_store.mark_ready(repository, indexed_commit_sha="a" * 40)
+
+    assert repository.indexed_commit_sha == "a" * 40
+    assert repository.status == RepositoryStatus.ready
+    assert session.added == [repository]
+    assert session.commits == 1
+    assert session.refreshes == [repository]
+
+
 def test_delete_and_rollback_delegate_to_session() -> None:
     """Keep transaction primitives inside the Git repository store."""
     session = FakeSession()

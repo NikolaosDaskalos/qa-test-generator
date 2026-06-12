@@ -74,6 +74,13 @@ class FakeRepositoryStore:
         self.statuses.append(status)
         return repository
 
+    def mark_ready(self, repository, *, indexed_commit_sha):
+        repository.indexed_commit_sha = indexed_commit_sha
+        repository.status = RepositoryStatus.ready
+        repository.failed_reason = None
+        self.statuses.append(RepositoryStatus.ready)
+        return repository
+
 
 class FakeIngestor:
     """Record Git repository ingestion and deletion calls."""
@@ -81,13 +88,15 @@ class FakeIngestor:
     def __init__(self):
         self.ingest_calls = []
         self.ingest_error: Exception | None = None
+        self.chunk_count = 1
         self.delete_calls = []
         self.delete_error: Exception | None = None
 
-    def ingest(self, repo_path, repository_id, branch, user_id):
+    def ingest(self, repo_path, repository_id, branch, commit_sha, user_id):
+        self.ingest_calls.append((repo_path, repository_id, branch, commit_sha, user_id))
         if self.ingest_error:
             raise self.ingest_error
-        self.ingest_calls.append((repo_path, repository_id, branch, user_id))
+        return self.chunk_count
 
     def delete_by_repository(self, repository_id, *, user_id):
         if self.delete_error:
@@ -182,6 +191,7 @@ def test_create_rejects_unsupported_repository_provider() -> None:
 def test_process_repository_follows_successful_status_sequence(tmp_path: Path) -> None:
     repository = make_repository()
     store = FakeRepositoryStore(repository)
+    git_calls = []
 
     class FakeGit:
         def __init__(self, parsed_url, user_id):
@@ -196,7 +206,11 @@ def test_process_repository_follows_successful_status_sequence(tmp_path: Path) -
         def get_default_branch(self):
             return "main"
 
+        def checkout(self, branch):
+            git_calls.append(("checkout", branch))
+
         def get_current_commit_sha(self):
+            assert git_calls == [("checkout", "main")]
             return "a" * 40
 
     ingestor = FakeIngestor()
@@ -206,7 +220,37 @@ def test_process_repository_follows_successful_status_sequence(tmp_path: Path) -
     assert repository.default_branch == "main"
     assert repository.local_path == str(tmp_path)
     assert repository.indexed_commit_sha == "a" * 40
-    assert ingestor.ingest_calls == [(tmp_path, repository.id, "main", repository.user_id)]
+    assert ingestor.ingest_calls == [(tmp_path, repository.id, "main", "a" * 40, repository.user_id)]
+
+
+def test_process_repository_rejects_repository_without_python_chunks(tmp_path: Path) -> None:
+    """Do not make unsupported Repository Evidence available."""
+    repository = make_repository()
+    store = FakeRepositoryStore(repository)
+    ingestor = FakeIngestor()
+    ingestor.chunk_count = 0
+
+    class FakeGit:
+        def __init__(self, parsed_url, user_id):
+            self.repo_path = tmp_path
+
+        def clone(self, token):
+            pass
+
+        def get_default_branch(self):
+            return "main"
+
+        def checkout(self, branch):
+            assert branch == "main"
+
+        def get_current_commit_sha(self):
+            return "a" * 40
+
+    make_service(store, ingestor=ingestor, git_factory=FakeGit).process_repository(repository.id, "secret-token")
+
+    assert repository.status == RepositoryStatus.failed
+    assert repository.failed_reason == "Repository contains no usable Python files"
+    assert repository.indexed_commit_sha is None
 
 
 def test_process_repository_marks_failure_without_exposing_token(caplog) -> None:
@@ -246,6 +290,9 @@ def test_process_repository_does_not_advance_indexed_commit_when_ingestion_fails
         def get_default_branch(self):
             return "main"
 
+        def checkout(self, branch):
+            assert branch == "main"
+
         def get_current_commit_sha(self):
             return "a" * 40
 
@@ -253,6 +300,7 @@ def test_process_repository_does_not_advance_indexed_commit_when_ingestion_fails
 
     assert repository.status == RepositoryStatus.failed
     assert repository.indexed_commit_sha is None
+    assert ingestor.ingest_calls == [(tmp_path, repository.id, "main", "a" * 40, repository.user_id)]
 
 
 def test_process_repository_uses_caller_supplied_token(tmp_path: Path) -> None:
@@ -268,6 +316,9 @@ def test_process_repository_uses_caller_supplied_token(tmp_path: Path) -> None:
 
         def get_default_branch(self):
             return "main"
+
+        def checkout(self, branch):
+            assert branch == "main"
 
         def get_current_commit_sha(self):
             return "b" * 40

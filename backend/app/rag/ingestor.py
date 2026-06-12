@@ -30,7 +30,7 @@ class DocumentIngestor:
         """Create an ingestor backed by shared Weaviate resources."""
         self.resources = resources
 
-    def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str, user_id: uuid.UUID) -> int:
+    def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str, commit_sha: str, user_id: uuid.UUID) -> int:
         """Replace a Git repository's indexed chunks for one user tenant.
 
         Returns:
@@ -38,9 +38,14 @@ class DocumentIngestor:
 
         """
         logger.info("Repository ingestion started repository_id=%s user_id=%s branch=%s", repository_id, user_id, branch)
-        raw_docs = self._load(repo_path, repository_id, branch)
-        chunked_docs = self._split(raw_docs) if raw_docs else []
+        raw_docs = self._load(repo_path, branch)
         repository_key = str(repository_id)
+        for raw_doc in raw_docs:
+            source = raw_doc.metadata["source"]
+            raw_doc.metadata.update(
+                {"repository_id": repository_key, "commit_sha": commit_sha, "parent_document_id": str(uuid.uuid5(repository_id, f"{commit_sha}:{source}"))}
+            )
+        chunked_docs = self._split(raw_docs) if raw_docs else []
         tenant = str(user_id)
 
         self._ensure_tenant(tenant)
@@ -49,7 +54,7 @@ class DocumentIngestor:
             logger.warning("Repository ingestion found no Python documents repository_id=%s user_id=%s", repository_id, user_id)
             return 0
 
-        ids = [str(uuid.uuid5(repository_id, f"{doc.metadata['source']}:{index}")) for index, doc in enumerate(chunked_docs)]
+        ids = [str(uuid.uuid5(repository_id, f"{commit_sha}:{doc.metadata['source']}:{index}")) for index, doc in enumerate(chunked_docs)]
         self._add_documents(chunked_docs, ids=ids, tenant=tenant)
         logger.info(
             "Repository ingestion completed repository_id=%s user_id=%s document_count=%s chunk_count=%s",
@@ -159,16 +164,11 @@ class DocumentIngestor:
         """Return the configured Weaviate collection."""
         return self.resources.client.collections.get(settings.WEAVIATE_COLLECTION)
 
-    def _load(self, repo_path: Path, repository_id: uuid.UUID, branch: str) -> list[Document]:
-        """Load Python files and attach Git repository metadata."""
+    def _load(self, repo_path: Path, branch: str) -> list[Document]:
+        """Load Python files from the checked-out default branch."""
         loader = GitLoader(repo_path=str(repo_path), branch=branch, file_filter=lambda file_path: str(file_path).endswith(".py"))
         raw_docs: list[Document] = loader.load()
-        logger.info("Loaded repository Python documents repository_id=%s branch=%s document_count=%s", repository_id, branch, len(raw_docs))
-        repository_key = str(repository_id)
-        for raw_doc in raw_docs:
-            source = raw_doc.metadata["source"]
-            raw_doc.metadata["repository_id"] = repository_key
-            raw_doc.metadata["parent_document_id"] = str(uuid.uuid5(repository_id, source))
+        logger.info("Loaded repository Python documents branch=%s document_count=%s", branch, len(raw_docs))
         return raw_docs
 
     def _split(self, raw_docs: list[Document]) -> list[Document]:
