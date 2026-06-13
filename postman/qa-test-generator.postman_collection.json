@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "92c95e9a-f9f8-4ccd-b7ae-db9f920db57d",
     "name": "QA Test Generator API",
-    "description": "Sign up, log in, and exercise every repository endpoint. Set `githubToken` and `replacementGithubToken` before running the repository requests. Run requests in collection order because login stores `accessToken` and repository creation stores `repositoryId`.",
+    "description": "Sign up, log in, and exercise the repository and session endpoints. Set `githubToken` and `replacementGithubToken` before running repository requests. Login stores `accessToken`, repository creation stores `repositoryId`, and session creation stores `repositorySessionId`. The repository must be ready before creating a session.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -402,6 +402,117 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Sessions",
+      "item": [
+        {
+          "name": "Create Repository Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Repository session is created and its ID is stored', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(response.repository_id).to.eql(pm.variables.get('repositoryId'));",
+                  "    pm.expect(response.title).to.eql(pm.variables.get('sessionTitle'));",
+                  "    pm.expect(response.owner_id).to.be.a('string').and.not.empty;",
+                  "    pm.environment.set('repositorySessionId', response.id);",
+                  "    pm.collectionVariables.set('repositorySessionId', response.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"repository_id\": \"{{repositoryId}}\",\n  \"title\": \"{{sessionTitle}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions"
+              ]
+            },
+            "description": "Creates a session bound to the authenticated user's ready repository and stores its ID in `repositorySessionId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Session History",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Session history is returned in message order', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.data).to.be.an('array');",
+                  "    response.data.forEach(function (message, index) {",
+                  "        pm.expect(message.session_id).to.eql(pm.variables.get('repositorySessionId'));",
+                  "        pm.expect(message.role).to.be.oneOf(['user', 'assistant']);",
+                  "        pm.expect(message.content).to.be.a('string');",
+                  "        pm.expect(message.position).to.be.a('number');",
+                  "        if (index > 0) {",
+                  "            pm.expect(message.position).to.be.above(response.data[index - 1].position);",
+                  "        }",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "{{repositorySessionId}}",
+                "history"
+              ]
+            },
+            "description": "Returns the recent ordered message history for a session owned by the authenticated user."
+          },
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [
@@ -457,6 +568,16 @@
     },
     {
       "key": "repositoryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sessionTitle",
+      "value": "Postman Repository Session",
+      "type": "string"
+    },
+    {
+      "key": "repositorySessionId",
       "value": "",
       "type": "string"
     },
