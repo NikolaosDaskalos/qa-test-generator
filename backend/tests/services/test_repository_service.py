@@ -404,11 +404,89 @@ def test_delete_cleans_local_vector_and_database_state_in_order() -> None:
     assert store.deleted == [repository]
 
 
-def test_vector_cleanup_failure_preserves_database_record() -> None:
-    repository = make_repository(status=RepositoryStatus.failed)
+def test_local_cleanup_failure_persists_failure_and_returns_500() -> None:
+    credential = "secret-token"
+    repository = make_repository(status=RepositoryStatus.ready, encrypted_token=credential)
+    store = FakeRepositoryStore(repository)
+    ingestor = FakeIngestor()
+
+    class FailingGit:
+        def __init__(self, parsed_url, user_id):
+            pass
+
+        def delete_checkout(self):
+            raise GitError(f"Checkout deletion failed for credential {credential}: " + ("x" * 1100))
+
+    with pytest.raises(HTTPException) as exc_info:
+        make_service(store, ingestor=ingestor, git_factory=FailingGit).delete_repository(
+            repository_id=repository.id, user=make_user(user_id=repository.user_id)
+        )
+
+    assert exc_info.value.status_code == 500
+    assert repository.status == RepositoryStatus.failed
+    assert repository.failed_reason.startswith("Checkout deletion failed for credential [REDACTED]")
+    assert credential not in repository.failed_reason
+    assert len(repository.failed_reason) == 1000
+    assert ingestor.delete_calls == []
+    assert store.repository is repository
+    assert store.deleted == []
+
+
+def test_vector_cleanup_failure_persists_failure_and_returns_500() -> None:
+    repository = make_repository(status=RepositoryStatus.ready)
     store = FakeRepositoryStore(repository)
     ingestor = FakeIngestor()
     ingestor.delete_error = RuntimeError("weaviate unavailable")
+    local_deleted = False
+
+    class FakeGit:
+        def __init__(self, parsed_url, user_id):
+            pass
+
+        def delete_checkout(self):
+            nonlocal local_deleted
+            local_deleted = True
+
+    with pytest.raises(HTTPException) as exc_info:
+        make_service(store, ingestor=ingestor, git_factory=FakeGit).delete_repository(repository_id=repository.id, user=make_user(user_id=repository.user_id))
+
+    assert exc_info.value.status_code == 500
+    assert local_deleted
+    assert repository.status == RepositoryStatus.failed
+    assert repository.failed_reason == "Repository vector deletion failed"
+    assert "weaviate" not in repository.failed_reason.lower()
+    assert store.repository is repository
+    assert store.deleted == []
+
+
+def test_database_cleanup_failure_rolls_back_reloads_and_persists_failure() -> None:
+    repository = make_repository(status=RepositoryStatus.ready)
+
+    class FailingDeleteStore(FakeRepositoryStore):
+        def __init__(self, stored_repository):
+            super().__init__(stored_repository)
+            self.transaction_calls = []
+            self.get_calls = 0
+
+        def get_by_id(self, repository_id):
+            self.get_calls += 1
+            if self.get_calls > 1:
+                self.transaction_calls.append("reload")
+            return super().get_by_id(repository_id)
+
+        def delete(self, repository_to_delete):
+            self.transaction_calls.append("delete")
+            raise RuntimeError("psycopg commit details")
+
+        def rollback(self):
+            self.transaction_calls.append("rollback")
+            super().rollback()
+
+        def update_status(self, repository_to_update, status, *, failed_reason=None):
+            self.transaction_calls.append("persist_failed")
+            return super().update_status(repository_to_update, status, failed_reason=failed_reason)
+
+    store = FailingDeleteStore(repository)
 
     class FakeGit:
         def __init__(self, parsed_url, user_id):
@@ -417,11 +495,14 @@ def test_vector_cleanup_failure_preserves_database_record() -> None:
         def delete_checkout(self):
             pass
 
-    with pytest.raises(RuntimeError, match="weaviate unavailable"):
-        make_service(store, ingestor=ingestor, git_factory=FakeGit).delete_repository(repository_id=repository.id, user=make_user(user_id=repository.user_id))
+    with pytest.raises(HTTPException) as exc_info:
+        make_service(store, git_factory=FakeGit).delete_repository(repository_id=repository.id, user=make_user(user_id=repository.user_id))
 
-    assert store.repository is repository
-    assert store.deleted == []
+    assert exc_info.value.status_code == 500
+    assert store.transaction_calls == ["delete", "rollback", "reload", "persist_failed"]
+    assert repository.status == RepositoryStatus.failed
+    assert repository.failed_reason == "Repository database deletion failed"
+    assert "psycopg" not in repository.failed_reason.lower()
 
 
 def test_repository_access_enforces_owner_and_allows_superuser() -> None:

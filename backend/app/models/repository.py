@@ -36,4 +36,4 @@ class Repository(SQLModel, table=True):
     )
     user: "User" = Relationship(back_populates="repositories")
     branches: list["Branch"] = Relationship(back_populates="repository", cascade_delete=True)
-    source_documents: list["SourceDocument"] = Relationship(back_populates="repository")
+    source_documents: list["SourceDocument"] = Relationship(back_populates="repository", sa_relationship_kwargs={"passive_deletes": "all"})

@@ -105,13 +105,36 @@ class RepositoryService:
             logger.warning("Repository deletion blocked while processing repository_id=%s status=%s", repository.id, repository.status.value)
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository cannot be deleted while processing")
 
-        logger.info("Repository deletion started repository_id=%s user_id=%s", repository.id, repository.user_id)
-        parsed_url = parse_repository_url(repository.repository_url)
-        git = self.git_commands_factory(parsed_url, repository.user_id)
-        git.delete_checkout()
-        self.ingestor.delete_repository(repository.id, user_id=repository.user_id)
-        self.repository_store.delete(repository)
-        logger.info("Repository deletion completed repository_id=%s user_id=%s", repository.id, repository.user_id)
+        user_id = repository.user_id
+        encrypted_token = repository.encrypted_token
+        logger.info("Repository deletion started repository_id=%s user_id=%s", repository_id, user_id)
+        try:
+            parsed_url = parse_repository_url(repository.repository_url)
+            git = self.git_commands_factory(parsed_url, user_id)
+            git.delete_checkout()
+        except Exception as exc:
+            reason = _sanitized_failure(exc, encrypted_token, fallback="Repository checkout deletion failed")
+            self.repository_store.update_status(repository, RepositoryStatus.failed, failed_reason=reason)
+            logger.error("Repository checkout deletion failed repository_id=%s: %s", repository_id, reason)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
+        try:
+            self.ingestor.delete_repository(repository_id, user_id=user_id)
+        except Exception as exc:
+            reason = _sanitized_failure(exc, encrypted_token, fallback="Repository vector deletion failed")
+            self.repository_store.update_status(repository, RepositoryStatus.failed, failed_reason=reason)
+            logger.error("Repository vector deletion failed repository_id=%s: %s", repository_id, reason)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
+        try:
+            self.repository_store.delete(repository)
+        except Exception as exc:
+            reason = _sanitized_failure(exc, encrypted_token, fallback="Repository database deletion failed")
+            self.repository_store.rollback()
+            repository = self.repository_store.get_by_id(repository_id)
+            if repository:
+                self.repository_store.update_status(repository, RepositoryStatus.failed, failed_reason=reason)
+            logger.error("Repository database deletion failed repository_id=%s: %s", repository_id, reason)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
+        logger.info("Repository deletion completed repository_id=%s user_id=%s", repository_id, user_id)
 
     def process_repository(self, repository_id: uuid.UUID, token: str) -> None:
         """Clone and index a pending Git repository, persisting each transition."""
@@ -200,12 +223,12 @@ def _provider_for(parsed_url: ParsedRepositoryUrl) -> RepositoryProvider:
     return RepositoryProvider.github
 
 
-def _sanitized_failure(exc: Exception, token: str | None) -> str:
+def _sanitized_failure(exc: Exception, token: str | None, *, fallback: str = "Repository processing failed") -> str:
     """Return a bounded failure message that cannot expose credentials."""
     if isinstance(exc, (GitError, ValueError)):
         reason = str(exc)
     else:
-        reason = "Repository processing failed"
+        reason = fallback
     if token:
         reason = reason.replace(token, "[REDACTED]")
     return reason[:1000]

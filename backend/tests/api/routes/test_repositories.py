@@ -3,7 +3,7 @@
 import uuid
 from types import SimpleNamespace
 
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.routes.repositories import create_repository, read_repositories, read_repository, router
@@ -202,4 +202,25 @@ def test_delete_repository_returns_empty_204() -> None:
         response = client.delete(f"/repositories/{repository_id}")
 
     assert response.status_code == 204
+    assert repository_service.delete_calls == [{"repository_id": repository_id, "user": user}]
+
+
+def test_delete_repository_returns_500_when_synchronous_cleanup_fails() -> None:
+    """Report cleanup failure from the synchronous delete request."""
+
+    class FailingRepositoryService(FakeRepositoryService):
+        def delete_repository(self, **kwargs) -> None:
+            super().delete_repository(**kwargs)
+            raise HTTPException(status_code=500, detail="Repository deletion failed")
+
+    repository_service = FailingRepositoryService()
+    user_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+
+    client, user = _client(repository_service, user_id)
+    with client:
+        response = client.delete(f"/repositories/{repository_id}")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Repository deletion failed"}
     assert repository_service.delete_calls == [{"repository_id": repository_id, "user": user}]

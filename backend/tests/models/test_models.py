@@ -7,14 +7,24 @@ from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import create_engine, event
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import configure_mappers
-from sqlmodel import SQLModel
+from sqlmodel import Session, SQLModel, select
 
 from app.enums.repository import RepositoryProvider, RepositoryStatus
 from app.models.branch import Branch
 from app.models.repository import Repository
 from app.models.search import SearchHistory, SearchSession
+from app.models.source_document import SourceDocument
+from app.models.user import User
 from app.schemas.repository import RepositoryCreate, RepositoryPublic
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_for_sqlite(_type, _compiler, **_kwargs) -> str:
+    return "JSON"
 
 
 def test_repository_token_fields_are_on_repository() -> None:
@@ -67,15 +77,7 @@ def test_all_database_models_are_registered() -> None:
 def test_importing_one_model_registers_all_relationship_targets() -> None:
     backend_dir = Path(__file__).resolve().parents[2]
     result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "from sqlalchemy.orm import configure_mappers;"
-                "from app.models.user import User;"
-                "configure_mappers()"
-            ),
-        ],
+        [sys.executable, "-c", ("from sqlalchemy.orm import configure_mappers;from app.models.user import User;configure_mappers()")],
         cwd=backend_dir,
         check=False,
         capture_output=True,
@@ -83,3 +85,31 @@ def test_importing_one_model_registers_all_relationship_targets() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_deleting_repository_uses_database_cascade_for_source_documents() -> None:
+    engine = create_engine("sqlite://")
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+    SQLModel.metadata.create_all(engine)
+    user = User(email="owner@example.com", hashed_password="not-used")
+    repository = Repository(
+        name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai", user_id=user.id, status=RepositoryStatus.ready
+    )
+    source_document = SourceDocument(repository_id=repository.id, content="print('hello')", doc_metadata={"source": "app/main.py"})
+
+    with Session(engine) as session:
+        session.add(user)
+        session.add(repository)
+        session.add(source_document)
+        session.commit()
+        session.refresh(repository)
+        assert repository.source_documents == [source_document]
+
+        session.delete(repository)
+        session.commit()
+
+        assert session.exec(select(SourceDocument).where(SourceDocument.repository_id == repository.id)).all() == []
