@@ -6,21 +6,28 @@ User stories: 26, 37, 69
 
 ## What to build
 
-Make hybrid retrieval explicitly Repository-scoped. Retrieval must continue to use the authenticated user's Weaviate tenant, but every evidence query must additionally require the Repository identity selected by the caller.
+Retrieve candidate Code Chunks from Weaviate using hybrid BM25 and vector
+search with reciprocal rank fusion (RRF). Retrieval must use the authenticated
+user's tenant, require the selected Repository identity, and discard results
+below the configured relevance threshold.
 
-This slice prevents chunks from another Repository owned by the same user from entering answers, plans, generated tests, or Patch Review.
+This slice provides the repository-scoped candidate set used by downstream
+reranking and prevents Code Chunks from another Repository owned by the same
+user from entering Repository Evidence.
 
 ## Acceptance criteria
 
 - [ ] The retrieval contract requires a Repository identity and cannot perform an unscoped evidence search.
-- [ ] Hybrid retrieval applies both the user tenant and a `repository_id` filter on every query.
+- [ ] Retrieval combines BM25 and vector search using Weaviate hybrid search with RRF.
+- [ ] Hybrid retrieval applies the authenticated user's tenant and a `repository_id` filter on every query.
+- [ ] The hybrid weighting, candidate count, and minimum relevance threshold are configurable.
+- [ ] Results below the minimum relevance threshold are excluded from the candidate Code Chunks.
 - [ ] Retrieved documents retain source, Repository, commit, and parent metadata needed by downstream workflows.
 - [ ] Results belonging to another Repository in the same user tenant are excluded.
-- [ ] Missing tenants and empty Repository result sets return no Repository Evidence without creating new tenants.
+- [ ] Missing tenants, empty Repository results, and all-below-threshold results return no candidate Code Chunks without creating new tenants.
 - [ ] Repository-level retrieval statistics, if exposed, are filtered to the selected Repository.
-- [ ] Retriever and RAG pipeline tests assert the query filter and prove that cross-Repository chunks cannot enter Repository Evidence.
+- [ ] Retriever and RAG pipeline tests assert RRF hybrid options, threshold filtering, the Repository query filter, and tenant isolation.
 
 ## Blocked by
 
 - [02 - Index Repository files as commit-scoped Code Chunks](02-index-repository-code-chunks.md)
-

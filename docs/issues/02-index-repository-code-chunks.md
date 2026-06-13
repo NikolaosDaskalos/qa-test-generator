@@ -1,6 +1,6 @@
 # Index Repository files as commit-scoped Code Chunks
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 5, 7-9, 69
 
@@ -12,14 +12,14 @@ Repositories without a usable Python codebase must fail or be reported as unsupp
 
 ## Acceptance criteria
 
-- [ ] Initial processing resolves and records the default-branch commit represented by Repository Evidence.
-- [ ] Only Python files from the checked-out default branch are loaded and split with the existing Python-aware recursive splitter.
-- [ ] Every Code Chunk stores `repository_id`, `commit_sha`, `source`, and `parent_id`.
-- [ ] Code Chunk identifiers are deterministic for the Repository snapshot and do not collide with chunks from another Repository.
-- [ ] Weaviate writes remain isolated to the Repository owner's tenant.
-- [ ] A Repository becomes ready only after all Code Chunks are written successfully and the indexed commit is persisted.
-- [ ] A Repository with no usable Python files is reported as unsupported or failed with a sanitized reason.
-- [ ] Ingestor, service, persistence, model, and migration tests cover metadata, commit persistence, tenant isolation, empty Python repositories, and failed vector writes.
+- [x] Initial processing resolves and records the default-branch commit represented by Repository Evidence.
+- [x] Only Python files from the checked-out default branch are loaded and split with the existing Python-aware recursive splitter.
+- [x] Every Code Chunk stores `repository_id`, `commit_sha`, `source`, and `parent_id`.
+- [x] Code Chunk identifiers are deterministic for the Repository snapshot and do not collide with chunks from another Repository.
+- [x] Weaviate writes remain isolated to the Repository owner's tenant.
+- [x] A Repository becomes ready only after all Code Chunks are written successfully and the indexed commit is persisted.
+- [x] A Repository with no usable Python files is reported as unsupported or failed with a sanitized reason.
+- [x] Ingestor, service, persistence, model, and migration tests cover metadata, commit persistence, tenant isolation, empty Python repositories, and failed vector writes.
 
 ## Blocked by
 
