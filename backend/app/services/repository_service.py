@@ -89,8 +89,16 @@ class RepositoryService:
         return repository
 
     def update_repository(self, *, repository_id: uuid.UUID, repository_in: RepositoryUpdate, user: User) -> None:
-        """Replace only a Git repository's encrypted token and expiration date."""
+        """Validate and replace a Git repository's encrypted credentials."""
         repository = self._get_accessible(repository_id, user)
+        parsed_url = parse_repository_url(repository.repository_url)
+        git = self.git_commands_factory(parsed_url, repository.user_id)
+        try:
+            git.validate_remote_access(repository_in.token)
+        except GitError as exc:
+            logger.warning("Repository credential validation failed repository_id=%s user_id=%s", repository.id, user.id)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token is invalid for repository") from exc
+
         self.repository_store.update_token(
             repository,
             encrypted_token=encrypt_repository_token(repository_in.token),

@@ -1,5 +1,6 @@
 import subprocess
 import uuid
+from base64 import b64encode
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,7 @@ def test_git_repository_checkout_paths_are_isolated_by_user(monkeypatch, tmp_pat
     assert first.repo_path == (tmp_path / str(first_user) / "github.com" / "openai" / "openai-python")
 
 
-def test_token_is_passed_only_through_askpass_environment(monkeypatch, tmp_path: Path) -> None:
+def test_token_bearing_operations_always_send_authentication(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
 
     def fake_run(args, **kwargs):
@@ -44,6 +45,30 @@ def test_token_is_passed_only_through_askpass_environment(monkeypatch, tmp_path:
     assert captured["env"]["QA_GIT_TOKEN"] == token
     assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
     assert captured["env"]["GIT_ASKPASS"].endswith("git_askpass.py")
+    encoded_credentials = b64encode(f"x-access-token:{token}".encode()).decode()
+    assert captured["env"]["GIT_CONFIG_COUNT"] == "1"
+    assert captured["env"]["GIT_CONFIG_KEY_0"] == "http.extraHeader"
+    assert captured["env"]["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {encoded_credentials}"
+
+
+def test_validate_remote_access_uses_authenticated_ls_remote(monkeypatch) -> None:
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
+    calls = []
+
+    def fake_run(*args: str, **kwargs) -> GitResult:
+        calls.append((args, kwargs))
+        return GitResult(stdout="", stderr="")
+
+    monkeypatch.setattr(git, "_run", fake_run)
+
+    git.validate_remote_access("replacement-token")
+
+    assert calls == [
+        (
+            ("git", "ls-remote", "https://github.com/openai/openai-python.git"),
+            {"cwd": Path.cwd(), "token": "replacement-token"},
+        )
+    ]
 
 
 def test_get_current_commit_sha_resolves_head(monkeypatch) -> None:
@@ -92,9 +117,22 @@ def test_clone_accepts_equivalent_existing_origin(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr(settings, "REPO_PATH", tmp_path)
     git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
     (git.repo_path / ".git").mkdir(parents=True)
-    monkeypatch.setattr(git, "_run", lambda *args, **kwargs: GitResult(stdout="git@github.com:openai/openai-python.git", stderr=""))
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return GitResult(stdout="git@github.com:openai/openai-python.git", stderr="")
+
+    monkeypatch.setattr(git, "_run", fake_run)
 
     assert git.clone("secret-token") is None
+    assert calls == [
+        (("git", "remote", "get-url", "origin"), {"cwd": git.repo_path}),
+        (
+            ("git", "ls-remote", "https://github.com/openai/openai-python.git"),
+            {"cwd": Path.cwd(), "token": "secret-token"},
+        ),
+    ]
 
 
 def test_clone_rejects_different_existing_origin(monkeypatch, tmp_path: Path) -> None:

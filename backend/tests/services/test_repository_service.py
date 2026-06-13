@@ -331,13 +331,31 @@ def test_process_repository_uses_caller_supplied_token(tmp_path: Path) -> None:
 def test_update_replaces_only_encrypted_credentials() -> None:
     repository = make_repository(status=RepositoryStatus.ready, default_branch="main")
     store = FakeRepositoryStore(repository)
+    calls = []
 
-    make_service(store).update_repository(
+    class FakeGit:
+        def __init__(self, parsed_url, user_id):
+            assert parsed_url.canonical_url == repository.repository_url
+            assert user_id == repository.user_id
+
+        def validate_remote_access(self, token):
+            calls.append(("validate", token))
+
+    original_update_token = store.update_token
+
+    def update_token(*args, **kwargs):
+        calls.append(("persist", decrypt_repository_token(kwargs["encrypted_token"])))
+        return original_update_token(*args, **kwargs)
+
+    store.update_token = update_token
+
+    make_service(store, git_factory=FakeGit).update_repository(
         repository_id=repository.id,
         repository_in=RepositoryUpdate(token="replacement-token", token_expiration_days=7),
         user=make_user(user_id=repository.user_id),
     )
 
+    assert calls == [("validate", "replacement-token"), ("persist", "replacement-token")]
     assert decrypt_repository_token(repository.encrypted_token or "") == ("replacement-token")
     assert repository.token_expiration_date is not None
     assert repository.token_expiration_date > datetime.now(UTC) + timedelta(days=6)
@@ -349,13 +367,47 @@ def test_update_with_null_expiration_clears_expiration() -> None:
     repository = make_repository(token_expiration_date=datetime.now(UTC) + timedelta(days=1))
     store = FakeRepositoryStore(repository)
 
-    make_service(store).update_repository(
+    class FakeGit:
+        def __init__(self, parsed_url, user_id):
+            pass
+
+        def validate_remote_access(self, token):
+            pass
+
+    make_service(store, git_factory=FakeGit).update_repository(
         repository_id=repository.id,
         repository_in=RepositoryUpdate(token="replacement-token", token_expiration_days=None),
         user=make_user(user_id=repository.user_id),
     )
 
     assert repository.token_expiration_date is None
+
+
+def test_update_rejects_token_without_repository_access() -> None:
+    repository = make_repository(token_expiration_date=datetime.now(UTC) + timedelta(days=1))
+    original_encrypted_token = repository.encrypted_token
+    original_expiration = repository.token_expiration_date
+    store = FakeRepositoryStore(repository)
+
+    class FakeGit:
+        def __init__(self, parsed_url, user_id):
+            pass
+
+        def validate_remote_access(self, token):
+            raise GitError(f"Authentication failed for {token}")
+
+    with pytest.raises(HTTPException) as exc_info:
+        make_service(store, git_factory=FakeGit).update_repository(
+            repository_id=repository.id,
+            repository_in=RepositoryUpdate(token="invalid-token", token_expiration_days=30),
+            user=make_user(user_id=repository.user_id),
+        )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Token is invalid for repository"
+    assert repository.encrypted_token == original_encrypted_token
+    assert repository.token_expiration_date == original_expiration
+    assert store.saved == []
 
 
 @pytest.mark.parametrize("repository_status", [RepositoryStatus.pending, RepositoryStatus.cloning, RepositoryStatus.indexing])

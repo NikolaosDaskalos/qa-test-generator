@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import uuid
+from base64 import b64encode
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,8 +36,8 @@ class GitCommands:
     """Execute Git operations within a user-isolated local checkout.
 
     The constructor accepts a validated repository value object rather than raw
-    input. Network credentials are supplied only to clone, fetch, and push via
-    ``GIT_ASKPASS`` and are never included in command-line arguments.
+    input. Token-bearing network operations always send authentication through
+    the child process environment and never include it in command-line arguments.
     """
 
     def __init__(self, parsed_repository_url: ParsedRepositoryUrl, user_id: uuid.UUID) -> None:
@@ -70,6 +71,7 @@ class GitCommands:
             if parse_repository_url(remote_url).canonical_url != self.parsed_repository_url.canonical_url:
                 logger.error("Existing Git checkout has an unexpected origin path=%s", self.repo_path)
                 raise GitError("A different repository already exists at the clone path")
+            self.validate_remote_access(token)
             logger.info("Reusing existing Git checkout path=%s", self.repo_path)
             return None
 
@@ -124,6 +126,16 @@ class GitCommands:
         """Fetch updates from ``origin`` using non-interactive authentication."""
         logger.info("Fetching Git repository path=%s", self.repo_path)
         return self._run("git", "fetch", "origin", cwd=self.repo_path, token=token)
+
+    def validate_remote_access(self, token: str) -> GitResult:
+        """Verify that a Repository Credential can read this remote."""
+        logger.info(
+            "Validating Git repository access host=%s owner=%s repository=%s",
+            self.parsed_repository_url.host,
+            self.parsed_repository_url.owner,
+            self.parsed_repository_url.name,
+        )
+        return self._run("git", "ls-remote", self.parsed_repository_url.canonical_url, cwd=Path.cwd(), token=token)
 
     def delete_checkout(self) -> None:
         """Delete this repository's checkout without trusting persisted paths.
@@ -223,6 +235,14 @@ class GitCommands:
                     "GIT_TERMINAL_PROMPT": "0",
                     "QA_GIT_USERNAME": self._credential_username(),
                     "QA_GIT_TOKEN": token,
+                }
+            )
+            encoded_credentials = b64encode(f"{self._credential_username()}:{token}".encode()).decode()
+            environment.update(
+                {
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "http.extraHeader",
+                    "GIT_CONFIG_VALUE_0": f"Authorization: Basic {encoded_credentials}",
                 }
             )
 
