@@ -50,7 +50,6 @@
 | **Frontend** | React + TypeScript + Vite | SPA dashboard με TanStack Router & shadcn/ui |
 | **Database** | PostgreSQL | Κύρια βάση δεδομένων, migrations μέσω Alembic |
 | **AI Agent** | LangChain + OpenAI + Tavily | Αgent για web search |
-| **Gradio UI** | Gradio | Εναλλακτικό chat interface για τον AI agent |
 | **Containerization** | Docker + Docker Compose | Deployment σε containers |
 | **Reverse Proxy** | Traefik | Routing & TLS σε production |
 | **CI/CD** | GitHub Actions | Αυτοματοποιημένα tests & deployments |
@@ -81,7 +80,6 @@ full-stack-fastapi-template/
 │   ├── Dockerfile
 │   ├── README.md
 │   ├── alembic.ini
-│   ├── gradio_app.py                 # Gradio Chat UI
 │   ├── pyproject.toml
 │   ├── app/                          # Κύριος κώδικας εφαρμογής
 │   │   ├── __init__.py
@@ -107,7 +105,7 @@ full-stack-fastapi-template/
 │   │   │       ├── users.py
 │   │   │       ├── items.py
 │   │   │       ├── todos.py
-│   │   │       ├── searches.py
+│   │   │       ├── sessions.py
 │   │   │       ├── private.py
 │   │   │       └── utils.py
 │   │   ├── agent/                    # AI Search Agent
@@ -493,17 +491,6 @@ full-stack-fastapi-template/
 **Τι είναι:** Backend documentation.  
 **Τι κάνει:** Εξηγεί τη δομή, τα API endpoints, και πώς να τρέξεις/τεστάρεις.
 
-#### `gradio_app.py`
-**Τι είναι:** Εναλλακτικό Chat UI με Gradio.  
-**Τι κάνει:** Παρέχει ένα web-based chat interface χωρίς να χρειάζεται το React frontend:
-- **Login view:** Email/password authentication μέσω του FastAPI backend
-- **Chat view:** Επιλογή/δημιουργία search sessions, αποστολή μηνυμάτων στον AI agent
-- **API helpers:** `api_login()`, `api_create_session()`, `api_chat()`, `api_list_sessions()`
-- **Styling:** Custom dark theme (indigo/violet), glassmorphism, gradient buttons
-- **Τρέχει:** `python gradio_app.py` στο port 9987
-
----
-
 ### Backend `app/` — Κύριος κώδικας
 
 #### `__init__.py`
@@ -549,12 +536,9 @@ full-stack-fastapi-template/
 - `Todo` : DB Table (id, created_at, completed, owner_id → User)
 - `TodoPublic`, `TodosPublic` : API response schemas
 
-**Search Agent Models:**
-- `SearchSessionBase`, `SearchSessionCreate`, `SearchSessionUpdate` : Session CRUD
-- `SearchSession` : **DB Table** (id, owner_id, memory JSON, timestamps)
-- `SearchHistory` : **DB Table** (id, session_id, owner_id, query, result)
-- `AgentChatRequest` : Incoming chat message
-- `AgentChatResponse` : Agent reply with session_id
+**Repository Session Models:**
+- `RepositorySession` : **DB Table** δεμένο μόνιμα με ένα Repository
+- `SessionHistory` : **DB Table** με τα μηνύματα του Repository Session
 
 #### `crud.py`
 **Τι είναι:** CRUD (Create-Read-Update-Delete) operations.  
@@ -638,7 +622,7 @@ full-stack-fastapi-template/
 - `utils.router` : Health check & test email
 - `items.router` : Items CRUD
 - `todos.router` : Todos CRUD
-- `searches.router` : AI Search agent endpoints
+- `sessions.router` : Repository Session endpoints
 - `private.router` : Μόνο σε local environment (test user creation)
 
 #### `deps.py`
@@ -697,12 +681,11 @@ full-stack-fastapi-template/
 - `POST /todos/`, `PUT /todos/{id}`, `DELETE /todos/{id}`
 - Ownership checks, superuser privileges
 
-#### `searches.py`
-**Τι είναι:** AI Search Agent endpoints.  
+#### `sessions.py`
+**Τι είναι:** Repository Session endpoints.
 **Τι κάνει:**
-- `GET /searches/` : Λίστα search sessions
-- `POST /searches/` : Δημιουργία νέας search session
-- `POST /searches/{id}/chat` : Στέλνει μήνυμα στον AI agent μέσα σε ένα session. Καλεί `run_agent_on_session()` που τρέχει τον LangChain agent με memory.
+- `POST /sessions` : Δημιουργία Repository Session δεμένου με ένα Repository
+- `GET /sessions/{id}/history` : Επιστρέφει τα έξι πιο πρόσφατα μηνύματα
 
 #### `private.py`
 **Τι είναι:** Private/internal endpoints (μόνο local).  
@@ -774,7 +757,6 @@ full-stack-fastapi-template/
 | `1a31ce608336_add_cascade_delete...py` | Cascade delete relationships |
 | `9e038bf14c24_todos_table_added.py` | Νέος πίνακας Todos |
 | `f0b57bb0e08e_todos_table_updated.py` | Ενημέρωση Todos table |
-| `d3236dee0c37_tavily_searches_added.py` | Πίνακες SearchSession & SearchHistory |
 
 ---
 
@@ -1232,4 +1214,3 @@ full-stack-fastapi-template/
 | `user.ts` | Test user creation helpers |
 
 ---
-

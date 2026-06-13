@@ -16,7 +16,7 @@ from sqlmodel import Session, SQLModel, select
 from app.enums.repository import RepositoryProvider, RepositoryStatus
 from app.models.branch import Branch
 from app.models.repository import Repository
-from app.models.search import SearchHistory, SearchSession
+from app.models.session import RepositorySession, SessionHistory
 from app.models.source_document import SourceDocument
 from app.models.user import User
 from app.schemas.repository import RepositoryCreate, RepositoryPublic
@@ -57,9 +57,9 @@ def test_repository_schema_serializes_enums_as_strings() -> None:
     assert repository_data["status"] == "ready"
 
 
-def test_search_timestamps_are_timezone_aware() -> None:
-    session = SearchSession(owner_id=uuid.uuid4())
-    history = SearchHistory(session_id=session.id, owner_id=session.owner_id, query="query")
+def test_repository_session_timestamps_are_timezone_aware() -> None:
+    session = RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4())
+    history = SessionHistory(session_id=session.id, role="user", content="query", position=1)
 
     assert session.created_at.tzinfo is timezone.utc
     assert session.updated_at.tzinfo is timezone.utc
@@ -69,7 +69,10 @@ def test_search_timestamps_are_timezone_aware() -> None:
 def test_all_database_models_are_registered() -> None:
     configure_mappers()
 
-    assert {"branch", "repository", "item", "search_history", "search_session", "todo", "user"} <= set(SQLModel.metadata.tables)
+    assert {"branch", "repository", "repository_session", "session_history", "item", "todo", "user"} <= set(SQLModel.metadata.tables)
+    assert "search_session" not in SQLModel.metadata.tables
+    assert "search_history" not in SQLModel.metadata.tables
+    assert "memory" not in RepositorySession.model_fields
     branch_table = cast(Any, Branch).__table__
     assert branch_table.c.repository_id.foreign_keys
 

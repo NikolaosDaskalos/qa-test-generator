@@ -180,7 +180,7 @@ class ChainBuilder:
 
     @staticmethod
     def _to_lc_messages(history: list[dict]):
-        """Convert Gradio {role, content} dicts → LangChain message objects."""
+        """Convert persisted {role, content} dicts to LangChain message objects."""
         messages = []
         for msg in history[-6:]:
             role = msg.get("role", "")

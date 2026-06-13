@@ -17,10 +17,12 @@ from app.core.db import engine
 from app.core.vector_db import WeaviateResources, get_weaviate_resources
 from app.models.user import User
 from app.persistence.repository_store import RepositoryStore
+from app.persistence.session_store import RepositorySessionStore
 from app.persistence.source_document_store import SourceDocumentStore
 from app.rag.ingestor import DocumentIngestor
 from app.schemas.authentication import TokenPayload
 from app.services.repository_service import RepositoryService
+from app.services.session_service import RepositorySessionService
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,22 @@ def get_repository_service(repository_store: RepositoryStoreDep, ingestor: Docum
 
 
 RepositoryServiceDep = Annotated[RepositoryService, Depends(get_repository_service)]
+
+
+def get_repository_session_store(session: SessionDep) -> RepositorySessionStore:
+    return RepositorySessionStore(session)
+
+
+RepositorySessionStoreDep = Annotated[RepositorySessionStore, Depends(get_repository_session_store)]
+
+
+def get_repository_session_service(
+    session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep
+) -> RepositorySessionService:
+    return RepositorySessionService(session_store, repository_store)
+
+
+RepositorySessionServiceDep = Annotated[RepositorySessionService, Depends(get_repository_session_service)]
 
 
 def get_current_user(session: SessionDep, token: TokenDep) -> User:

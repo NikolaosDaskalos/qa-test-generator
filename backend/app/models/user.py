@@ -9,7 +9,7 @@ from sqlmodel import Field, Relationship, SQLModel
 if TYPE_CHECKING:
     from app.models.item import Item
     from app.models.repository import Repository
-    from app.models.search import SearchSession
+    from app.models.session import RepositorySession
     from app.models.todo import Todo
 
 
@@ -24,5 +24,7 @@ class User(SQLModel, table=True):
 
     items: list["Item"] = Relationship(back_populates="owner", cascade_delete=True)
     todos: list["Todo"] = Relationship(back_populates="owner", cascade_delete=True)
-    search_sessions: list["SearchSession"] = Relationship(back_populates="owner", cascade_delete=True)
+    repository_sessions: list["RepositorySession"] = Relationship(
+        back_populates="owner", sa_relationship_kwargs={"passive_deletes": "all"}
+    )
     repositories: list["Repository"] = Relationship(back_populates="user", cascade_delete=True)
