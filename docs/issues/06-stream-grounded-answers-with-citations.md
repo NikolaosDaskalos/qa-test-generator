@@ -1,6 +1,6 @@
 # Stream repository-grounded answers with file citations
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 23-29, 32, 72
 
@@ -12,15 +12,15 @@ When relevant evidence is unavailable, the answer must state that limitation ins
 
 ## Acceptance criteria
 
-- [ ] The question endpoint returns a synchronous `text/event-stream` response for an owned Repository Session.
-- [ ] Follow-up reformulation uses no more than the six most recent Session History messages.
-- [ ] Retrieval is always bound to the Repository Session's immutable Repository identity.
-- [ ] Agent Stream events include ordered stage progress, answer tokens, file citations, and one terminal persisted result.
-- [ ] Every Repository citation identifies a source file from retrieved Repository Evidence and is traceable to the evidence supplied to generation.
-- [ ] Answers do not cite or claim facts from another Repository or unsupported model knowledge.
-- [ ] Empty Repository Evidence produces an explicit insufficient-evidence answer.
-- [ ] The completed exchange and citations are persisted as Session History or associated question-result data.
-- [ ] SSE tests consume complete streams and assert content type, event order, citations, insufficient evidence, persistence, authentication, and ownership.
+- [x] The question endpoint returns a synchronous `text/event-stream` response for an owned Repository Session.
+- [x] Follow-up reformulation uses no more than the six most recent Session History messages.
+- [x] Retrieval is always bound to the Repository Session's immutable Repository identity.
+- [x] Agent Stream events include ordered stage progress, answer tokens, file citations, and one terminal persisted result.
+- [x] Every Repository citation identifies a source file from retrieved Repository Evidence and is traceable to the evidence supplied to generation.
+- [x] Answers do not cite or claim facts from another Repository or unsupported model knowledge.
+- [x] Empty Repository Evidence produces an explicit insufficient-evidence answer.
+- [x] The completed exchange and citations are persisted as Session History or associated question-result data.
+- [x] SSE tests consume complete streams and assert content type, event order, citations, insufficient evidence, persistence, authentication, and ownership.
 
 ## Blocked by
 

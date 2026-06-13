@@ -11,6 +11,11 @@ class RepositorySessionCreate(BaseModel):
     title: str = Field(default="New Repository Session", min_length=1, max_length=255)
 
 
+class RepositoryQuestionRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    use_hyde: bool = False
+
+
 class RepositorySessionPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -25,6 +25,10 @@ COST_PER_TOKEN = 0.00000015
 # Prompt used to generate the hypothetical document in HyDE mode
 HYDE_PROMPT_TEMPLATE = "Write a short, factual passage (2-4 sentences) that directly answers the following question. Imagine this is an excerpt from a relevant document.\n\nQuestion: {question}\n\nPassage:"
 
+# Returned verbatim when retrieval yields no Repository Evidence, so the answer
+# states the limitation instead of letting the model fill gaps from its own knowledge.
+INSUFFICIENT_EVIDENCE_ANSWER = "I don't have enough Repository Evidence in this session to answer that question."
+
 
 class ChainBuilder:
     """Build and own LCEL chains for standard and HyDE retrieval modes."""
@@ -83,11 +87,14 @@ class ChainBuilder:
             alpha=settings.HYBRID_SEARCH_ALPHA,
             parent_limit=settings.FINAL_PARENT_LIMIT,
         )
+        if not evidence:
+            logger.warning("Standard RAG retrieval returned no documents")
+            yield from self._stream_insufficient_evidence(question, hypothetical_doc=None)
+            return
+
         sources = self._extract_sources(evidence)
         context = self._format_docs(evidence)
         logger.info("Standard RAG retrieval completed evidence_count=%s", len(evidence))
-        if not evidence:
-            logger.warning("Standard RAG retrieval returned no documents")
 
         # Step 3: Build prompt and stream answer
         qa_prompt = ChatPromptTemplate.from_messages(
@@ -122,11 +129,14 @@ class ChainBuilder:
             alpha=settings.HYBRID_SEARCH_ALPHA,
             parent_limit=settings.FINAL_PARENT_LIMIT,
         )
+        if not evidence:
+            logger.warning("HyDE retrieval returned no documents")
+            yield from self._stream_insufficient_evidence(question, hypothetical_doc=hypothetical_doc)
+            return
+
         sources = self._extract_sources(evidence)
         context = self._format_docs(evidence)
         logger.info("HyDE retrieval completed evidence_count=%s", len(evidence))
-        if not evidence:
-            logger.warning("HyDE retrieval returned no documents")
 
         # Step 3 — Build a one-shot prompt (no chain needed, context is already ready)
         qa_prompt = ChatPromptTemplate.from_messages(
@@ -143,6 +153,11 @@ class ChainBuilder:
         yield self._done_event(question, collected, sources, hypothetical_doc)
 
     # ── Helpers ───────────────────────────────────────────────────
+
+    def _stream_insufficient_evidence(self, question: str, *, hypothetical_doc: str | None) -> Generator:
+        """Stream a deterministic answer with no citations when evidence is empty."""
+        yield {"type": "token", "content": INSUFFICIENT_EVIDENCE_ANSWER}
+        yield self._done_event(question, INSUFFICIENT_EVIDENCE_ANSWER, [], hypothetical_doc)
 
     def _generate_hypothetical_doc(self, question: str) -> str:
         """Ask the LLM to write a passage that would answer the question."""

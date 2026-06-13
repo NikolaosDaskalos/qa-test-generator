@@ -20,6 +20,7 @@ from app.persistence.repository_store import RepositoryStore
 from app.persistence.session_store import RepositorySessionStore
 from app.persistence.source_document_store import SourceDocumentStore
 from app.rag.ingestor import DocumentIngestor
+from app.rag.rag_pipeline import RAGPipeline
 from app.schemas.authentication import TokenPayload
 from app.services.repository_service import RepositoryService
 from app.services.session_service import RepositorySessionService
@@ -127,3 +128,13 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
         raise HTTPException(status_code=403, detail="The user doesn't have enough privileges")
     logger.info("Superuser authorization granted user_id=%s", current_user.id)
     return current_user
+
+
+def get_rag_pipeline(
+    current_user: CurrentUser, weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStoreDep
+) -> RAGPipeline:
+    """Build the authenticated user's repository-scoped RAG pipeline."""
+    return RAGPipeline(current_user.id, weaviate_resources, source_document_store)
+
+
+RAGPipelineDep = Annotated[RAGPipeline, Depends(get_rag_pipeline)]

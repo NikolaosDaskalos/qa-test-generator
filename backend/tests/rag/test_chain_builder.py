@@ -7,7 +7,7 @@ import pytest
 from app.core.config import settings
 from app.models.source_document import SourceDocument
 from app.rag import chain_builder
-from app.rag.chain_builder import ChainBuilder
+from app.rag.chain_builder import INSUFFICIENT_EVIDENCE_ANSWER, ChainBuilder
 
 
 class FakeRunnable:
@@ -87,3 +87,24 @@ def test_answer_stream_scopes_retrieval_to_repository(monkeypatch, use_hyde, exp
             "score": None,
         }
     ]
+
+
+@pytest.mark.parametrize("use_hyde", [False, True])
+def test_answer_stream_returns_insufficient_evidence_without_calling_the_model(monkeypatch, use_hyde) -> None:
+    """Empty Repository Evidence yields a deterministic answer and no generation."""
+    monkeypatch.setattr(chain_builder, "ChatPromptTemplate", FakePromptTemplate)
+    FakeRunnable.stream_values = []
+    repository_id = uuid.uuid4()
+    retriever = RecordingRetriever([])  # no Repository Evidence retrieved
+    builder = ChainBuilder(object(), retriever)
+
+    events = list(builder.answer_stream("question", repository_id=repository_id, use_hyde=use_hyde))
+
+    # Retrieval is still attempted and scoped to the Repository.
+    assert retriever.calls[-1][1]["repository_id"] == repository_id
+    # The language model is never streamed for generation.
+    assert FakeRunnable.stream_values == []
+    # An explicit insufficient-evidence answer is the only emitted content.
+    assert [event["content"] for event in events if event["type"] == "token"] == [INSUFFICIENT_EVIDENCE_ANSWER]
+    assert events[-1]["type"] == "done"
+    assert events[-1]["sources"] == []
