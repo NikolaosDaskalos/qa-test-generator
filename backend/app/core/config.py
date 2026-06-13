@@ -142,6 +142,7 @@ class Settings(BaseSettings):
         return urlsafe_b64encode(sha256(self.SECRET_KEY.encode()).digest())
 
     OPENAI_API_KEY: str
+    COHERE_API_KEY: str
     ANTHROPIC_API_KEY: str
     TAVILY_API_KEY: str
     VOYAGE_API_KEY: str
@@ -158,6 +159,8 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 10
     TOP_K: int = 10
+    FINAL_PARENT_LIMIT: int = Field(default=5, ge=1)
+    COHERE_RERANK_MODEL: str = "rerank-v4.0-pro"
 
     WEAVIATE_HTTP_HOST: str = "localhost"
     WEAVIATE_HTTP_PORT: int = 8081
@@ -168,7 +171,7 @@ class Settings(BaseSettings):
     WEAVIATE_API_KEY: str | None = None
     WEAVIATE_COLLECTION: str = "Document"
     # alpha value: 1.0 -> Pure vector search, 0.0 -> pure BM25 search
-    HYBRID_SEARCH_ALPHA: float = Field(default=0.5, ge=0.0, le=1.0)
+    HYBRID_SEARCH_ALPHA: float = Field(default=0.3, ge=0.0, le=1.0)
 
     REPO_PATH: Path = Field(default_factory=lambda: PROJECT_PATH / ".tmp/repositories")
 

@@ -6,7 +6,9 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
+from langchain_cohere import CohereRerank
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from app.core.config import settings
 from app.core.vector_db import WeaviateResources
@@ -32,7 +34,10 @@ class RAGPipeline:
         # ── Components ───────────────────────────────────────────
         self.weaviate_resources = weaviate_resources
         self.ingestor = DocumentIngestor(self.weaviate_resources, source_document_store)
-        self.document_retriever = DocumentRetriever(self.weaviate_resources, tenant=str(user_id))
+        reranker = CohereRerank(
+            model=settings.COHERE_RERANK_MODEL, cohere_api_key=SecretStr(settings.COHERE_API_KEY), top_n=settings.TOP_K
+        )
+        self.document_retriever = DocumentRetriever(self.weaviate_resources, str(user_id), source_document_store, reranker)
         self.chain_builder = ChainBuilder(self.llm, self.document_retriever)
         logger.info("RAG pipeline initialized user_id=%s model=%s", user_id, settings.LLM_MODEL)
 

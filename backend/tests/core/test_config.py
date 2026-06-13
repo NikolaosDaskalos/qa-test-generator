@@ -23,6 +23,7 @@ def build_settings(tmp_path: Path, **updates: Any) -> Settings:
         "FIRST_SUPERUSER": "admin@example.com",
         "FIRST_SUPERUSER_PASSWORD": "test-password",
         "OPENAI_API_KEY": "test",
+        "COHERE_API_KEY": "test",
         "ANTHROPIC_API_KEY": "test",
         "TAVILY_API_KEY": "test",
         "VOYAGE_API_KEY": "test",
@@ -53,3 +54,20 @@ def test_deployment_rejects_invalid_repository_token_encryption_key(tmp_path: Pa
     """Reject malformed repository encryption keys in deployments."""
     with pytest.raises(ValidationError, match="REPOSITORY_TOKEN_ENCRYPTION_KEY must be a valid Fernet key"):
         build_settings(tmp_path, REPOSITORY_TOKEN_ENCRYPTION_KEY="ordinary-secret")
+
+
+def test_reranking_configuration_is_independent_of_candidate_count(tmp_path: Path) -> None:
+    """Configure Cohere and the final parent limit independently of candidate retrieval."""
+    configured = build_settings(
+        tmp_path,
+        COHERE_API_KEY="cohere-test-key",
+        COHERE_RERANK_MODEL="rerank-test-model",
+        TOP_K=12,
+        FINAL_PARENT_LIMIT=4,
+        REPOSITORY_TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode(),
+    )
+
+    assert configured.COHERE_API_KEY == "cohere-test-key"
+    assert configured.COHERE_RERANK_MODEL == "rerank-test-model"
+    assert configured.TOP_K == 12
+    assert configured.FINAL_PARENT_LIMIT == 4

@@ -3,6 +3,8 @@
 import uuid
 from pathlib import Path
 
+from pydantic import SecretStr
+
 from app.rag import rag_pipeline
 from app.rag.rag_pipeline import RAGPipeline
 
@@ -12,6 +14,7 @@ def test_pipeline_constructs_components_from_shared_resources(monkeypatch) -> No
     resources = object()
     ingestor = object()
     retriever = object()
+    reranker = object()
     llm = object()
     chain_builder = object()
     source_document_store = object()
@@ -23,7 +26,27 @@ def test_pipeline_constructs_components_from_shared_resources(monkeypatch) -> No
         lambda received_resources, received_store: (ingestor if (received_resources, received_store) == (resources, source_document_store) else None),
     )
     monkeypatch.setattr(
-        rag_pipeline, "DocumentRetriever", lambda received_resources, tenant: (retriever if (received_resources, tenant) == (resources, str(user_id)) else None)
+        rag_pipeline,
+        "DocumentRetriever",
+        lambda received_resources, tenant, received_store, received_reranker: (
+            retriever
+            if (received_resources, tenant, received_store, received_reranker) == (resources, str(user_id), source_document_store, reranker)
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        rag_pipeline,
+        "CohereRerank",
+        lambda **kwargs: (
+            reranker
+            if kwargs
+            == {
+                "model": rag_pipeline.settings.COHERE_RERANK_MODEL,
+                "cohere_api_key": SecretStr(rag_pipeline.settings.COHERE_API_KEY),
+                "top_n": rag_pipeline.settings.TOP_K,
+            }
+            else None
+        ),
     )
     monkeypatch.setattr(rag_pipeline, "ChatOpenAI", lambda **kwargs: llm)
     monkeypatch.setattr(

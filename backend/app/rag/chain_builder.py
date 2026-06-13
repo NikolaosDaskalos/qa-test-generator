@@ -75,14 +75,18 @@ class ChainBuilder:
             logger.info("Reformulating RAG query using conversation history")
             search_query = (self._ctx_prompt | self.llm | StrOutputParser()).invoke({"input": question, "chat_history": lc_history})
 
-        # Step 2: Retrieve candidate Code Chunks
-        results = self.retriever.search_with_scores(search_query, repository_id=repository_id, k=settings.TOP_K, alpha=settings.HYBRID_SEARCH_ALPHA)
-        retrieved_docs = [doc for doc, _ in results]
-        doc_scores = [score for _, score in results]
-        sources = self._extract_sources(retrieved_docs, doc_scores)
-        context = self._format_docs(retrieved_docs)
-        logger.info("Standard RAG retrieval completed result_count=%s accepted_count=%s", len(results), len(retrieved_docs))
-        if not retrieved_docs:
+        # Step 2: Retrieve complete parent Repository Evidence
+        evidence = self.retriever.retrieve_evidence(
+            search_query,
+            repository_id=repository_id,
+            k=settings.TOP_K,
+            alpha=settings.HYBRID_SEARCH_ALPHA,
+            parent_limit=settings.FINAL_PARENT_LIMIT,
+        )
+        sources = self._extract_sources(evidence)
+        context = self._format_docs(evidence)
+        logger.info("Standard RAG retrieval completed evidence_count=%s", len(evidence))
+        if not evidence:
             logger.warning("Standard RAG retrieval returned no documents")
 
         # Step 3: Build prompt and stream answer
@@ -110,14 +114,18 @@ class ChainBuilder:
         hypothetical_doc = self._generate_hypothetical_doc(question)
         logger.info("HyDE hypothetical document generation completed document_length=%s", len(hypothetical_doc))
 
-        # Step 2 — Retrieve using hypothetical document
-        results = self.retriever.search_with_scores(hypothetical_doc, repository_id=repository_id, k=settings.TOP_K, alpha=settings.HYBRID_SEARCH_ALPHA)
-        retrieved_docs = [doc for doc, _ in results]
-        doc_scores = [score for _, score in results]
-        sources = self._extract_sources(retrieved_docs, doc_scores)
-        context = self._format_docs(retrieved_docs)
-        logger.info("HyDE retrieval completed result_count=%s accepted_count=%s", len(results), len(retrieved_docs))
-        if not retrieved_docs:
+        # Step 2 — Retrieve complete parent Repository Evidence
+        evidence = self.retriever.retrieve_evidence(
+            hypothetical_doc,
+            repository_id=repository_id,
+            k=settings.TOP_K,
+            alpha=settings.HYBRID_SEARCH_ALPHA,
+            parent_limit=settings.FINAL_PARENT_LIMIT,
+        )
+        sources = self._extract_sources(evidence)
+        context = self._format_docs(evidence)
+        logger.info("HyDE retrieval completed evidence_count=%s", len(evidence))
+        if not evidence:
             logger.warning("HyDE retrieval returned no documents")
 
         # Step 3 — Build a one-shot prompt (no chain needed, context is already ready)
@@ -144,20 +152,19 @@ class ChainBuilder:
     @staticmethod
     def _format_docs(docs) -> str:
         """Format retrieved documents as source-labeled prompt context."""
-        return "\n\n---\n\n".join(f"[Source: {d.metadata.get('source', '?')}]\n{d.page_content}" for d in docs)
+        return "\n\n---\n\n".join(f"[Source: {document.doc_metadata.get('source', '?')}]\n{document.content}" for document in docs)
 
     @staticmethod
-    def _extract_sources(docs, scores=None) -> list:
-        """Extract source metadata. Scores are available only in HyDE mode."""
-        _scores = scores if scores is not None else [None] * len(docs)
+    def _extract_sources(docs) -> list:
+        """Extract citations from selected parent SourceDocuments."""
         return [
             {
-                "source": doc.metadata.get("source", "Unknown"),
-                "page": doc.metadata.get("page", ""),
-                "chunk": doc.page_content,
-                "score": round(score, 2) if score is not None else None,
+                "source": document.doc_metadata.get("source", "Unknown"),
+                "page": document.doc_metadata.get("page", ""),
+                "chunk": document.content,
+                "score": None,
             }
-            for doc, score in zip(docs, _scores, strict=True)
+            for document in docs
         ]
 
     @staticmethod
