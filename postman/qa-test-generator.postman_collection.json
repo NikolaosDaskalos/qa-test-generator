@@ -1,0 +1,474 @@
+{
+  "info": {
+    "_postman_id": "92c95e9a-f9f8-4ccd-b7ae-db9f920db57d",
+    "name": "QA Test Generator API",
+    "description": "Sign up, log in, and exercise every repository endpoint. Set `githubToken` and `replacementGithubToken` before running the repository requests. Run requests in collection order because login stores `accessToken` and repository creation stores `repositoryId`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.variables.get('email')) {",
+          "    const email = `qa.postman.${Date.now()}@example.com`;",
+          "    pm.environment.set('email', email);",
+          "    pm.collectionVariables.set('email', email);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Sign Up",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Created user matches the requested email', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.email).to.eql(pm.variables.get('email'));",
+                  "    pm.expect(response.id).to.be.a('string').and.not.empty;",
+                  "    pm.environment.set('userId', response.id);",
+                  "    pm.collectionVariables.set('userId', response.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"full_name\": \"{{fullName}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/signup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "signup"
+              ]
+            },
+            "description": "Creates a user. Leave the `email` collection variable empty to generate a unique address automatically."
+          },
+          "response": []
+        },
+        {
+          "name": "Log In",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Access token is returned and stored', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.access_token).to.be.a('string').and.not.empty;",
+                  "    pm.expect(response.token_type).to.eql('bearer');",
+                  "    pm.environment.set('accessToken', response.access_token);",
+                  "    pm.collectionVariables.set('accessToken', response.access_token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{email}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{password}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/login/access-token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "login",
+                "access-token"
+              ]
+            },
+            "description": "Logs in with OAuth2 form fields and stores the returned JWT in `accessToken`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Repositories",
+      "item": [
+        {
+          "name": "Create Repository",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "",
+                  "pm.test('Repository is accepted and its ID is stored', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(response.repository_url).to.be.a('string').and.not.empty;",
+                  "    pm.expect(response.status).to.eql('pending');",
+                  "    pm.environment.set('repositoryId', response.id);",
+                  "    pm.collectionVariables.set('repositoryId', response.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"repository_url\": \"{{repositoryUrl}}\",\n  \"token\": \"{{githubToken}}\",\n  \"token_expiration_days\": {{tokenExpirationDays}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/repositories/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "repositories",
+                ""
+              ]
+            },
+            "description": "Registers a GitHub repository and schedules clone/index processing. A GitHub token is required for both public and private repositories."
+          },
+          "response": []
+        },
+        {
+          "name": "List Repositories",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Paginated repository response is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.data).to.be.an('array');",
+                  "    pm.expect(response.count).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/repositories/?skip={{skip}}&limit={{limit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "repositories",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "skip",
+                  "value": "{{skip}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "{{limit}}"
+                }
+              ]
+            },
+            "description": "Lists repositories visible to the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Repository",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Requested repository is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.id).to.eql(pm.variables.get('repositoryId'));",
+                  "    pm.expect(response).not.to.have.property('token');",
+                  "    pm.expect(response).not.to.have.property('encrypted_token');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/repositories/{{repositoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "repositories",
+                "{{repositoryId}}"
+              ]
+            },
+            "description": "Returns one repository owned by the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Repository Credentials",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 204', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});",
+                  "",
+                  "pm.test('Response body is empty', function () {",
+                  "    pm.expect(pm.response.text()).to.eql('');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{replacementGithubToken}}\",\n  \"token_expiration_days\": {{tokenExpirationDays}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/repositories/{{repositoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "repositories",
+                "{{repositoryId}}"
+              ]
+            },
+            "description": "Replaces the GitHub credentials for an existing repository."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Repository",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 204', function () {",
+                  "    pm.response.to.have.status(204);",
+                  "});",
+                  "",
+                  "pm.test('Response body is empty', function () {",
+                  "    pm.expect(pm.response.text()).to.eql('');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/repositories/{{repositoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "repositories",
+                "{{repositoryId}}"
+              ]
+            },
+            "description": "Deletes repository state from the checkout, vector database, and relational database."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "PostmanTest123!",
+      "type": "string"
+    },
+    {
+      "key": "fullName",
+      "value": "Postman Test User",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "repositoryUrl",
+      "value": "https://github.com/openai/openai-python.git",
+      "type": "string"
+    },
+    {
+      "key": "githubToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "replacementGithubToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "tokenExpirationDays",
+      "value": "30",
+      "type": "string"
+    },
+    {
+      "key": "repositoryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "skip",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "limit",
+      "value": "100",
+      "type": "string"
+    }
+  ]
+}
