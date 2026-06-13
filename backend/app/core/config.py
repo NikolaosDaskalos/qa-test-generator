@@ -152,7 +152,7 @@ class Settings(BaseSettings):
     TEMPERATURE: float = 0.0
 
     EMBEDDING_MODEL: str = "voyage-code-3"
-    EMBEDDING_MODEL_TOKENIZER: str = "voyageai/voyage-code-3"
+    EMBEDDING_MODEL_TOKENIZER: str = "/app/tokenizers/voyage-code-3"
     EMBEDDING_DIMENSIONS: Literal[256, 512, 1024, 2048] = 1024
 
     CHUNK_SIZE: int = 500
