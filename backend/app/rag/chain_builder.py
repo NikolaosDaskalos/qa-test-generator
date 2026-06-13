@@ -1,6 +1,7 @@
 """Build LCEL chains and stream standard or HyDE retrieval answers."""
 
 import logging
+import uuid
 from collections.abc import Generator
 
 # pyrefly: ignore [missing-import]
@@ -52,7 +53,7 @@ class ChainBuilder:
 
     # ── Public streaming entry point ──────────────────────────────
 
-    def answer_stream(self, question: str, history: list[dict] | None = None, use_hyde: bool = False) -> Generator:
+    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict] | None = None, use_hyde: bool = False) -> Generator:
         """Stream answer events using standard or HyDE retrieval.
 
         Yields:
@@ -63,13 +64,13 @@ class ChainBuilder:
         logger.info("RAG answer generation started mode=%s history_message_count=%s", "hyde" if use_hyde else "standard", len(lc_history))
 
         if use_hyde:
-            yield from self._stream_hyde(question, lc_history)
+            yield from self._stream_hyde(question, repository_id, lc_history)
         else:
-            yield from self._stream_standard(question, lc_history)
+            yield from self._stream_standard(question, repository_id, lc_history)
 
     # ── Standard RAG ──────────────────────────────────────────
 
-    def _stream_standard(self, question: str, lc_history: list) -> Generator:
+    def _stream_standard(self, question: str, repository_id: uuid.UUID, lc_history: list) -> Generator:
         """Stream history-aware retrieval and generation events."""
         # Step 1: Reformulate question if there is chat history
         search_query = question
@@ -78,7 +79,7 @@ class ChainBuilder:
             search_query = (self._ctx_prompt | self.llm | StrOutputParser()).invoke({"input": question, "chat_history": lc_history})
 
         # Step 2: Retrieve with scores, filter by threshold
-        results = self.retriever.search_with_scores(search_query, k=settings.TOP_K)
+        results = self.retriever.search_with_scores(search_query, repository_id=repository_id, k=settings.TOP_K, alpha=settings.HYBRID_SEARCH_ALPHA)
         retrieved_docs = [doc for doc, score in results if score >= settings.MIN_RELEVANCE_SCORE]
         doc_scores = [score for _, score in results if score >= settings.MIN_RELEVANCE_SCORE]
         sources = self._extract_sources(retrieved_docs, doc_scores)
@@ -102,7 +103,7 @@ class ChainBuilder:
 
     # ── HyDE RAG ─────────────────────────────────────────────────
 
-    def _stream_hyde(self, question: str, lc_history: list) -> Generator:
+    def _stream_hyde(self, question: str, repository_id: uuid.UUID, lc_history: list) -> Generator:
         """Stream HyDE generation, retrieval, and answer events."""
         # Signal the UI immediately so it shows a status (not a frozen screen)
         yield {"type": "status", "message": "⚗️ Generating hypothetical document…"}
@@ -114,7 +115,7 @@ class ChainBuilder:
 
         # Step 2 — Retrieve using hypothetical doc, filtered by relevance score
         threshold = settings.MIN_RELEVANCE_SCORE
-        results = self.retriever.search_with_scores(hypothetical_doc, k=settings.TOP_K)
+        results = self.retriever.search_with_scores(hypothetical_doc, repository_id=repository_id, k=settings.TOP_K, alpha=settings.HYBRID_SEARCH_ALPHA)
         retrieved_docs = [doc for doc, score in results if score >= threshold]
         doc_scores = [score for _, score in results if score >= threshold]
         sources = self._extract_sources(retrieved_docs, doc_scores)

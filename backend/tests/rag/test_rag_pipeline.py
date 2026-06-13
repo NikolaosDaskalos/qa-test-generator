@@ -60,3 +60,25 @@ def test_pipeline_ingests_an_exact_repository_snapshot() -> None:
 
     assert chunk_count == 3
     assert calls == [(Path("/repo"), repository_id, "main", "a" * 40, user_id)]
+
+
+def test_pipeline_answers_with_repository_scope() -> None:
+    """Delegate repository identity and answer options to the chain builder."""
+    repository_id = uuid.uuid4()
+    history = [{"role": "user", "content": "Earlier question"}]
+    stream = object()
+    calls = []
+
+    class FakeChainBuilder:
+        def answer_stream(self, question, **kwargs):
+            calls.append((question, kwargs))
+            return stream
+
+    pipeline = RAGPipeline.__new__(RAGPipeline)
+    pipeline.user_id = uuid.uuid4()
+    pipeline.chain_builder = FakeChainBuilder()
+
+    result = pipeline.answer_stream("Current question", repository_id=repository_id, history=history, use_hyde=True)
+
+    assert result is stream
+    assert calls == [("Current question", {"repository_id": repository_id, "history": history, "use_hyde": True})]

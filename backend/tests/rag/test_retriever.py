@@ -1,11 +1,14 @@
-"""Test tenant-aware hybrid retrieval and embedding lookups."""
+"""Test tenant-aware hybrid retrieval and collection statistics."""
 
+import uuid
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.documents import Document
 
 from app.core.config import settings
 from app.core.vector_db import WeaviateResources
+from app.errors.rag_errors import RetrieverError
 from app.rag.retriever import DocumentRetriever
 
 
@@ -35,11 +38,7 @@ class FakeTenantCollection:
         self.query = SimpleNamespace(
             fetch_object_by_id=lambda object_id: (object() if object_id == "existing" else None),
             fetch_objects=lambda **kwargs: SimpleNamespace(
-                objects=[
-                    SimpleNamespace(
-                        uuid="object-id", properties={"content": "body", "source": "file.py", "repository_id": "repo", "parent_id": "parent"}
-                    )
-                ]
+                objects=[SimpleNamespace(uuid="object-id", properties={"content": "body", "source": "file.py", "repository_id": "repo", "parent_id": "parent"})]
             ),
         )
 
@@ -104,38 +103,37 @@ def _retriever(*, tenant_exists=True):
     return DocumentRetriever(resources, tenant), collection, vector_store
 
 
-def test_search_uses_configured_hybrid_options(monkeypatch) -> None:
-    """Pass configured alpha, properties, limits, and tenant to search."""
+def test_search_uses_repository_scoped_hybrid_options() -> None:
+    """Pass repository scope, alpha, properties, limits, and tenant to search."""
     retriever, _, vector_store = _retriever()
-    monkeypatch.setattr(settings, "HYBRID_SEARCH_ALPHA", 0.35)
+    repository_id = uuid.uuid4()
 
-    results = retriever.search_with_scores("exact_name", k=7)
+    results = retriever.search_with_scores("exact_name", repository_id=repository_id, k=7, alpha=0.35)
 
-    assert vector_store.call == ("exact_name", {"k": 7, "alpha": 0.35, "query_properties": ["content"], "tenant": "player-123"})
+    query, options = vector_store.call
+    repository_filter = options.pop("filters")
+    assert query == "exact_name"
+    assert options == {"k": 7, "alpha": 0.35, "query_properties": ["content"], "tenant": "player-123"}
+    assert repository_filter.target == "repository_id"
+    assert repository_filter.value == str(repository_id)
     assert results[0][1] == 0.9
 
 
-def test_stats_existence_and_parent_lookup() -> None:
-    """Return tenant statistics, existence checks, and parent chunks."""
+def test_stats_returns_tenant_chunk_and_source_counts() -> None:
+    """Return tenant statistics with sorted unique source names."""
     retriever, _, _ = _retriever()
 
     assert retriever.get_stats() == {"total_chunks": 2, "unique_sources": 2, "sources": ["a.py", "b.py"]}
-    assert retriever.embedding_exists("existing") is True
-    assert retriever.embedding_exists("missing") is False
-    assert retriever.get_embeddings_by_parent_id("parent") == {
-        "ids": ["object-id"],
-        "documents": ["body"],
-        "metadatas": [{"source": "file.py", "repository_id": "repo", "parent_id": "parent"}],
-    }
 
 
-def test_unknown_tenant_reads_are_empty_without_creation() -> None:
-    """Return empty reads without creating an unknown tenant."""
+def test_unknown_tenant_search_raises_without_creation() -> None:
+    """Reject search without creating an unknown tenant."""
     retriever, collection, vector_store = _retriever(tenant_exists=False)
+    repository_id = uuid.uuid4()
 
-    assert retriever.search_with_scores("query") == []
+    with pytest.raises(RetrieverError, match="tenant does not exist"):
+        retriever.search_with_scores("query", repository_id=repository_id, alpha=0.7)
+
     assert retriever.get_stats() == {"total_chunks": 0, "unique_sources": 0, "sources": []}
-    assert retriever.embedding_exists("existing") is False
-    assert retriever.get_embeddings_by_parent_id("parent") == {"ids": [], "documents": [], "metadatas": []}
     assert collection.tenants.create_calls == []
     assert vector_store.call is None

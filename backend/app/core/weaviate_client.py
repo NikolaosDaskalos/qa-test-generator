@@ -11,7 +11,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 TEXT_PROPERTY = "content"
-METADATA_PROPERTIES = ("source", "repository_id", "parent_id")
+METADATA_PROPERTIES = ("source", "file_path", "file_name", "file_type", "repository_id", "commit_sha", "branch", "parent_id")
 
 
 def create_weaviate_client() -> WeaviateClient:

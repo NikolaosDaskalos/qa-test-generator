@@ -17,7 +17,7 @@ from weaviate.classes.tenants import Tenant
 
 from app.core.config import settings
 from app.core.vector_db import WeaviateResources
-from app.errors.ingestor_errors import IngestorError
+from app.errors.rag_errors import IngestorError
 from app.models import SourceDocument
 from app.persistence.source_document_store import SourceDocumentStore
 
@@ -25,21 +25,6 @@ logger = logging.getLogger(__name__)
 
 # Avoid the warning emitted when the tokenizer receives a token only as an argument.
 os.environ.setdefault("HF_TOKEN", settings.HF_TOKEN)
-
-
-class VectorMetadata(TypedDict):
-    """Metadata stored alongside a vector embedding."""
-    # provided by GitLoader
-    source: str
-    file_path: str
-    file_name: str
-    file_type: str
-
-    # custom metadata needed
-    repository_id: str
-    commit_sha: str
-    branch: str
-    parent_id: str
 
 
 class DocumentIngestor:
