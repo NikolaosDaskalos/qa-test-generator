@@ -55,6 +55,6 @@ class RAGPipeline:
         )
         return self.chain_builder.answer_stream(question, repository_id=repository_id, history=history, use_hyde=use_hyde)
 
-    def get_stats(self) -> dict[str, Any]:
-        """Return collection statistics for this user tenant."""
-        return self.document_retriever.get_stats()
+    def get_stats(self, *, repository_id: uuid.UUID) -> dict[str, Any]:
+        """Return collection statistics for one Repository."""
+        return self.document_retriever.get_stats(repository_id=repository_id)

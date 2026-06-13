@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.documents import Document
+from weaviate.classes.query import HybridFusion
 
 from app.core.config import settings
 from app.core.vector_db import WeaviateResources
@@ -34,7 +35,7 @@ class FakeTenantCollection:
 
     def __init__(self) -> None:
         """Initialize deterministic collection responses."""
-        self.aggregate = SimpleNamespace(over_all=lambda **kwargs: SimpleNamespace(total_count=2))
+        self.aggregate = FakeAggregate()
         self.query = SimpleNamespace(
             fetch_object_by_id=lambda object_id: (object() if object_id == "existing" else None),
             fetch_objects=lambda **kwargs: SimpleNamespace(
@@ -42,9 +43,20 @@ class FakeTenantCollection:
             ),
         )
 
-    def iterator(self, **kwargs):
-        """Return source records containing one duplicate source."""
-        return [SimpleNamespace(properties={"source": "b.py"}), SimpleNamespace(properties={"source": "a.py"}), SimpleNamespace(properties={"source": "a.py"})]
+
+class FakeAggregate:
+    """Record Repository filters used for aggregate statistics."""
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    def over_all(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("group_by"):
+            return SimpleNamespace(
+                groups=[SimpleNamespace(grouped_by=SimpleNamespace(value="b.py")), SimpleNamespace(grouped_by=SimpleNamespace(value="a.py"))]
+            )
+        return SimpleNamespace(total_count=2)
 
 
 class FakeCollection:
@@ -84,21 +96,22 @@ class FakeClient:
 class FakeVectorStore:
     """Record hybrid search arguments and return a scored document."""
 
-    def __init__(self) -> None:
+    def __init__(self, results=None) -> None:
         """Initialize search-call tracking."""
         self.call = None
+        self.results = [(Document(page_content="result"), 0.9)] if results is None else results
 
     def similarity_search_with_score(self, query, **kwargs):
         """Record a scored similarity search."""
         self.call = (query, kwargs)
-        return [(Document(page_content="result"), 0.9)]
+        return self.results
 
 
-def _retriever(*, tenant_exists=True):
+def _retriever(*, tenant_exists=True, results=None):
     """Build a retriever and its underlying test doubles."""
     tenant = "player-123"
     collection = FakeCollection([tenant] if tenant_exists else [])
-    vector_store = FakeVectorStore()
+    vector_store = FakeVectorStore(results)
     resources = WeaviateResources(FakeClient(collection), vector_store)
     return DocumentRetriever(resources, tenant), collection, vector_store
 
@@ -113,27 +126,70 @@ def test_search_uses_repository_scoped_hybrid_options() -> None:
     query, options = vector_store.call
     repository_filter = options.pop("filters")
     assert query == "exact_name"
-    assert options == {"k": 7, "alpha": 0.35, "query_properties": ["content"], "tenant": "player-123"}
+    assert options == {"k": 7, "alpha": 0.35, "fusion_type": HybridFusion.RANKED, "query_properties": ["content"], "tenant": "player-123"}
     assert repository_filter.target == "repository_id"
     assert repository_filter.value == str(repository_id)
     assert results[0][1] == 0.9
 
 
-def test_stats_returns_tenant_chunk_and_source_counts() -> None:
-    """Return tenant statistics with sorted unique source names."""
-    retriever, _, _ = _retriever()
+def test_search_returns_all_ranked_code_chunks() -> None:
+    """Return every Repository-scoped Code Chunk selected by hybrid search."""
+    first = Document(page_content="first")
+    second = Document(page_content="second")
+    retriever, _, _ = _retriever(results=[(first, 0.02), (second, 0.01)])
 
-    assert retriever.get_stats() == {"total_chunks": 2, "unique_sources": 2, "sources": ["a.py", "b.py"]}
+    results = retriever.search_with_scores("query", repository_id=uuid.uuid4(), k=5, alpha=0.6)
+
+    assert results == [(first, 0.02), (second, 0.01)]
 
 
-def test_unknown_tenant_search_raises_without_creation() -> None:
-    """Reject search without creating an unknown tenant."""
+def test_search_returns_no_candidates_when_repository_has_no_results() -> None:
+    """Return no candidate Code Chunks when hybrid search finds no results."""
+    retriever, _, _ = _retriever(results=[])
+
+    results = retriever.search_with_scores("query", repository_id=uuid.uuid4(), k=5, alpha=0.6)
+
+    assert results == []
+
+
+def test_search_retains_repository_evidence_metadata() -> None:
+    """Keep source, Repository, commit, and parent identity on candidate Code Chunks."""
+    repository_id = uuid.uuid4()
+    document = Document(
+        page_content="def test_subject(): ...",
+        metadata={"source": "tests/test_subject.py", "repository_id": str(repository_id), "commit_sha": "a" * 40, "parent_id": str(uuid.uuid4())},
+    )
+    retriever, _, _ = _retriever(results=[(document, 0.8)])
+
+    results = retriever.search_with_scores("test subject", repository_id=repository_id, k=5, alpha=0.6)
+
+    assert results == [(document, 0.8)]
+
+
+def test_stats_returns_repository_chunk_and_source_counts() -> None:
+    """Return statistics filtered to the selected Repository."""
+    retriever, collection, _ = _retriever()
+    repository_id = uuid.uuid4()
+
+    assert retriever.get_stats(repository_id=repository_id) == {"total_chunks": 2, "unique_sources": 2, "sources": ["a.py", "b.py"]}
+    count_options, source_options = collection.tenant_collection.aggregate.calls
+    for options in (count_options, source_options):
+        repository_filter = options["filters"]
+        assert repository_filter.target == "repository_id"
+        assert repository_filter.value == str(repository_id)
+    assert source_options["group_by"].prop == "source"
+
+
+def test_unknown_tenant_operations_raise_without_creation() -> None:
+    """Reject retrieval operations without creating an unknown tenant."""
     retriever, collection, vector_store = _retriever(tenant_exists=False)
     repository_id = uuid.uuid4()
 
     with pytest.raises(RetrieverError, match="tenant does not exist"):
-        retriever.search_with_scores("query", repository_id=repository_id, alpha=0.7)
+        retriever.search_with_scores("query", repository_id=repository_id, k=3, alpha=0.7)
 
-    assert retriever.get_stats() == {"total_chunks": 0, "unique_sources": 0, "sources": []}
+    with pytest.raises(RetrieverError, match="tenant does not exist"):
+        retriever.get_stats(repository_id=repository_id)
+
     assert collection.tenants.create_calls == []
     assert vector_store.call is None

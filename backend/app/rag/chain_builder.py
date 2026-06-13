@@ -22,9 +22,6 @@ logger = logging.getLogger(__name__)
 # TODO change this
 COST_PER_TOKEN = 0.00000015
 
-# Relevance threshold now lives in settings.py (min_relevance_score)
-# so it can be changed in one place without touching this file.
-
 # Prompt used to generate the hypothetical document in HyDE mode
 HYDE_PROMPT_TEMPLATE = "Write a short, factual passage (2-4 sentences) that directly answers the following question. Imagine this is an excerpt from a relevant document.\n\nQuestion: {question}\n\nPassage:"
 
@@ -78,15 +75,15 @@ class ChainBuilder:
             logger.info("Reformulating RAG query using conversation history")
             search_query = (self._ctx_prompt | self.llm | StrOutputParser()).invoke({"input": question, "chat_history": lc_history})
 
-        # Step 2: Retrieve with scores, filter by threshold
+        # Step 2: Retrieve candidate Code Chunks
         results = self.retriever.search_with_scores(search_query, repository_id=repository_id, k=settings.TOP_K, alpha=settings.HYBRID_SEARCH_ALPHA)
-        retrieved_docs = [doc for doc, score in results if score >= settings.MIN_RELEVANCE_SCORE]
-        doc_scores = [score for _, score in results if score >= settings.MIN_RELEVANCE_SCORE]
+        retrieved_docs = [doc for doc, _ in results]
+        doc_scores = [score for _, score in results]
         sources = self._extract_sources(retrieved_docs, doc_scores)
         context = self._format_docs(retrieved_docs)
         logger.info("Standard RAG retrieval completed result_count=%s accepted_count=%s", len(results), len(retrieved_docs))
         if not retrieved_docs:
-            logger.warning("Standard RAG retrieval returned no documents above the relevance threshold")
+            logger.warning("Standard RAG retrieval returned no documents")
 
         # Step 3: Build prompt and stream answer
         qa_prompt = ChatPromptTemplate.from_messages(
@@ -113,16 +110,15 @@ class ChainBuilder:
         hypothetical_doc = self._generate_hypothetical_doc(question)
         logger.info("HyDE hypothetical document generation completed document_length=%s", len(hypothetical_doc))
 
-        # Step 2 — Retrieve using hypothetical doc, filtered by relevance score
-        threshold = settings.MIN_RELEVANCE_SCORE
+        # Step 2 — Retrieve using hypothetical document
         results = self.retriever.search_with_scores(hypothetical_doc, repository_id=repository_id, k=settings.TOP_K, alpha=settings.HYBRID_SEARCH_ALPHA)
-        retrieved_docs = [doc for doc, score in results if score >= threshold]
-        doc_scores = [score for _, score in results if score >= threshold]
+        retrieved_docs = [doc for doc, _ in results]
+        doc_scores = [score for _, score in results]
         sources = self._extract_sources(retrieved_docs, doc_scores)
         context = self._format_docs(retrieved_docs)
         logger.info("HyDE retrieval completed result_count=%s accepted_count=%s", len(results), len(retrieved_docs))
         if not retrieved_docs:
-            logger.warning("HyDE retrieval returned no documents above the relevance threshold")
+            logger.warning("HyDE retrieval returned no documents")
 
         # Step 3 — Build a one-shot prompt (no chain needed, context is already ready)
         qa_prompt = ChatPromptTemplate.from_messages(

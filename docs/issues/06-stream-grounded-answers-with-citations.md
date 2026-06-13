@@ -18,7 +18,7 @@ When relevant evidence is unavailable, the answer must state that limitation ins
 - [ ] Agent Stream events include ordered stage progress, answer tokens, file citations, and one terminal persisted result.
 - [ ] Every Repository citation identifies a source file from retrieved Repository Evidence and is traceable to the evidence supplied to generation.
 - [ ] Answers do not cite or claim facts from another Repository or unsupported model knowledge.
-- [ ] Empty or below-threshold evidence produces an explicit insufficient-evidence answer.
+- [ ] Empty Repository Evidence produces an explicit insufficient-evidence answer.
 - [ ] The completed exchange and citations are persisted as Session History or associated question-result data.
 - [ ] SSE tests consume complete streams and assert content type, event order, citations, insufficient evidence, persistence, authentication, and ownership.
 
@@ -26,4 +26,3 @@ When relevant evidence is unavailable, the answer must state that limitation ins
 
 - [04 - Retrieve evidence only from the selected Repository](04-retrieve-repository-scoped-evidence.md)
 - [05 - Create immutable Repository Sessions with bounded Session History](05-create-bound-repository-sessions.md)
-

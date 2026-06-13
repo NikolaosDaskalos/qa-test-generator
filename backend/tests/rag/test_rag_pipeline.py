@@ -82,3 +82,21 @@ def test_pipeline_answers_with_repository_scope() -> None:
 
     assert result is stream
     assert calls == [("Current question", {"repository_id": repository_id, "history": history, "use_hyde": True})]
+
+
+def test_pipeline_returns_repository_scoped_statistics() -> None:
+    """Delegate Repository identity to retrieval statistics."""
+    repository_id = uuid.uuid4()
+    statistics = {"total_chunks": 2, "unique_sources": 1, "sources": ["app.py"]}
+    calls = []
+
+    class FakeRetriever:
+        def get_stats(self, *, repository_id):
+            calls.append(repository_id)
+            return statistics
+
+    pipeline = RAGPipeline.__new__(RAGPipeline)
+    pipeline.document_retriever = FakeRetriever()
+
+    assert pipeline.get_stats(repository_id=repository_id) is statistics
+    assert calls == [repository_id]
