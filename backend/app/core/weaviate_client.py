@@ -11,7 +11,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 TEXT_PROPERTY = "content"
-METADATA_PROPERTIES = ("source", "repository_id", "parent_document_id")
+METADATA_PROPERTIES = ("source", "repository_id", "parent_id")
 
 
 def create_weaviate_client() -> WeaviateClient:

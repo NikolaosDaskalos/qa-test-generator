@@ -9,6 +9,7 @@ from langchain_core.documents import Document
 
 from app.core.config import settings
 from app.core.vector_db import WeaviateResources
+from app.errors.ingestor_errors import IngestorError
 from app.rag.ingestor import DocumentIngestor
 
 
@@ -93,6 +94,21 @@ class FakeVectorStore:
         self.delete_calls.append(kwargs)
 
 
+class FakeSourceDocumentStore:
+    """Record source-document replacement and cleanup."""
+
+    def __init__(self) -> None:
+        self.replace_calls = []
+        self.delete_calls = []
+
+    def replace_for_repository(self, repository_id, source_documents):
+        self.replace_calls.append((repository_id, source_documents))
+        return source_documents
+
+    def delete_by_repository(self, repository_id):
+        self.delete_calls.append(repository_id)
+
+
 def _resources() -> WeaviateResources:
     """Build shared resources from ingestion test doubles."""
     return WeaviateResources(client=FakeClient(FakeCollection()), vector_store=FakeVectorStore())
@@ -100,8 +116,7 @@ def _resources() -> WeaviateResources:
 
 def _bare_ingestor(documents, resources):
     """Build an ingestor without loading the real tokenizer."""
-    ingestor = DocumentIngestor.__new__(DocumentIngestor)
-    ingestor.resources = resources
+    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
     ingestor._load = lambda *args: documents
     ingestor._split = lambda *args: documents
     return ingestor
@@ -149,28 +164,29 @@ def test_ingestion_stores_repository_snapshot_metadata_and_ids() -> None:
         "source": "one.py",
         "repository_id": str(repository_id),
         "commit_sha": "a" * 40,
-        "parent_document_id": str(uuid.uuid5(repository_id, f"{'a' * 40}:one.py")),
+        "parent_id": str(uuid.uuid5(repository_id, f"{'a' * 40}:one.py")),
     }
     assert second_metadata["commit_sha"] == "b" * 40
     assert first_options["ids"] != second_options["ids"]
     assert first_options["ids"] != third_options["ids"]
 
 
-def test_empty_ingestion_clears_existing_repository_chunks() -> None:
-    """Clear stale chunks when a repository contains no documents."""
+def test_empty_ingestion_is_rejected_without_writes() -> None:
+    """Reject repositories that contain no usable Python documents."""
     resources = _resources()
     ingestor = _bare_ingestor([], resources)
 
-    count = ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", "a" * 40, uuid.uuid4())
+    with pytest.raises(IngestorError, match="no Python files"):
+        ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", "a" * 40, uuid.uuid4())
 
-    assert count == 0
     assert resources.vector_store.add_calls == []
+    assert ingestor.source_document_store.replace_calls == []
 
 
 def test_repository_deletion_is_idempotent_when_tenant_is_missing() -> None:
     """Do not create a tenant solely to delete absent repository chunks."""
     resources = _resources()
-    ingestor = DocumentIngestor(resources)
+    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
     user_id = uuid.uuid4()
 
     ingestor.delete_repository(uuid.uuid4(), user_id=user_id)
@@ -183,7 +199,7 @@ def test_repository_deletion_is_idempotent_when_tenant_is_missing() -> None:
 def test_repository_deletion_uses_existing_user_tenant() -> None:
     """Delete repository chunks only within the owner's existing tenant."""
     resources = _resources()
-    ingestor = DocumentIngestor(resources)
+    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
     user_id = uuid.uuid4()
     collection = resources.client.collections.get(settings.WEAVIATE_COLLECTION)
     collection.tenants.names.add(str(user_id))
@@ -200,16 +216,17 @@ def test_ingestion_uses_shared_resources_when_write_fails() -> None:
     resources.vector_store.add_documents = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("write failed"))
 
     with pytest.raises(RuntimeError, match="write failed"):
-        ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", "a" * 40, uuid.uuid4())
+        repository_id = uuid.uuid4()
+        ingestor.ingest(Path("/repo"), repository_id, "main", "a" * 40, uuid.uuid4())
 
     assert ingestor.resources is resources
+    assert ingestor.source_document_store.delete_calls == [repository_id]
 
 
 def test_preserved_deletion_methods_use_shared_resources() -> None:
     """Route ID- and parent-based deletions through shared resources."""
     resources = _resources()
-    ingestor = DocumentIngestor.__new__(DocumentIngestor)
-    ingestor.resources = resources
+    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
     user_id = uuid.uuid4()
 
     ingestor.delete_embeddings(["one", "two"], user_id=user_id)
@@ -223,8 +240,7 @@ def test_preserved_deletion_methods_use_shared_resources() -> None:
 def test_add_documents_validates_ids_and_uses_shared_resources() -> None:
     """Validate explicit IDs before adding tenant-scoped documents."""
     resources = _resources()
-    ingestor = DocumentIngestor.__new__(DocumentIngestor)
-    ingestor.resources = resources
+    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
     user_id = uuid.uuid4()
     documents = [Document(page_content="content")]
 

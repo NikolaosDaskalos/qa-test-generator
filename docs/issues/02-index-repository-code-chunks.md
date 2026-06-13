@@ -14,7 +14,7 @@ Repositories without a usable Python codebase must fail or be reported as unsupp
 
 - [ ] Initial processing resolves and records the default-branch commit represented by Repository Evidence.
 - [ ] Only Python files from the checked-out default branch are loaded and split with the existing Python-aware recursive splitter.
-- [ ] Every Code Chunk stores `repository_id`, `commit_sha`, `source`, and `parent_document_id`.
+- [ ] Every Code Chunk stores `repository_id`, `commit_sha`, `source`, and `parent_id`.
 - [ ] Code Chunk identifiers are deterministic for the Repository snapshot and do not collide with chunks from another Repository.
 - [ ] Weaviate writes remain isolated to the Repository owner's tenant.
 - [ ] A Repository becomes ready only after all Code Chunks are written successfully and the indexed commit is persisted.
@@ -24,4 +24,3 @@ Repositories without a usable Python codebase must fail or be reported as unsupp
 ## Blocked by
 
 - [01 - Register and clone a GitHub Python Repository](01-register-clone-github-python-repository.md)
-

@@ -8,7 +8,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from app.enums.repository import RepositoryProvider, RepositoryStatus
 
 if TYPE_CHECKING:
-    from app.models import Branch, User, SourceDocument
+    from app.models import Branch, SourceDocument, User
 
 
 class Repository(SQLModel, table=True):

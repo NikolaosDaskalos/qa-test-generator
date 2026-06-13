@@ -1,6 +1,6 @@
 import uuid
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, delete, select
 
 from app.models.source_document import SourceDocument
 
@@ -35,6 +35,26 @@ class SourceDocumentStore:
         self.session.add_all(source_documents)
         self.session.commit()
         return source_documents
+
+    def replace_for_repository(self, repository_id: uuid.UUID, source_documents: list[SourceDocument]) -> list[SourceDocument]:
+        """Replace one Repository's persisted source documents atomically."""
+        try:
+            self.session.exec(delete(SourceDocument).where(col(SourceDocument.repository_id) == repository_id))
+            self.session.add_all(source_documents)
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return source_documents
+
+    def delete_by_repository(self, repository_id: uuid.UUID) -> None:
+        """Delete all source documents belonging to one Repository."""
+        try:
+            self.session.exec(delete(SourceDocument).where(col(SourceDocument.repository_id) == repository_id))
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
 
     def delete(self, document: SourceDocument) -> None:
         self.session.delete(document)

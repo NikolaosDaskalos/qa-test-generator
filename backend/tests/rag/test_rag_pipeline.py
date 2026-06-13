@@ -14,9 +14,14 @@ def test_pipeline_constructs_components_from_shared_resources(monkeypatch) -> No
     retriever = object()
     llm = object()
     chain_builder = object()
+    source_document_store = object()
     user_id = uuid.uuid4()
 
-    monkeypatch.setattr(rag_pipeline, "DocumentIngestor", lambda received_resources: (ingestor if received_resources is resources else None))
+    monkeypatch.setattr(
+        rag_pipeline,
+        "DocumentIngestor",
+        lambda received_resources, received_store: (ingestor if (received_resources, received_store) == (resources, source_document_store) else None),
+    )
     monkeypatch.setattr(
         rag_pipeline, "DocumentRetriever", lambda received_resources, tenant: (retriever if (received_resources, tenant) == (resources, str(user_id)) else None)
     )
@@ -27,7 +32,7 @@ def test_pipeline_constructs_components_from_shared_resources(monkeypatch) -> No
         lambda received_llm, received_retriever: (chain_builder if (received_llm, received_retriever) == (llm, retriever) else None),
     )
 
-    pipeline = RAGPipeline(user_id, resources)
+    pipeline = RAGPipeline(user_id, resources, source_document_store)
 
     assert pipeline.weaviate_resources is resources
     assert pipeline.ingestor is ingestor

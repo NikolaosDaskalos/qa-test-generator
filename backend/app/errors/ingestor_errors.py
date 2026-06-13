@@ -1,4 +1,4 @@
-class IngestorError(Exception):
+class IngestorError(ValueError):
     """Ingestor error with a message."""
 
     def __init__(self, msg: str):

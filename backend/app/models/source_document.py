@@ -10,14 +10,14 @@ if TYPE_CHECKING:
     from app.models.repository import Repository
 
 
-class SourceDocumentMetadata(TypedDict, total=False):
+class SourceDocumentMetadata(TypedDict):
     """Metadata stored alongside a vector embedding."""
     source: str
     file_path: str
     file_name: str
     file_type: str
-    repository_id: str
     commit_sha: str
+    branch: str
 
 
 class SourceDocument(SQLModel, table=True):

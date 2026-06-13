@@ -17,10 +17,10 @@ from app.core.db import engine
 from app.core.vector_db import WeaviateResources, get_weaviate_resources
 from app.models.user import User
 from app.persistence.repository_store import RepositoryStore
+from app.persistence.source_document_store import SourceDocumentStore
 from app.rag.ingestor import DocumentIngestor
 from app.schemas.authentication import TokenPayload
 from app.services.repository_service import RepositoryService
-from persistence.source_document_store import SourceDocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def get_source_document_store(session: SessionDep) -> SourceDocumentStore:
 SourceDocumentStoreDep = Annotated[SourceDocumentStore, Depends(get_source_document_store)]
 
 
-def get_document_ingestor(weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStore) -> DocumentIngestor:
+def get_document_ingestor(weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStoreDep) -> DocumentIngestor:
     """Build a lazy repository document ingestor for one request."""
     return DocumentIngestor(weaviate_resources, source_document_store)
 

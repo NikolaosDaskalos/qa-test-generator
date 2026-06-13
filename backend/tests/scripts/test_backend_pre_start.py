@@ -109,7 +109,7 @@ def test_init_weaviate_creates_collection_and_closes_client(monkeypatch) -> None
     collection_name, create_kwargs = collections.create_call
     assert collection_name == settings.WEAVIATE_COLLECTION
     assert create_kwargs["multi_tenancy_config"].enabled is True
-    assert [prop.name for prop in create_kwargs["properties"]] == ["content", "source", "repository_id", "parent_document_id"]
+    assert [prop.name for prop in create_kwargs["properties"]] == ["content", "source", "repository_id", "parent_id"]
     assert client.close_calls == 1
 
 

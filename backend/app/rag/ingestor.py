@@ -6,19 +6,20 @@ import uuid
 from collections.abc import Iterable, Sequence
 from functools import cached_property
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
+
 from langchain_community.document_loaders import GitLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 from transformers import AutoTokenizer
 from weaviate.classes.query import Filter
 from weaviate.classes.tenants import Tenant
+
 from app.core.config import settings
 from app.core.vector_db import WeaviateResources
 from app.errors.ingestor_errors import IngestorError
-
 from app.models import SourceDocument
-from dependencies import SourceDocumentStoreDep
+from app.persistence.source_document_store import SourceDocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,25 @@ logger = logging.getLogger(__name__)
 os.environ.setdefault("HF_TOKEN", settings.HF_TOKEN)
 
 
+class VectorMetadata(TypedDict):
+    """Metadata stored alongside a vector embedding."""
+    # provided by GitLoader
+    source: str
+    file_path: str
+    file_name: str
+    file_type: str
+
+    # custom metadata needed
+    repository_id: str
+    commit_sha: str
+    branch: str
+    parent_id: str
+
+
 class DocumentIngestor:
     """Loads an existing local Git clone and stores Python chunks in Weaviate."""
 
-    def __init__(self, resources: WeaviateResources, source_document_store: SourceDocumentStoreDep) -> None:
+    def __init__(self, resources: WeaviateResources, source_document_store: SourceDocumentStore) -> None:
         """Create an ingestor backed by shared Weaviate resources."""
         self.resources = resources
         self.source_document_store = source_document_store
@@ -44,56 +60,57 @@ class DocumentIngestor:
         )
 
     def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str, commit_sha: str, user_id: uuid.UUID) -> int:
-        """Add a Git repository's indexed chunks for one user tenant.
-        This should be used only the first time a repository is ingested.
+        """Replace a Git repository's persisted documents and indexed chunks.
 
         Returns:
             The number of chunks written to Weaviate.
 
         """
         logger.info("Repository ingestion started repository_id=%s user_id=%s branch=%s", repository_id, user_id, branch)
-        repo_id_str = str(repository_id)
+        repository_key = str(repository_id)
         tenant = str(user_id).strip()
 
         raw_docs = self._load(repo_path, branch)
         if not raw_docs:
             logger.error("Repository ingestion found no Python documents for repository_id=%s user_id=%s", repository_id, user_id)
-            IngestorError(f"Repository has no python files")
+            raise IngestorError("Repository has no Python files")
 
         # todo sanitize the docs before persist them
 
-        source_docs: list[SourceDocument] = [
+        source_docs = [
             SourceDocument(
                 repository_id=repository_id,
                 content=doc.page_content,
-                doc_metadata=doc.metadata | {"commit_sha": commit_sha}
+                doc_metadata=doc.metadata | {"commit_sha": commit_sha, "branch": branch},
             )
             for doc in raw_docs
         ]
 
-        self.source_document_store.save_all(source_docs)
+        self.source_document_store.replace_for_repository(repository_id, source_docs)
+        logger.info("Source documents persisted repository_id=%s user_id=%s branch=%s document_count=%s", repository_id, user_id, branch, len(source_docs))
+
+        try:
+            for raw_doc, source_doc in zip(raw_docs, source_docs, strict=True):
+                raw_doc.metadata.update(
+                    {
+                        "parent_id": str(source_doc.id),
+                        "repository_id": repository_key,
+                        "branch": branch,
+                        "commit_sha": commit_sha}
+                )
+
+            chunked_docs = self._split(raw_docs)
+            ids = [str(uuid.uuid5(repository_id, f"{commit_sha}:{doc.metadata['source']}:{index}")) for index, doc in enumerate(chunked_docs)]
+            self._create_tenant(tenant)
+            self._delete_repository_vectors(repository_key, tenant=tenant)
+            self._add_documents(chunked_docs, ids=ids, tenant=tenant)
+        except Exception:
+            self._cleanup_failed_ingestion(repository_id, repository_key=repository_key, tenant=tenant)
+            raise
+
         logger.info(
-            f"Source Documents persisted to database for repository_id={repository_id} user_id={user_id} branch={branch} document_count={len(source_docs)}")
-        for raw_doc, source_doc in (zip(raw_docs, source_docs)):
-            raw_doc.metadata.update({
-                "parent_id": source_doc.id,
-                "repository_id": str(source_doc.repository_id),
-                "commit_sha": source_doc.doc_metadata["commit_sha"],
-            })
+            f"Repository ingestion completed repository_id={repository_id} user_id={user_id} document_count={len(raw_docs)} chunk_count={len(chunked_docs)}")
 
-        chunked_docs = self._split(raw_docs)
-
-        self._create_tenant(tenant)
-
-        ids = [str(uuid.uuid4()) for _ in chunked_docs]
-        self._add_documents(chunked_docs, ids=ids, tenant=tenant)
-        logger.info(
-            "Repository ingestion completed repository_id=%s user_id=%s document_count=%s chunk_count=%s",
-            repository_id,
-            user_id,
-            len(raw_docs),
-            len(chunked_docs),
-        )
         return len(chunked_docs)
 
     def add_documents(self, documents: Sequence[Document], *, ids: Sequence[str], user_id: uuid.UUID) -> list[str]:
@@ -128,7 +145,7 @@ class DocumentIngestor:
             logger.warning("Repository embedding deletion skipped because tenant does not exist repository_id=%s user_id=%s", repository_id, user_id)
             return
         logger.info("Deleting repository embeddings repository_id=%s user_id=%s", repository_id, user_id)
-        self._collection().with_tenant(tenant).data.delete_many(where=Filter.by_property("repository_id").equal(repository_id))
+        self._delete_repository_vectors(str(repository_id), tenant=tenant)
 
     def delete_embeddings(self, ids: str | Iterable[str], *, user_id: uuid.UUID) -> None:
         """Delete one or more embedding objects from a user's tenant.
@@ -170,11 +187,21 @@ class DocumentIngestor:
         """Write documents and IDs to an existing tenant."""
         return self.resources.vector_store.add_documents(list(documents), ids=list(ids), tenant=tenant)
 
-    def _repository_exists(self, repository_id: uuid.UUID, tenant: str) -> bool:
-        """Check if a repository exists."""
-        result = self._collection().with_tenant(tenant).query.fetch_objects(
-            filters=Filter.by_property("repository_id").equal(str(repository_id)), limit=1)
-        return result.total_count > 0
+    def _delete_repository_vectors(self, repository_id: str, *, tenant: str) -> None:
+        """Delete one Repository's vectors from an existing tenant."""
+        self._collection().with_tenant(tenant).data.delete_many(where=Filter.by_property("repository_id").equal(repository_id))
+
+    def _cleanup_failed_ingestion(self, repository_id: uuid.UUID, *, repository_key: str, tenant: str) -> None:
+        """Compensate relational and vector writes after failed ingestion."""
+        try:
+            if self._tenant_exists(tenant):
+                self._delete_repository_vectors(repository_key, tenant=tenant)
+        except Exception:
+            logger.exception("Failed to clean up repository vectors repository_id=%s tenant=%s", repository_id, tenant)
+        try:
+            self.source_document_store.delete_by_repository(repository_id)
+        except Exception:
+            logger.exception("Failed to clean up source documents repository_id=%s", repository_id)
 
     def _tenant_exists(self, tenant: str) -> bool:
         """Return whether a non-empty tenant already exists."""

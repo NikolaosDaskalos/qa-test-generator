@@ -98,7 +98,7 @@ class FakeIngestor:
             raise self.ingest_error
         return self.chunk_count
 
-    def delete_by_repository(self, repository_id, *, user_id):
+    def delete_repository(self, repository_id, *, user_id):
         if self.delete_error:
             raise self.delete_error
         self.delete_calls.append((repository_id, user_id))
@@ -384,9 +384,9 @@ def test_delete_cleans_local_vector_and_database_state_in_order() -> None:
             calls.append("local")
 
     class OrderedIngestor(FakeIngestor):
-        def delete_by_repository(self, repository_id, *, user_id):
+        def delete_repository(self, repository_id, *, user_id):
             calls.append("vector")
-            super().delete_by_repository(repository_id, user_id=user_id)
+            super().delete_repository(repository_id, user_id=user_id)
 
     original_delete = store.delete
 

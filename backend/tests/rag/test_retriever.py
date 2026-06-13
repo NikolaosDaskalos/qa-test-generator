@@ -37,7 +37,7 @@ class FakeTenantCollection:
             fetch_objects=lambda **kwargs: SimpleNamespace(
                 objects=[
                     SimpleNamespace(
-                        uuid="object-id", properties={"content": "body", "source": "file.py", "repository_id": "repo", "parent_document_id": "parent"}
+                        uuid="object-id", properties={"content": "body", "source": "file.py", "repository_id": "repo", "parent_id": "parent"}
                     )
                 ]
             ),
@@ -125,7 +125,7 @@ def test_stats_existence_and_parent_lookup() -> None:
     assert retriever.get_embeddings_by_parent_id("parent") == {
         "ids": ["object-id"],
         "documents": ["body"],
-        "metadatas": [{"source": "file.py", "repository_id": "repo", "parent_document_id": "parent"}],
+        "metadatas": [{"source": "file.py", "repository_id": "repo", "parent_id": "parent"}],
     }
 
 
