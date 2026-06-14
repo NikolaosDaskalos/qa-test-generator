@@ -7,10 +7,8 @@ from sqlalchemy import DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
-    from app.models.item import Item
     from app.models.repository import Repository
     from app.models.session import RepositorySession
-    from app.models.todo import Todo
 
 
 class User(SQLModel, table=True):
@@ -22,8 +20,6 @@ class User(SQLModel, table=True):
     hashed_password: str
     created_at: datetime | None = Field(default_factory=lambda: datetime.now(UTC), sa_type=DateTime(timezone=True))  # type: ignore
 
-    items: list["Item"] = Relationship(back_populates="owner", cascade_delete=True)
-    todos: list["Todo"] = Relationship(back_populates="owner", cascade_delete=True)
     repository_sessions: list["RepositorySession"] = Relationship(
         back_populates="owner", sa_relationship_kwargs={"passive_deletes": "all"}
     )

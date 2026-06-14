@@ -69,7 +69,9 @@ def test_repository_session_timestamps_are_timezone_aware() -> None:
 def test_all_database_models_are_registered() -> None:
     configure_mappers()
 
-    assert {"branch", "repository", "repository_session", "session_history", "item", "todo", "user"} <= set(SQLModel.metadata.tables)
+    assert {"branch", "repository", "repository_session", "session_history", "user"} <= set(SQLModel.metadata.tables)
+    assert "item" not in SQLModel.metadata.tables
+    assert "todo" not in SQLModel.metadata.tables
     assert "search_session" not in SQLModel.metadata.tables
     assert "search_history" not in SQLModel.metadata.tables
     assert "memory" not in RepositorySession.model_fields

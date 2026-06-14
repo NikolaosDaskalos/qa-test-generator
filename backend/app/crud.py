@@ -1,13 +1,10 @@
 import logging
-import uuid
 from typing import Any
 
 from sqlmodel import Session, select
 
 from app.core.security import get_password_hash, verify_password
-from app.models.item import Item
 from app.models.user import User
-from app.schemas.item import ItemCreate
 from app.schemas.user import UserCreate, UserUpdate
 
 logger = logging.getLogger(__name__)
@@ -68,12 +65,3 @@ def authenticate(*, session: Session, email: str, password: str) -> User | None:
         logger.info("User password hash upgraded user_id=%s", db_user.id)
     logger.info("Authentication succeeded user_id=%s", db_user.id)
     return db_user
-
-
-def create_item(*, session: Session, item_in: ItemCreate, owner_id: uuid.UUID) -> Item:
-    db_item = Item.model_validate(item_in, update={"owner_id": owner_id})
-    session.add(db_item)
-    session.commit()
-    session.refresh(db_item)
-    logger.info("Item created item_id=%s owner_id=%s", db_item.id, owner_id)
-    return db_item

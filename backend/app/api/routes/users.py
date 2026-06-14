@@ -3,13 +3,12 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import col, delete, func, select
+from sqlmodel import col, func, select
 
 from app import crud
 from app.core.config import settings
 from app.core.security import get_password_hash, verify_password
 from app.dependencies import CurrentUser, SessionDep, get_current_active_superuser
-from app.models.item import Item
 from app.models.user import User
 from app.schemas.authentication import Message
 from app.schemas.user import UpdatePassword, UserCreate, UserPublic, UserRegister, UsersPublic, UserUpdate, UserUpdateMe
@@ -186,8 +185,6 @@ def delete_user(session: SessionDep, current_user: CurrentUser, user_id: uuid.UU
     if user == current_user:
         logger.warning("Administrator self-deletion rejected user_id=%s", current_user.id)
         raise HTTPException(status_code=403, detail="Super users are not allowed to delete themselves")
-    statement = delete(Item).where(col(Item.owner_id) == user_id)
-    session.exec(statement)
     session.delete(user)
     session.commit()
     logger.info("User deleted by administrator user_id=%s administrator_id=%s", user_id, current_user.id)
