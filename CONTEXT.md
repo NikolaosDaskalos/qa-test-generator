@@ -73,8 +73,8 @@ A test-generation attempt performed in the Repository's local checkout on a temp
 _Avoid_: Concurrent run, isolated worktree
 
 **Agent Stream**:
-The synchronous server-sent event response for a Repository question or Test-Generation Task. It reports stage progress, generated content, review findings, and the final persisted result without polling or background agent execution.
-_Avoid_: WebSocket, polling workflow
+The synchronous server-sent event response for a Repository question or Test-Generation Task. It reports stage progress, generated content, review findings, and the final persisted result without polling or background agent execution. Its events form a closed vocabulary (Stage, Token, Sources, Citations, Result). Deliberate outcomes — including failures such as insufficient evidence or a rejected Test Patch — are normal terminal events in this vocabulary. Only unexpected transport failures (a dropped connection, an upstream crash) are surfaced as an out-of-band error frame by the SSE adapter, outside the event vocabulary.
+_Avoid_: WebSocket, polling workflow, error event for a deliberate outcome
 
 **Approval**:
 The user's authorization to commit an accepted Test Patch to a new non-default branch and push that branch to the Repository remote. Approval never permits a push to the Repository's default branch.
