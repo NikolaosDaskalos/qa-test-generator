@@ -13,7 +13,6 @@ class RepositorySessionCreate(BaseModel):
 
 class RepositoryQuestionRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
-    use_hyde: bool = False
 
 
 class RepositorySessionPublic(BaseModel):

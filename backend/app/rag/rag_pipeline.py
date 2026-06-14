@@ -53,12 +53,10 @@ class RAGPipeline:
         logger.info("RAG pipeline ingestion requested user_id=%s repository_id=%s branch=%s", self.user_id, repository_id, branch)
         return self.ingestor.ingest(repo_path, repository_id, branch, commit_sha, self.user_id)
 
-    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict[str, Any]] | None = None, use_hyde: bool = False) -> Generator:
+    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict[str, Any]] | None = None) -> Generator:
         """Return a generator that streams answer events."""
-        logger.info(
-            "RAG answer stream requested user_id=%s repository_id=%s history_count=%s use_hyde=%s", self.user_id, repository_id, len(history or []), use_hyde
-        )
-        return self.chain_builder.answer_stream(question, repository_id=repository_id, history=history, use_hyde=use_hyde)
+        logger.info("RAG answer stream requested user_id=%s repository_id=%s history_count=%s", self.user_id, repository_id, len(history or []))
+        return self.chain_builder.answer_stream(question, repository_id=repository_id, history=history)
 
     def get_stats(self, *, repository_id: uuid.UUID) -> dict[str, Any]:
         """Return collection statistics for one Repository."""

@@ -1,4 +1,4 @@
-"""Build LCEL chains and stream standard or HyDE retrieval answers."""
+"""Build LCEL chains and stream retrieval answers."""
 
 import logging
 import uuid
@@ -22,16 +22,13 @@ logger = logging.getLogger(__name__)
 # TODO change this
 COST_PER_TOKEN = 0.00000015
 
-# Prompt used to generate the hypothetical document in HyDE mode
-HYDE_PROMPT_TEMPLATE = "Write a short, factual passage (2-4 sentences) that directly answers the following question. Imagine this is an excerpt from a relevant document.\n\nQuestion: {question}\n\nPassage:"
-
 # Returned verbatim when retrieval yields no Repository Evidence, so the answer
 # states the limitation instead of letting the model fill gaps from its own knowledge.
 INSUFFICIENT_EVIDENCE_ANSWER = "I don't have enough Repository Evidence in this session to answer that question."
 
 
 class ChainBuilder:
-    """Build and own LCEL chains for standard and HyDE retrieval modes."""
+    """Build and own LCEL chains for retrieval-grounded answers."""
 
     def __init__(self, llm, retriever):
         """Initialize the builder with a language model and retriever."""
@@ -54,22 +51,19 @@ class ChainBuilder:
 
     # ── Public streaming entry point ──────────────────────────────
 
-    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict] | None = None, use_hyde: bool = False) -> Generator:
-        """Stream answer events using standard or HyDE retrieval.
+    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict] | None = None) -> Generator:
+        """Stream answer events using history-aware retrieval.
 
         Yields:
             Status, token, and completion event dictionaries.
 
         """
         lc_history = self._to_lc_messages(history or [])
-        logger.info("RAG answer generation started mode=%s history_message_count=%s", "hyde" if use_hyde else "standard", len(lc_history))
+        logger.info("RAG answer generation started history_message_count=%s", len(lc_history))
 
-        if use_hyde:
-            yield from self._stream_hyde(question, repository_id, lc_history)
-        else:
-            yield from self._stream_standard(question, repository_id, lc_history)
+        yield from self._stream_standard(question, repository_id, lc_history)
 
-    # ── Standard RAG ──────────────────────────────────────────
+    # ── Retrieval-grounded answering ──────────────────────────────
 
     def _stream_standard(self, question: str, repository_id: uuid.UUID, lc_history: list) -> Generator:
         """Stream history-aware retrieval and generation events."""
@@ -89,7 +83,7 @@ class ChainBuilder:
         )
         if not evidence:
             logger.warning("Standard RAG retrieval returned no documents")
-            yield from self._stream_insufficient_evidence(question, hypothetical_doc=None)
+            yield from self._stream_insufficient_evidence(question)
             return
 
         sources = self._extract_sources(evidence)
@@ -107,62 +101,14 @@ class ChainBuilder:
             yield {"type": "token", "content": token}
 
         logger.info("Standard RAG answer generation completed source_count=%s response_length=%s", len(sources), len(collected))
-        yield self._done_event(question, collected, sources, hypothetical_doc=None)
-
-    # ── HyDE RAG ─────────────────────────────────────────────────
-
-    def _stream_hyde(self, question: str, repository_id: uuid.UUID, lc_history: list) -> Generator:
-        """Stream HyDE generation, retrieval, and answer events."""
-        # Signal the UI immediately so it shows a status (not a frozen screen)
-        yield {"type": "status", "message": "⚗️ Generating hypothetical document…"}
-
-        # Step 1 — Generate hypothetical document
-        logger.info("HyDE hypothetical document generation started")
-        hypothetical_doc = self._generate_hypothetical_doc(question)
-        logger.info("HyDE hypothetical document generation completed document_length=%s", len(hypothetical_doc))
-
-        # Step 2 — Retrieve complete parent Repository Evidence
-        evidence = self.retriever.retrieve_evidence(
-            hypothetical_doc,
-            repository_id=repository_id,
-            k=settings.TOP_K,
-            alpha=settings.HYBRID_SEARCH_ALPHA,
-            parent_limit=settings.FINAL_PARENT_LIMIT,
-        )
-        if not evidence:
-            logger.warning("HyDE retrieval returned no documents")
-            yield from self._stream_insufficient_evidence(question, hypothetical_doc=hypothetical_doc)
-            return
-
-        sources = self._extract_sources(evidence)
-        context = self._format_docs(evidence)
-        logger.info("HyDE retrieval completed evidence_count=%s", len(evidence))
-
-        # Step 3 — Build a one-shot prompt (no chain needed, context is already ready)
-        qa_prompt = ChatPromptTemplate.from_messages(
-            [("system", self._system_prompt + "\n\nContext:\n{context}"), MessagesPlaceholder("chat_history"), ("human", "{input}")]
-        )
-
-        # Step 4 — Stream the answer
-        collected = ""
-        for token in (qa_prompt | self.llm | StrOutputParser()).stream({"input": question, "chat_history": lc_history, "context": context}):
-            collected += token
-            yield {"type": "token", "content": token}
-
-        logger.info("HyDE answer generation completed source_count=%s response_length=%s", len(sources), len(collected))
-        yield self._done_event(question, collected, sources, hypothetical_doc)
+        yield self._done_event(question, collected, sources)
 
     # ── Helpers ───────────────────────────────────────────────────
 
-    def _stream_insufficient_evidence(self, question: str, *, hypothetical_doc: str | None) -> Generator:
+    def _stream_insufficient_evidence(self, question: str) -> Generator:
         """Stream a deterministic answer with no citations when evidence is empty."""
         yield {"type": "token", "content": INSUFFICIENT_EVIDENCE_ANSWER}
-        yield self._done_event(question, INSUFFICIENT_EVIDENCE_ANSWER, [], hypothetical_doc)
-
-    def _generate_hypothetical_doc(self, question: str) -> str:
-        """Ask the LLM to write a passage that would answer the question."""
-        prompt = ChatPromptTemplate.from_template(HYDE_PROMPT_TEMPLATE)
-        return (prompt | self.llm | StrOutputParser()).invoke({"question": question})
+        yield self._done_event(question, INSUFFICIENT_EVIDENCE_ANSWER, [])
 
     @staticmethod
     def _format_docs(docs) -> str:
@@ -183,14 +129,13 @@ class ChainBuilder:
         ]
 
     @staticmethod
-    def _done_event(question: str, collected: str, sources: list, hypothetical_doc: str | None) -> dict:
+    def _done_event(question: str, collected: str, sources: list) -> dict:
         """Build the final stream event with sources and estimated cost."""
         est_tokens = (len(question) + len(collected)) // 4
         return {
             "type": "done",
             "sources": sources,
             "token_info": f"~{est_tokens} tokens | ~${est_tokens * COST_PER_TOKEN:.5f}",
-            "hypothetical_doc": hypothetical_doc,
         }
 
     @staticmethod

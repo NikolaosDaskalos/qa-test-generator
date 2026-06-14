@@ -512,7 +512,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"{{repositoryQuestion}}\",\n  \"use_hyde\": {{useHyde}}\n}",
+              "raw": "{\n  \"question\": \"{{repositoryQuestion}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -657,11 +657,6 @@
     {
       "key": "repositoryQuestion",
       "value": "How is authentication tested in this repository?",
-      "type": "string"
-    },
-    {
-      "key": "useHyde",
-      "value": "false",
       "type": "string"
     },
     {

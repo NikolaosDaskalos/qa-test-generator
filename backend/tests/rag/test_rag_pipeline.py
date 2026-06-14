@@ -101,10 +101,10 @@ def test_pipeline_answers_with_repository_scope() -> None:
     pipeline.user_id = uuid.uuid4()
     pipeline.chain_builder = FakeChainBuilder()
 
-    result = pipeline.answer_stream("Current question", repository_id=repository_id, history=history, use_hyde=True)
+    result = pipeline.answer_stream("Current question", repository_id=repository_id, history=history)
 
     assert result is stream
-    assert calls == [("Current question", {"repository_id": repository_id, "history": history, "use_hyde": True})]
+    assert calls == [("Current question", {"repository_id": repository_id, "history": history})]
 
 
 def test_pipeline_returns_repository_scoped_statistics() -> None:

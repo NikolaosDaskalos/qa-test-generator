@@ -15,7 +15,7 @@ from app.schemas.session import RepositorySessionCreate
 class AnswerPipeline(Protocol):
     """The repository-scoped answer source consumed when answering a question."""
 
-    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict[str, Any]], use_hyde: bool) -> Generator[dict[str, Any], None, None]: ...
+    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict[str, Any]]) -> Generator[dict[str, Any], None, None]: ...
 
 
 class RepositorySessionService:
@@ -47,7 +47,7 @@ class RepositorySessionService:
         return self.session_store.append_exchange(repository_session.id, user_message=user_message, assistant_message=assistant_message)
 
     def answer_question(
-        self, *, repository_session_id: uuid.UUID, user: User, question: str, pipeline: AnswerPipeline, use_hyde: bool = False
+        self, *, repository_session_id: uuid.UUID, user: User, question: str, pipeline: AnswerPipeline
     ) -> Generator[dict[str, Any], None, None]:
         """Stream a repository-grounded answer and persist the completed exchange.
 
@@ -57,16 +57,16 @@ class RepositorySessionService:
         """
         repository_session = self._get_accessible(repository_session_id, user)
         history = [{"role": message.role.value, "content": message.content} for message in self.session_store.get_recent_history(repository_session.id)]
-        return self._stream_answer(repository_session, question, history, pipeline, use_hyde)
+        return self._stream_answer(repository_session, question, history, pipeline)
 
     def _stream_answer(
-        self, repository_session: RepositorySession, question: str, history: list[dict[str, Any]], pipeline: AnswerPipeline, use_hyde: bool
+        self, repository_session: RepositorySession, question: str, history: list[dict[str, Any]], pipeline: AnswerPipeline
     ) -> Generator[dict[str, Any], None, None]:
         yield {"type": "stage", "stage": "retrieving"}
         answer = ""
         sources: list[dict[str, Any]] = []
         generating = False
-        for event in pipeline.answer_stream(question, repository_id=repository_session.repository_id, history=history, use_hyde=use_hyde):
+        for event in pipeline.answer_stream(question, repository_id=repository_session.repository_id, history=history):
             if event["type"] == "token":
                 if not event["content"]:
                     continue

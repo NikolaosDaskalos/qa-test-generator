@@ -1,8 +1,6 @@
-"""Test repository-scoped retrieval in standard and HyDE answer chains."""
+"""Test repository-scoped retrieval in answer chains."""
 
 import uuid
-
-import pytest
 
 from app.core.config import settings
 from app.models.source_document import SourceDocument
@@ -19,7 +17,7 @@ class FakeRunnable:
         return self
 
     def invoke(self, values):
-        return "hypothetical document"
+        return "reformulated question"
 
     def stream(self, values):
         self.stream_values.append(values)
@@ -50,9 +48,8 @@ class RecordingRetriever:
         return self.evidence
 
 
-@pytest.mark.parametrize(("use_hyde", "expected_query"), [(False, "question"), (True, "hypothetical document")])
-def test_answer_stream_scopes_retrieval_to_repository(monkeypatch, use_hyde, expected_query) -> None:
-    """Forward repository identity and hybrid alpha in both retrieval modes."""
+def test_answer_stream_scopes_retrieval_to_repository(monkeypatch) -> None:
+    """Forward repository identity and hybrid alpha in retrieval."""
     monkeypatch.setattr(chain_builder, "ChatPromptTemplate", FakePromptTemplate)
     FakeRunnable.stream_values = []
     repository_id = uuid.uuid4()
@@ -64,11 +61,11 @@ def test_answer_stream_scopes_retrieval_to_repository(monkeypatch, use_hyde, exp
     retriever = RecordingRetriever([parent])
     builder = ChainBuilder(object(), retriever)
 
-    events = list(builder.answer_stream("question", repository_id=repository_id, use_hyde=use_hyde))
+    events = list(builder.answer_stream("question", repository_id=repository_id))
 
     assert retriever.calls == [
         (
-            expected_query,
+            "question",
             {
                 "repository_id": repository_id,
                 "k": settings.TOP_K,
@@ -89,8 +86,7 @@ def test_answer_stream_scopes_retrieval_to_repository(monkeypatch, use_hyde, exp
     ]
 
 
-@pytest.mark.parametrize("use_hyde", [False, True])
-def test_answer_stream_returns_insufficient_evidence_without_calling_the_model(monkeypatch, use_hyde) -> None:
+def test_answer_stream_returns_insufficient_evidence_without_calling_the_model(monkeypatch) -> None:
     """Empty Repository Evidence yields a deterministic answer and no generation."""
     monkeypatch.setattr(chain_builder, "ChatPromptTemplate", FakePromptTemplate)
     FakeRunnable.stream_values = []
@@ -98,7 +94,7 @@ def test_answer_stream_returns_insufficient_evidence_without_calling_the_model(m
     retriever = RecordingRetriever([])  # no Repository Evidence retrieved
     builder = ChainBuilder(object(), retriever)
 
-    events = list(builder.answer_stream("question", repository_id=repository_id, use_hyde=use_hyde))
+    events = list(builder.answer_stream("question", repository_id=repository_id))
 
     # Retrieval is still attempted and scoped to the Repository.
     assert retriever.calls[-1][1]["repository_id"] == repository_id

@@ -178,7 +178,6 @@ def test_answer_question_binds_streams_and_persists_with_citations() -> None:
                     {"role": "user", "content": "Earlier question"},
                     {"role": "assistant", "content": "Earlier answer"},
                 ],
-                "use_hyde": False,
             },
         )
     ]

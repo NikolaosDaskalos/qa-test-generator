@@ -38,7 +38,6 @@ def ask_repository_question(
         user=current_user,
         question=question_in.question,
         pipeline=rag_pipeline,
-        use_hyde=question_in.use_hyde,
     )
     return StreamingResponse(_to_sse(events), media_type="text/event-stream")
 
