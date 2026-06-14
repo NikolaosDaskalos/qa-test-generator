@@ -145,8 +145,6 @@ class ChainBuilder:
         for msg in history[-6:]:
             role = msg.get("role", "")
             content = msg.get("content", "")
-            if "---\n📚" in content:
-                content = content.split("---\n📚")[0].strip()
             if not content:
                 continue
             if role == "user":

@@ -191,14 +191,14 @@ def test_answer_question_binds_streams_and_persists_with_citations() -> None:
     assert terminal.answer == "Auth is route-tested."
     assert terminal.citations == [Citation(source="app/auth.py"), Citation(source="app/login.py")]
 
-    # The exchange is persisted with the question and the answer plus a traceable citation footer.
+    # The exchange is persisted once: the question, the clean answer text, and citations as structured data.
     assert len(session_store.append_calls) == 1
     persisted_session_id, persisted = session_store.append_calls[0]
     assert persisted_session_id == repository_session.id
     assert persisted["user_message"] == "How is auth tested?"
-    assert persisted["assistant_message"].startswith("Auth is route-tested.")
-    assert "app/auth.py" in persisted["assistant_message"]
-    assert "app/login.py" in persisted["assistant_message"]
+    assert persisted["assistant_message"] == "Auth is route-tested."
+    assert persisted["assistant_citations"] == [{"source": "app/auth.py"}, {"source": "app/login.py"}]
+    assert "📚" not in persisted["assistant_message"]
 
 
 def test_answer_question_rejects_non_owner_before_streaming() -> None:
@@ -237,6 +237,7 @@ def test_answer_question_persists_insufficient_evidence_with_empty_citations() -
     terminal = events[-1]
     assert isinstance(terminal, Result)
     assert terminal.citations == []
-    # The exchange is still persisted, and the assistant message carries no citation footer.
+    # The exchange is still persisted, with clean text and an empty structural citation list.
     persisted = session_store.append_calls[0][1]
     assert persisted["assistant_message"] == "I don't have enough Repository Evidence."
+    assert persisted["assistant_citations"] == []

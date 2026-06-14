@@ -76,7 +76,10 @@ class RepositorySessionService:
                 yield event
 
         _user_message, assistant_message = self.session_store.append_exchange(
-            repository_session.id, user_message=question, assistant_message=self._with_citation_footer(answer, citations)
+            repository_session.id,
+            user_message=question,
+            assistant_message=answer,
+            assistant_citations=[citation.model_dump() for citation in citations],
         )
         yield Result(
             repository_session_id=repository_session.id,
@@ -84,14 +87,6 @@ class RepositorySessionService:
             answer=answer,
             citations=citations,
         )
-
-    @staticmethod
-    def _with_citation_footer(answer: str, citations: list[Citation]) -> str:
-        """Append a traceable source footer that history reformulation later strips."""
-        if not citations:
-            return answer
-        paths = ", ".join(citation.source for citation in citations)
-        return f"{answer}\n\n---\n📚 Sources: {paths}"
 
     def _get_accessible(self, repository_session_id: uuid.UUID, user: User) -> RepositorySession:
         repository_session = self.session_store.get_by_id(repository_session_id)

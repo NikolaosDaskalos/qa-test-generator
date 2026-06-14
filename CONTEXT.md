@@ -17,8 +17,8 @@ A conversation and task workspace bound to exactly one Repository for its lifeti
 _Avoid_: Search Session, chat session
 
 **Session History**:
-The persisted exchanges within a Repository Session. At most the six most recent messages influence question reformulation or task planning, and no duplicate session-memory copy is maintained.
-_Avoid_: Session memory blob, full-history prompt
+The persisted exchanges within a Repository Session. Each assistant exchange retains its supporting Repository Evidence citations as structured data, kept distinct from the answer text rather than embedded in it. At most the six most recent messages influence question reformulation or task planning, and no duplicate session-memory copy is maintained.
+_Avoid_: Session memory blob, full-history prompt, citations rendered into message text
 
 **Repository Evidence**:
 Indexed code units retrieved only from the Repository bound to the current Repository Session. Answers, plans, generated tests, reviews, and citations must not use chunks from another Repository.
@@ -73,7 +73,7 @@ A test-generation attempt performed in the Repository's local checkout on a temp
 _Avoid_: Concurrent run, isolated worktree
 
 **Agent Stream**:
-The synchronous server-sent event response for a Repository question or Test-Generation Task. It reports stage progress, generated content, review findings, and the final persisted result without polling or background agent execution. Its events form a closed vocabulary (Stage, Token, Sources, Citations, Result). Deliberate outcomes — including failures such as insufficient evidence or a rejected Test Patch — are normal terminal events in this vocabulary. Only unexpected transport failures (a dropped connection, an upstream crash) are surfaced as an out-of-band error frame by the SSE adapter, outside the event vocabulary.
+The synchronous server-sent event response for a Repository question or Test-Generation Task. It reports stage progress, generated content, review findings, and the final persisted result without polling or background agent execution. Its events form a closed vocabulary (Stage, Token, Result); citations ride on the terminal Result rather than as a separate event. Deliberate outcomes — including failures such as insufficient evidence or a rejected Test Patch — are normal terminal events in this vocabulary. Only unexpected transport failures (a dropped connection, an upstream crash) are surfaced as an out-of-band error frame by the SSE adapter, outside the event vocabulary.
 _Avoid_: WebSocket, polling workflow, error event for a deliberate outcome
 
 **Approval**:

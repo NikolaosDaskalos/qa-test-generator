@@ -3,7 +3,7 @@ import uuid
 from sqlmodel import Session, col, func, select
 
 from app.enums.session import SessionMessageRole
-from app.models.session import RepositorySession, SessionHistory
+from app.models.session import CitationData, RepositorySession, SessionHistory
 
 
 class RepositorySessionStore:
@@ -21,14 +21,20 @@ class RepositorySessionStore:
     def get_by_id(self, repository_session_id: uuid.UUID) -> RepositorySession | None:
         return self.session.get(RepositorySession, repository_session_id)
 
-    def append_exchange(self, repository_session_id: uuid.UUID, *, user_message: str, assistant_message: str) -> tuple[SessionHistory, SessionHistory]:
+    def append_exchange(
+        self, repository_session_id: uuid.UUID, *, user_message: str, assistant_message: str, assistant_citations: list[CitationData] | None = None
+    ) -> tuple[SessionHistory, SessionHistory]:
         lock_statement = select(RepositorySession.id).where(RepositorySession.id == repository_session_id).with_for_update()
         self.session.exec(lock_statement).one()
         position_statement = select(func.max(SessionHistory.position)).where(SessionHistory.session_id == repository_session_id)
         next_position = (self.session.exec(position_statement).one() or 0) + 1
         user_history = SessionHistory(session_id=repository_session_id, role=SessionMessageRole.user, content=user_message, position=next_position)
         assistant_history = SessionHistory(
-            session_id=repository_session_id, role=SessionMessageRole.assistant, content=assistant_message, position=next_position + 1
+            session_id=repository_session_id,
+            role=SessionMessageRole.assistant,
+            content=assistant_message,
+            citations=assistant_citations or [],
+            position=next_position + 1,
         )
         self.session.add(user_history)
         self.session.add(assistant_history)

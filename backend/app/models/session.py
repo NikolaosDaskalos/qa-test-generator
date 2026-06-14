@@ -1,8 +1,9 @@
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from sqlalchemy import DateTime, UniqueConstraint, event, inspect
+from sqlalchemy import JSON, Column, DateTime, UniqueConstraint, event, inspect, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Mapper
 from sqlalchemy.orm.state import InstanceState
@@ -13,6 +14,12 @@ from app.enums.session import SessionMessageRole
 if TYPE_CHECKING:
     from app.models.repository import Repository
     from app.models.user import User
+
+
+class CitationData(TypedDict):
+    """A Repository source retained alongside a persisted assistant message."""
+
+    source: str
 
 
 class RepositorySession(SQLModel, table=True):
@@ -44,6 +51,10 @@ class SessionHistory(SQLModel, table=True):
     session_id: uuid.UUID = Field(foreign_key="repository_session.id", nullable=False, index=True, ondelete="CASCADE")
     role: SessionMessageRole
     content: str
+    # JSONB on PostgreSQL; the JSON variant keeps the column portable to the SQLite engine used in persistence tests.
+    citations: list[CitationData] = Field(
+        default_factory=list, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False, server_default=text("'[]'"))
+    )
     position: int = Field(ge=1)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), sa_type=DateTime(timezone=True))  # type: ignore
 

@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.enums.session import SessionMessageRole
+from app.schemas.agent_stream import Citation
 
 
 class RepositorySessionCreate(BaseModel):
@@ -33,6 +34,7 @@ class SessionHistoryPublic(BaseModel):
     session_id: uuid.UUID
     role: SessionMessageRole
     content: str
+    citations: list[Citation]
     position: int
     created_at: datetime
 

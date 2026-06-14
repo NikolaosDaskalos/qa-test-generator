@@ -121,6 +121,27 @@ def test_answer_stream_skips_empty_model_chunks(monkeypatch) -> None:
     assert events[-1] == Answer(text="answer complete", citations=[Citation(source="app/example.py")])
 
 
+def test_answer_stream_forwards_history_content_without_footer_knowledge(monkeypatch) -> None:
+    """Reformulation treats persisted message text as opaque — it carries no citation-footer format knowledge."""
+    monkeypatch.setattr(chain_builder, "ChatPromptTemplate", FakePromptTemplate)
+    FakeRunnable.stream_values = []
+    repository_id = uuid.uuid4()
+    evidence = [SourceDocument(repository_id=repository_id, content="evidence", doc_metadata={"source": "app/auth.py"})]
+    builder = ChainBuilder(object(), RecordingRetriever(evidence))
+    # A legacy assistant message whose text still embeds a rendered citation footer.
+    legacy = "Auth is route-tested.\n\n---\n📚 Sources: app/auth.py"
+    history = [
+        {"role": "user", "content": "How is auth tested?"},
+        {"role": "assistant", "content": legacy},
+    ]
+
+    list(builder.answer_stream("follow-up question", repository_id=repository_id, history=history))
+
+    # The generation step receives every message verbatim; no footer is stripped or special-cased.
+    chat_history = FakeRunnable.stream_values[-1]["chat_history"]
+    assert [message.content for message in chat_history] == ["How is auth tested?", legacy]
+
+
 def test_answer_stream_returns_insufficient_evidence_without_calling_the_model(monkeypatch) -> None:
     """Empty Repository Evidence yields a deterministic answer and no generation."""
     monkeypatch.setattr(chain_builder, "ChatPromptTemplate", FakePromptTemplate)

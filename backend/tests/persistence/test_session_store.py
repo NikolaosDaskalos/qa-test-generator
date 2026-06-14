@@ -63,6 +63,37 @@ def test_recent_history_returns_latest_six_messages_in_chronological_order() -> 
     ]
 
 
+def test_append_exchange_retains_assistant_citations_structurally() -> None:
+    engine = _engine()
+    owner_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    repository_session_id = uuid.uuid4()
+
+    with Session(engine) as db:
+        db.add(User(id=owner_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(
+            Repository(id=repository_id, user_id=owner_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+        )
+        db.add(RepositorySession(id=repository_session_id, owner_id=owner_id, repository_id=repository_id))
+        db.commit()
+        store = RepositorySessionStore(db)
+
+        store.append_exchange(
+            repository_session_id,
+            user_message="How is auth tested?",
+            assistant_message="Auth is route-tested.",
+            assistant_citations=[{"source": "app/auth.py"}, {"source": "app/login.py"}],
+        )
+
+        user_message, assistant_message = store.get_recent_history(repository_session_id)
+
+    # The assistant message keeps its supporting citations as structured data, distinct from its text.
+    assert assistant_message.content == "Auth is route-tested."
+    assert assistant_message.citations == [{"source": "app/auth.py"}, {"source": "app/login.py"}]
+    # The user message carries no citations.
+    assert user_message.citations == []
+
+
 def test_append_exchange_locks_repository_session_before_allocating_positions() -> None:
     repository_session_id = uuid.uuid4()
     executed_statements = []

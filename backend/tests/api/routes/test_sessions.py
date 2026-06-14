@@ -68,7 +68,13 @@ def test_owner_can_read_session_history() -> None:
     repository_session = RepositorySession(owner_id=user_id, repository_id=uuid.uuid4())
     history = [
         SessionHistory(session_id=repository_session.id, role=SessionMessageRole.user, content="How is authentication tested?", position=1),
-        SessionHistory(session_id=repository_session.id, role=SessionMessageRole.assistant, content="The repository uses route tests.", position=2),
+        SessionHistory(
+            session_id=repository_session.id,
+            role=SessionMessageRole.assistant,
+            content="The repository uses route tests.",
+            citations=[{"source": "app/auth.py"}, {"source": "app/login.py"}],
+            position=2,
+        ),
     ]
     service = FakeRepositorySessionService(repository_session, history)
     user = SimpleNamespace(id=user_id, is_superuser=False)
@@ -81,7 +87,11 @@ def test_owner_can_read_session_history() -> None:
         response = client.get(f"/sessions/{repository_session.id}/history")
 
     assert response.status_code == 200
-    assert [message["role"] for message in response.json()["data"]] == ["user", "assistant"]
+    messages = response.json()["data"]
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    # Citations surface structurally on the read contract instead of being parsed out of the message text.
+    assert messages[0]["citations"] == []
+    assert messages[1]["citations"] == [{"source": "app/auth.py"}, {"source": "app/login.py"}]
     assert service.history_calls == [{"repository_session_id": repository_session.id, "user": user}]
 
 
