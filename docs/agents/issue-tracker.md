@@ -1,19 +1,22 @@
-# Issue Tracker: Local Markdown
+# Issue tracker: Local Markdown
 
-Issues and PRDs for this repository live as Markdown files in `doc/`.
+Issues and PRDs for this repo live as markdown files under `docs/`.
 
 ## Conventions
 
-- One feature per directory: `doc/<feature-slug>/`
-- The PRD is `doc/<feature-slug>/PRD.md`
-- Implementation issues are `doc/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`
-- Triage state is recorded as a `Status:` line near the top of each issue file
-- Comments and conversation history append under a `## Comments` heading
+- Implementation issues are flat files: `docs/issues/<NN>-<slug>.md`, numbered from `01`.
+- The PRD lives at `docs/prd/PRD.md`.
+- Each issue file opens with a short metadata header near the top:
+  - `Status:` — the triage state (see `triage-labels.md` for the role strings)
+  - `Type:` — e.g. `AFK` for agent-ready work
+  - `User stories:` — the PRD user stories this slice covers
+- The body uses `## What to build`, `## Acceptance criteria` (checkboxes), and any further sections the work needs.
+- Comments and conversation history append to the bottom of the file under a `## Comments` heading.
 
-## Publishing
+## When a skill says "publish to the issue tracker"
 
-When a skill says to publish to the issue tracker, create the relevant file under `doc/<feature-slug>/`, creating the directory if needed.
+Create a new file at `docs/issues/<NN>-<slug>.md`, picking the next free `<NN>`. Publish PRDs to `docs/prd/PRD.md`.
 
-## Fetching
+## When a skill says "fetch the relevant ticket"
 
-When a skill says to fetch a ticket, read the referenced file. The user will normally provide its path or issue number.
+Read the file under `docs/issues/`. The user will normally pass the path or the issue number directly.
