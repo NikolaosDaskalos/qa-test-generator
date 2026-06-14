@@ -1,6 +1,6 @@
 # Emit typed Agent Stream events from the producer
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 
 ## What to build
@@ -18,11 +18,11 @@ the union module.
 
 ## Acceptance criteria
 
-- [ ] The answer chain builder yields typed `Token` and `Sources` events directly, with no intermediate event dicts.
-- [ ] The temporary normalization shim from issue 19 is deleted; no module converts event dicts into typed events.
-- [ ] `test_chain_builder` asserts typed `Token`/`Sources` events rather than dict shapes.
-- [ ] No event-dict literals (e.g. `{"type": "token"...}`, `{"type": "done"...}`) remain in the answer-stream path outside the union module.
-- [ ] The wire output, the full backend test suite, and the Postman acceptance check remain green with no observable change.
+- [x] The answer chain builder yields typed `Token` and `Sources` events directly, with no intermediate event dicts.
+- [x] The temporary normalization shim from issue 19 is deleted; no module converts event dicts into typed events.
+- [x] `test_chain_builder` asserts typed `Token`/`Sources` events rather than dict shapes.
+- [x] No event-dict literals (e.g. `{"type": "token"...}`, `{"type": "done"...}`) remain in the answer-stream path outside the union module.
+- [x] The wire output, the full backend test suite, and the Postman acceptance check remain green with no observable change.
 
 ## Blocked by
 

@@ -17,10 +17,9 @@ from app.core.config import settings
 
 # pyrefly: ignore [missing-import]
 from app.prompts.rag_prompts import CONTEXTUALIZE_PROMPT, QA_SYSTEM_PROMPT
+from app.schemas.agent_stream import Sources, Token
 
 logger = logging.getLogger(__name__)
-# TODO change this
-COST_PER_TOKEN = 0.00000015
 
 # Returned verbatim when retrieval yields no Repository Evidence, so the answer
 # states the limitation instead of letting the model fill gaps from its own knowledge.
@@ -55,7 +54,8 @@ class ChainBuilder:
         """Stream answer events using history-aware retrieval.
 
         Yields:
-            Status, token, and completion event dictionaries.
+            Typed Agent Stream events: ``Token`` chunks followed by a terminal
+            ``Sources`` event carrying the retrieved source paths.
 
         """
         lc_history = self._to_lc_messages(history or [])
@@ -98,17 +98,17 @@ class ChainBuilder:
         collected = ""
         for token in (qa_prompt | self.llm | StrOutputParser()).stream({"input": question, "chat_history": lc_history, "context": context}):
             collected += token
-            yield {"type": "token", "content": token}
+            yield Token(content=token)
 
         logger.info("Standard RAG answer generation completed source_count=%s response_length=%s", len(sources), len(collected))
-        yield self._done_event(question, collected, sources)
+        yield Sources(sources=sources)
 
     # ── Helpers ───────────────────────────────────────────────────
 
     def _stream_insufficient_evidence(self, question: str) -> Generator:
         """Stream a deterministic answer with no citations when evidence is empty."""
-        yield {"type": "token", "content": INSUFFICIENT_EVIDENCE_ANSWER}
-        yield self._done_event(question, INSUFFICIENT_EVIDENCE_ANSWER, [])
+        yield Token(content=INSUFFICIENT_EVIDENCE_ANSWER)
+        yield Sources(sources=[])
 
     @staticmethod
     def _format_docs(docs) -> str:
@@ -116,27 +116,9 @@ class ChainBuilder:
         return "\n\n---\n\n".join(f"[Source: {document.doc_metadata.get('source', '?')}]\n{document.content}" for document in docs)
 
     @staticmethod
-    def _extract_sources(docs) -> list:
-        """Extract citations from selected parent SourceDocuments."""
-        return [
-            {
-                "source": document.doc_metadata.get("source", "Unknown"),
-                "page": document.doc_metadata.get("page", ""),
-                "chunk": document.content,
-                "score": None,
-            }
-            for document in docs
-        ]
-
-    @staticmethod
-    def _done_event(question: str, collected: str, sources: list) -> dict:
-        """Build the final stream event with sources and estimated cost."""
-        est_tokens = (len(question) + len(collected)) // 4
-        return {
-            "type": "done",
-            "sources": sources,
-            "token_info": f"~{est_tokens} tokens | ~${est_tokens * COST_PER_TOKEN:.5f}",
-        }
+    def _extract_sources(docs) -> list[str]:
+        """Extract source paths from selected parent SourceDocuments."""
+        return [document.doc_metadata.get("source", "Unknown") for document in docs]
 
     @staticmethod
     def _to_lc_messages(history: list[dict]):

@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.models.source_document import SourceDocument
 from app.rag import chain_builder
 from app.rag.chain_builder import INSUFFICIENT_EVIDENCE_ANSWER, ChainBuilder
+from app.schemas.agent_stream import Sources, Token
 
 
 class FakeRunnable:
@@ -75,15 +76,7 @@ def test_answer_stream_scopes_retrieval_to_repository(monkeypatch) -> None:
         )
     ]
     assert FakeRunnable.stream_values[-1]["context"] == "[Source: backend/app/parent.py]\ncomplete parent content"
-    assert events[-1]["type"] == "done"
-    assert events[-1]["sources"] == [
-        {
-            "source": "backend/app/parent.py",
-            "page": "parent-page",
-            "chunk": "complete parent content",
-            "score": None,
-        }
-    ]
+    assert events == [Token(content="answer"), Sources(sources=["backend/app/parent.py"])]
 
 
 def test_answer_stream_returns_insufficient_evidence_without_calling_the_model(monkeypatch) -> None:
@@ -100,7 +93,5 @@ def test_answer_stream_returns_insufficient_evidence_without_calling_the_model(m
     assert retriever.calls[-1][1]["repository_id"] == repository_id
     # The language model is never streamed for generation.
     assert FakeRunnable.stream_values == []
-    # An explicit insufficient-evidence answer is the only emitted content.
-    assert [event["content"] for event in events if event["type"] == "token"] == [INSUFFICIENT_EVIDENCE_ANSWER]
-    assert events[-1]["type"] == "done"
-    assert events[-1]["sources"] == []
+    # An explicit insufficient-evidence answer is the only emitted content, with no sources.
+    assert events == [Token(content=INSUFFICIENT_EVIDENCE_ANSWER), Sources(sources=[])]
