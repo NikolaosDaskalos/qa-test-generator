@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +17,26 @@ from app.prompts.rag_prompts import QA_SYSTEM_PROMPT
 from app.rag.chain_builder import ChainBuilder
 from app.rag.ingestor import DocumentIngestor
 from app.rag.retriever import DocumentRetriever
+from app.schemas.agent_stream import AgentStreamEvent, Sources, Token
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_chain_events(events: Iterable[dict[str, Any]]) -> Generator[AgentStreamEvent, None, None]:
+    """Adapt the chain builder's untyped dict events into typed Agent Stream events.
+
+    Temporary shim at the pipeline boundary: the producer still emits dicts, so we
+    normalize them here. ``token`` becomes :class:`Token`; the chain builder's
+    "generation complete + sources" ``done`` signal becomes a single internal
+    :class:`Sources` event (the double-``done`` collapse), and the dead
+    ``token_info`` cost estimate is dropped. Removed in issue 20 when the producer
+    emits typed events directly.
+    """
+    for event in events:
+        if event["type"] == "token":
+            yield Token(content=event["content"])
+        elif event["type"] == "done":
+            yield Sources(sources=[source.get("source", "") for source in event.get("sources", [])])
 
 
 class RAGPipeline:
@@ -53,10 +71,10 @@ class RAGPipeline:
         logger.info("RAG pipeline ingestion requested user_id=%s repository_id=%s branch=%s", self.user_id, repository_id, branch)
         return self.ingestor.ingest(repo_path, repository_id, branch, commit_sha, self.user_id)
 
-    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict[str, Any]] | None = None) -> Generator:
-        """Return a generator that streams answer events."""
+    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict[str, Any]] | None = None) -> Generator[AgentStreamEvent, None, None]:
+        """Return a generator that streams typed Agent Stream events."""
         logger.info("RAG answer stream requested user_id=%s repository_id=%s history_count=%s", self.user_id, repository_id, len(history or []))
-        return self.chain_builder.answer_stream(question, repository_id=repository_id, history=history)
+        return normalize_chain_events(self.chain_builder.answer_stream(question, repository_id=repository_id, history=history))
 
     def get_stats(self, *, repository_id: uuid.UUID) -> dict[str, Any]:
         """Return collection statistics for one Repository."""

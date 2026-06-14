@@ -9,13 +9,14 @@ from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
 from app.persistence.repository_store import RepositoryStore
 from app.persistence.session_store import RepositorySessionStore
+from app.schemas.agent_stream import AgentStreamEvent, Citation, Citations, Result, Sources, Stage, Token
 from app.schemas.session import RepositorySessionCreate
 
 
 class AnswerPipeline(Protocol):
     """The repository-scoped answer source consumed when answering a question."""
 
-    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict[str, Any]]) -> Generator[dict[str, Any], None, None]: ...
+    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict[str, Any]]) -> Generator[AgentStreamEvent, None, None]: ...
 
 
 class RepositorySessionService:
@@ -48,7 +49,7 @@ class RepositorySessionService:
 
     def answer_question(
         self, *, repository_session_id: uuid.UUID, user: User, question: str, pipeline: AnswerPipeline
-    ) -> Generator[dict[str, Any], None, None]:
+    ) -> Generator[AgentStreamEvent, None, None]:
         """Stream a repository-grounded answer and persist the completed exchange.
 
         Ownership is enforced before any streaming begins. The returned generator
@@ -61,22 +62,23 @@ class RepositorySessionService:
 
     def _stream_answer(
         self, repository_session: RepositorySession, question: str, history: list[dict[str, Any]], pipeline: AnswerPipeline
-    ) -> Generator[dict[str, Any], None, None]:
-        yield {"type": "stage", "stage": "retrieving"}
+    ) -> Generator[AgentStreamEvent, None, None]:
+        yield Stage(stage="retrieving")
         answer = ""
-        sources: list[dict[str, Any]] = []
+        sources: list[str] = []
         generating = False
         for event in pipeline.answer_stream(question, repository_id=repository_session.repository_id, history=history):
-            if event["type"] == "token":
-                if not event["content"]:
+            if isinstance(event, Token):
+                if not event.content:
                     continue
                 if not generating:
                     generating = True
-                    yield {"type": "stage", "stage": "generating"}
-                answer += event["content"]
+                    yield Stage(stage="generating")
+                answer += event.content
                 yield event
-            elif event["type"] == "done":
-                sources = event.get("sources", [])
+            elif isinstance(event, Sources):
+                # Internal hop: collected to build citations, never forwarded to the wire.
+                sources = event.sources
             else:
                 yield event
 
@@ -84,33 +86,31 @@ class RepositorySessionService:
         _user_message, assistant_message = self.session_store.append_exchange(
             repository_session.id, user_message=question, assistant_message=self._with_citation_footer(answer, citations)
         )
-        yield {"type": "citations", "citations": citations}
-        yield {
-            "type": "result",
-            "repository_session_id": repository_session.id,
-            "assistant_message_id": assistant_message.id,
-            "answer": answer,
-            "citations": citations,
-        }
+        yield Citations(citations=citations)
+        yield Result(
+            repository_session_id=repository_session.id,
+            assistant_message_id=assistant_message.id,
+            answer=answer,
+            citations=citations,
+        )
 
     @staticmethod
-    def _to_citations(sources: list[dict[str, Any]]) -> list[dict[str, str]]:
-        """Project retrieved evidence into file citations, de-duplicated in order."""
-        citations: list[dict[str, str]] = []
+    def _to_citations(sources: list[str]) -> list[Citation]:
+        """Project retrieved source paths into file citations, de-duplicated in order."""
+        citations: list[Citation] = []
         seen: set[str] = set()
-        for source in sources:
-            path = source.get("source", "")
+        for path in sources:
             if path and path not in seen:
                 seen.add(path)
-                citations.append({"source": path})
+                citations.append(Citation(source=path))
         return citations
 
     @staticmethod
-    def _with_citation_footer(answer: str, citations: list[dict[str, str]]) -> str:
+    def _with_citation_footer(answer: str, citations: list[Citation]) -> str:
         """Append a traceable source footer that history reformulation later strips."""
         if not citations:
             return answer
-        paths = ", ".join(citation["source"] for citation in citations)
+        paths = ", ".join(citation.source for citation in citations)
         return f"{answer}\n\n---\n📚 Sources: {paths}"
 
     def _get_accessible(self, repository_session_id: uuid.UUID, user: User) -> RepositorySession:

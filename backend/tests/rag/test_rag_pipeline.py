@@ -6,7 +6,8 @@ from pathlib import Path
 from pydantic import SecretStr
 
 from app.rag import rag_pipeline
-from app.rag.rag_pipeline import RAGPipeline
+from app.rag.rag_pipeline import RAGPipeline, normalize_chain_events
+from app.schemas.agent_stream import Sources, Token
 
 
 def test_pipeline_constructs_components_from_shared_resources(monkeypatch) -> None:
@@ -85,26 +86,52 @@ def test_pipeline_ingests_an_exact_repository_snapshot() -> None:
     assert calls == [(Path("/repo"), repository_id, "main", "a" * 40, user_id)]
 
 
+def test_shim_normalizes_chain_builder_dicts_to_typed_events() -> None:
+    """Adapt the chain builder's dict output into typed Agent Stream events.
+
+    The double-``done`` collapses to a single internal ``Sources`` event and the
+    dead ``token_info`` cost estimate is dropped. (Temporary shim — issue 20.)
+    """
+    raw = [
+        {"type": "token", "content": "Auth "},
+        {"type": "token", "content": "is tested."},
+        {
+            "type": "done",
+            "sources": [
+                {"source": "app/auth.py", "page": "", "chunk": "c1", "score": None},
+                {"source": "app/login.py", "page": "", "chunk": "c2", "score": None},
+            ],
+            "token_info": "~10 tokens | ~$0.001",
+        },
+    ]
+
+    assert list(normalize_chain_events(raw)) == [
+        Token(content="Auth "),
+        Token(content="is tested."),
+        Sources(sources=["app/auth.py", "app/login.py"]),
+    ]
+
+
 def test_pipeline_answers_with_repository_scope() -> None:
-    """Delegate repository identity and answer options to the chain builder."""
+    """Delegate repository identity to the chain builder and yield typed events."""
     repository_id = uuid.uuid4()
     history = [{"role": "user", "content": "Earlier question"}]
-    stream = object()
     calls = []
 
     class FakeChainBuilder:
         def answer_stream(self, question, **kwargs):
             calls.append((question, kwargs))
-            return stream
+            yield {"type": "token", "content": "Answer."}
+            yield {"type": "done", "sources": [{"source": "app/api.py"}], "token_info": "x"}
 
     pipeline = RAGPipeline.__new__(RAGPipeline)
     pipeline.user_id = uuid.uuid4()
     pipeline.chain_builder = FakeChainBuilder()
 
-    result = pipeline.answer_stream("Current question", repository_id=repository_id, history=history)
+    events = list(pipeline.answer_stream("Current question", repository_id=repository_id, history=history))
 
-    assert result is stream
     assert calls == [("Current question", {"repository_id": repository_id, "history": history})]
+    assert events == [Token(content="Answer."), Sources(sources=["app/api.py"])]
 
 
 def test_pipeline_returns_repository_scoped_statistics() -> None:

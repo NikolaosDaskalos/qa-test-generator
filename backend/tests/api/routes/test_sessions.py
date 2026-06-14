@@ -11,6 +11,7 @@ from app.api.routes.sessions import router
 from app.dependencies import get_current_user, get_rag_pipeline, get_repository_session_service
 from app.enums.session import SessionMessageRole
 from app.models.session import RepositorySession, SessionHistory
+from app.schemas.agent_stream import Citation, Citations, Result, Stage, Token
 
 
 class FakeRepositorySessionService:
@@ -117,17 +118,16 @@ def test_question_streams_grounded_answer_as_event_stream() -> None:
     assistant_message_id = uuid.uuid4()
     user = SimpleNamespace(id=user_id, is_superuser=False)
     events = [
-        {"type": "stage", "stage": "retrieving"},
-        {"type": "stage", "stage": "generating"},
-        {"type": "token", "content": "Auth is route-tested."},
-        {"type": "citations", "citations": [{"source": "app/auth.py"}]},
-        {
-            "type": "result",
-            "repository_session_id": str(session_id),
-            "assistant_message_id": str(assistant_message_id),
-            "answer": "Auth is route-tested.",
-            "citations": [{"source": "app/auth.py"}],
-        },
+        Stage(stage="retrieving"),
+        Stage(stage="generating"),
+        Token(content="Auth is route-tested."),
+        Citations(citations=[Citation(source="app/auth.py")]),
+        Result(
+            repository_session_id=session_id,
+            assistant_message_id=assistant_message_id,
+            answer="Auth is route-tested.",
+            citations=[Citation(source="app/auth.py")],
+        ),
     ]
     pipeline = object()
     service = FakeAnsweringService(events)
@@ -139,9 +139,11 @@ def test_question_streams_grounded_answer_as_event_stream() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     streamed = _parse_sse(response.text)
-    assert [event["type"] for event in streamed] == ["stage", "stage", "token", "citations", "result", "done"]
+    # Exactly one terminal frame: the Result. The double-`done` is gone.
+    assert [event["type"] for event in streamed] == ["stage", "stage", "token", "citations", "result"]
     assert streamed[3]["citations"] == [{"source": "app/auth.py"}]
-    terminal = streamed[-2]
+    terminal = streamed[-1]
+    assert terminal["repository_session_id"] == str(session_id)
     assert terminal["assistant_message_id"] == str(assistant_message_id)
     assert terminal["answer"] == "Auth is route-tested."
     # The route binds the request to the owned session and forwards the pipeline.
@@ -155,10 +157,10 @@ def test_question_streams_grounded_answer_as_event_stream() -> None:
 def test_question_streams_insufficient_evidence_with_empty_citations() -> None:
     user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
     events = [
-        {"type": "stage", "stage": "retrieving"},
-        {"type": "token", "content": "I don't have enough Repository Evidence."},
-        {"type": "citations", "citations": []},
-        {"type": "result", "repository_session_id": str(uuid.uuid4()), "assistant_message_id": str(uuid.uuid4()), "answer": "I don't have enough Repository Evidence.", "citations": []},
+        Stage(stage="retrieving"),
+        Token(content="I don't have enough Repository Evidence."),
+        Citations(citations=[]),
+        Result(repository_session_id=uuid.uuid4(), assistant_message_id=uuid.uuid4(), answer="I don't have enough Repository Evidence.", citations=[]),
     ]
     service = FakeAnsweringService(events)
     app = _question_app(service, user=user)
@@ -171,7 +173,7 @@ def test_question_streams_insufficient_evidence_with_empty_citations() -> None:
     assert "enough Repository Evidence" in next(event for event in streamed if event["type"] == "token")["content"]
 
 
-def test_question_surfaces_midstream_failure_as_error_then_done() -> None:
+def test_question_surfaces_midstream_failure_as_out_of_band_error() -> None:
     user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
 
     class ExplodingService:
@@ -179,7 +181,7 @@ def test_question_surfaces_midstream_failure_as_error_then_done() -> None:
 
         def answer_question(self, **kwargs):
             def stream():
-                yield {"type": "stage", "stage": "retrieving"}
+                yield Stage(stage="retrieving")
                 raise RuntimeError("pipeline blew up")
 
             return stream()
@@ -190,7 +192,8 @@ def test_question_surfaces_midstream_failure_as_error_then_done() -> None:
         response = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"question": "boom?"})
 
     streamed = _parse_sse(response.text)
-    assert [event["type"] for event in streamed] == ["stage", "error", "done"]
+    # A single out-of-band transport error frame closes the stream — no separate `done`.
+    assert [event["type"] for event in streamed] == ["stage", "error"]
     assert "error occurred" in streamed[1]["message"].lower()
 
 

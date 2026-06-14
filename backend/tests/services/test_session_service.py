@@ -11,6 +11,7 @@ from app.enums.session import SessionMessageRole
 from app.models.repository import Repository
 from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
+from app.schemas.agent_stream import Citation, Citations, Result, Sources, Stage, Token
 from app.schemas.session import RepositorySessionCreate
 from app.services.session_service import RepositorySessionService
 
@@ -150,16 +151,9 @@ def test_answer_question_binds_streams_and_persists_with_citations() -> None:
     session_store = FakeAnsweringSessionStore(repository_session, history)
     pipeline = FakePipeline(
         [
-            {"type": "token", "content": "Auth "},
-            {"type": "token", "content": "is route-tested."},
-            {
-                "type": "done",
-                "sources": [
-                    {"source": "app/auth.py", "page": "", "chunk": "c1", "score": None},
-                    {"source": "app/auth.py", "page": "", "chunk": "c2", "score": None},
-                    {"source": "app/login.py", "page": "", "chunk": "c3", "score": None},
-                ],
-            },
+            Token(content="Auth "),
+            Token(content="is route-tested."),
+            Sources(sources=["app/auth.py", "app/auth.py", "app/login.py"]),
         ]
     )
     service = RepositorySessionService(session_store, FakeRepositoryStore(None))
@@ -182,17 +176,20 @@ def test_answer_question_binds_streams_and_persists_with_citations() -> None:
         )
     ]
 
-    # Ordered Agent Stream: stage progress, answer tokens, citations, one terminal result.
-    assert [event["type"] for event in events] == ["stage", "stage", "token", "token", "citations", "result"]
-    assert [event["stage"] for event in events if event["type"] == "stage"] == ["retrieving", "generating"]
-    citations_event = next(event for event in events if event["type"] == "citations")
-    assert citations_event["citations"] == [{"source": "app/auth.py"}, {"source": "app/login.py"}]
+    # Ordered Agent Stream of typed events: stage progress, answer tokens, citations, one terminal result.
+    # The internal Sources event is consumed by the service and never forwarded to the wire.
+    assert [event.type for event in events] == ["stage", "stage", "token", "token", "citations", "result"]
+    assert all(isinstance(event, (Stage, Token, Citations, Result)) for event in events)
+    assert [event.stage for event in events if isinstance(event, Stage)] == ["retrieving", "generating"]
+    citations_event = next(event for event in events if isinstance(event, Citations))
+    assert citations_event.citations == [Citation(source="app/auth.py"), Citation(source="app/login.py")]
 
     terminal = events[-1]
-    assert terminal["repository_session_id"] == repository_session.id
-    assert terminal["assistant_message_id"] == session_store.assistant_message.id
-    assert terminal["answer"] == "Auth is route-tested."
-    assert terminal["citations"] == [{"source": "app/auth.py"}, {"source": "app/login.py"}]
+    assert isinstance(terminal, Result)
+    assert terminal.repository_session_id == repository_session.id
+    assert terminal.assistant_message_id == session_store.assistant_message.id
+    assert terminal.answer == "Auth is route-tested."
+    assert terminal.citations == [Citation(source="app/auth.py"), Citation(source="app/login.py")]
 
     # The exchange is persisted with the question and the answer plus a traceable citation footer.
     assert len(session_store.append_calls) == 1
@@ -224,8 +221,8 @@ def test_answer_question_persists_insufficient_evidence_with_empty_citations() -
     session_store = FakeAnsweringSessionStore(repository_session)
     pipeline = FakePipeline(
         [
-            {"type": "token", "content": "I don't have enough Repository Evidence."},
-            {"type": "done", "sources": []},
+            Token(content="I don't have enough Repository Evidence."),
+            Sources(sources=[]),
         ]
     )
     service = RepositorySessionService(session_store, FakeRepositoryStore(None))
@@ -234,10 +231,11 @@ def test_answer_question_persists_insufficient_evidence_with_empty_citations() -
         service.answer_question(repository_session_id=repository_session.id, user=_user(owner_id), question="unknown?", pipeline=pipeline)
     )
 
+    # Insufficient evidence is a normal terminal Result, not an error.
     terminal = events[-1]
-    assert terminal["type"] == "result"
-    assert terminal["citations"] == []
-    assert next(event for event in events if event["type"] == "citations")["citations"] == []
+    assert isinstance(terminal, Result)
+    assert terminal.citations == []
+    assert next(event for event in events if isinstance(event, Citations)).citations == []
     # The exchange is still persisted, and the assistant message carries no citation footer.
     persisted = session_store.append_calls[0][1]
     assert persisted["assistant_message"] == "I don't have enough Repository Evidence."

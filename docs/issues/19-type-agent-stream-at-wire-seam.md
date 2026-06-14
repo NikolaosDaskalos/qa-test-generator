@@ -1,6 +1,6 @@
 # Type the Agent Stream at the wire seam
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 
 ## What to build
@@ -70,14 +70,14 @@ AgentStreamEvent = Stage | Token | Sources | Citations | Result
 
 ## Acceptance criteria
 
-- [ ] A Pydantic event union (`Stage | Token | Sources | Citations | Result`) plus a `Citation` model exists in one module; each event carries a literal `type` discriminant.
-- [ ] The Repository Session answer flow yields typed events, and the SSE adapter is the only module that serializes them to the wire (via `model_dump_json()`).
-- [ ] The stream emits exactly one terminal frame — the double-`done` is gone — and `token_info` no longer appears anywhere in the stream.
-- [ ] Insufficient-evidence still streams as a normal terminal `Result` with empty citations (not an error).
-- [ ] An unexpected mid-stream failure still surfaces as a single out-of-band transport error frame, outside the typed vocabulary.
-- [ ] The chain builder's existing dict output is adapted into typed events by a temporary shim at the pipeline boundary (to be removed in issue 20).
-- [ ] `test_session_service` asserts an ordered sequence of typed events instead of magic-string dicts; the route/session test passes; the Postman acceptance assertion is updated to expect the single terminal frame.
-- [ ] The full backend test suite is green.
+- [x] A Pydantic event union (`Stage | Token | Sources | Citations | Result`) plus a `Citation` model exists in one module; each event carries a literal `type` discriminant.
+- [x] The Repository Session answer flow yields typed events, and the SSE adapter is the only module that serializes them to the wire (via `model_dump_json()`).
+- [x] The stream emits exactly one terminal frame — the double-`done` is gone — and `token_info` no longer appears anywhere in the stream.
+- [x] Insufficient-evidence still streams as a normal terminal `Result` with empty citations (not an error).
+- [x] An unexpected mid-stream failure still surfaces as a single out-of-band transport error frame, outside the typed vocabulary.
+- [x] The chain builder's existing dict output is adapted into typed events by a temporary shim at the pipeline boundary (to be removed in issue 20).
+- [x] `test_session_service` asserts an ordered sequence of typed events instead of magic-string dicts; the route/session test passes; the Postman acceptance assertion is updated to expect the single terminal frame.
+- [x] The full backend test suite is green.
 
 ## Blocked by
 
