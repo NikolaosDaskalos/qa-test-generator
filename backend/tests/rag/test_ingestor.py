@@ -221,33 +221,3 @@ def test_ingestion_uses_shared_resources_when_write_fails() -> None:
 
     assert ingestor.resources is resources
     assert ingestor.source_document_store.delete_calls == [repository_id]
-
-
-def test_preserved_deletion_methods_use_shared_resources() -> None:
-    """Route ID- and parent-based deletions through shared resources."""
-    resources = _resources()
-    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
-    user_id = uuid.uuid4()
-
-    ingestor.delete_embeddings(["one", "two"], user_id=user_id)
-    ingestor.delete_embeddings_by_parent_id("parent", user_id=user_id)
-
-    assert resources.vector_store.delete_calls == [{"ids": ["one", "two"], "tenant": str(user_id)}]
-    collection = resources.client.collections.get(settings.WEAVIATE_COLLECTION)
-    assert len(collection.with_tenant(str(user_id)).deleted_filters) == 1
-
-
-def test_add_documents_validates_ids_and_uses_shared_resources() -> None:
-    """Validate explicit IDs before adding tenant-scoped documents."""
-    resources = _resources()
-    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
-    user_id = uuid.uuid4()
-    documents = [Document(page_content="content")]
-
-    ids = ingestor.add_documents(documents, ids=["id"], user_id=user_id)
-
-    assert ids == ["id"]
-    assert resources.vector_store.add_calls[0][1] == {"ids": ["id"], "tenant": str(user_id)}
-
-    with pytest.raises(ValueError, match="ids length"):
-        ingestor.add_documents(documents, ids=[], user_id=user_id)

@@ -3,10 +3,10 @@
 import logging
 import os
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from functools import cached_property
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 from langchain_community.document_loaders import GitLoader
 from langchain_core.documents import Document
@@ -98,31 +98,6 @@ class DocumentIngestor:
 
         return len(chunked_docs)
 
-    def add_documents(self, documents: Sequence[Document], *, ids: Sequence[str], user_id: uuid.UUID) -> list[str]:
-        """Add documents with caller-provided IDs to a user's tenant.
-
-        Raises:
-            ValueError: If IDs are missing or do not match the documents.
-
-        """
-        if not documents:
-            logger.warning("Document add skipped because no documents were provided user_id=%s", user_id)
-            return []
-        if len(ids) != len(documents):
-            logger.warning(
-                "Document add rejected because ID and document counts differ user_id=%s id_count=%s document_count=%s", user_id, len(ids), len(documents)
-            )
-            raise ValueError("ids length must match documents length")
-        if any(not embedding_id for embedding_id in ids):
-            logger.warning("Document add rejected because an embedding ID is empty user_id=%s", user_id)
-            raise ValueError("ids cannot contain empty values")
-
-        tenant = str(user_id)
-        self._create_tenant(tenant)
-        added_ids = self._add_documents(documents, ids=ids, tenant=tenant)
-        logger.info("Documents added user_id=%s document_count=%s", user_id, len(documents))
-        return added_ids
-
     def delete_repository(self, repository_id: uuid.UUID | str, *, user_id: uuid.UUID) -> None:
         """Delete all indexed chunks for a Git repository and user tenant."""
         tenant = str(user_id)
@@ -131,42 +106,6 @@ class DocumentIngestor:
             return
         logger.info("Deleting repository embeddings repository_id=%s user_id=%s", repository_id, user_id)
         self._delete_repository_vectors(str(repository_id), tenant=tenant)
-
-    def delete_embeddings(self, ids: str | Iterable[str], *, user_id: uuid.UUID) -> None:
-        """Delete one or more embedding objects from a user's tenant.
-
-        Raises:
-            ValueError: If any supplied embedding ID is empty.
-
-        """
-        normalized_ids = [ids] if isinstance(ids, str) else list(ids)
-        if not normalized_ids:
-            logger.warning("Embedding deletion skipped because no IDs were provided user_id=%s", user_id)
-            return
-        if any(not embedding_id for embedding_id in normalized_ids):
-            logger.warning("Embedding deletion rejected because an ID is empty user_id=%s", user_id)
-            raise ValueError("ids cannot contain empty values")
-
-        tenant = str(user_id)
-        self._create_tenant(tenant)
-        self.resources.vector_store.delete(ids=normalized_ids, tenant=tenant)
-        logger.info("Embeddings deleted user_id=%s embedding_count=%s", user_id, len(normalized_ids))
-
-    def delete_embeddings_by_parent_id(self, parent_id: str, *, user_id: uuid.UUID) -> None:
-        """Delete chunks associated with a parent document.
-
-        Raises:
-            ValueError: If the parent document ID is empty.
-
-        """
-        if not parent_id:
-            logger.warning("Parent embedding deletion rejected because parent_id is empty user_id=%s", user_id)
-            raise ValueError("parent_id cannot be empty")
-
-        tenant = str(user_id)
-        self._create_tenant(tenant)
-        self._collection().with_tenant(tenant).data.delete_many(where=Filter.by_property("parent_id").equal(parent_id))
-        logger.info("Parent embeddings deleted user_id=%s parent_id=%s", user_id, parent_id)
 
     def _add_documents(self, documents: Sequence[Document], *, ids: Sequence[str], tenant: str) -> list[str]:
         """Write documents and IDs to an existing tenant."""
