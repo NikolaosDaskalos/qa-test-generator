@@ -464,6 +464,79 @@
           "response": []
         },
         {
+          "name": "Ask Repository Question",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is a server-sent event stream', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream');",
+                  "});",
+                  "",
+                  "pm.test('Stream contains a terminal result event', function () {",
+                  "    const events = pm.response.text()",
+                  "        .split(/\\r?\\n/)",
+                  "        .filter(line => line.startsWith('data: '))",
+                  "        .map(line => JSON.parse(line.slice(6)));",
+                  "    pm.expect(events).not.to.be.empty;",
+                  "    pm.expect(events.some(event => event.type === 'token')).to.be.true;",
+                  "    pm.expect(events.some(event => event.type === 'citations')).to.be.true;",
+                  "    const result = events[events.length - 1];",
+                  "    pm.expect(result.type).to.eql('result');",
+                  "    pm.expect(result.repository_session_id).to.eql(pm.variables.get('repositorySessionId'));",
+                  "    pm.expect(result.assistant_message_id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(result.answer).to.be.a('string').and.not.empty;",
+                  "    pm.expect(result.citations).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"{{repositoryQuestion}}\",\n  \"use_hyde\": {{useHyde}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/questions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "{{repositorySessionId}}",
+                "questions"
+              ]
+            },
+            "description": "Streams a repository-grounded answer as server-sent events. The stream emits progress, token, citation, and terminal result events."
+          },
+          "response": []
+        },
+        {
           "name": "Get Session History",
           "event": [
             {
@@ -579,6 +652,16 @@
     {
       "key": "repositorySessionId",
       "value": "",
+      "type": "string"
+    },
+    {
+      "key": "repositoryQuestion",
+      "value": "How is authentication tested in this repository?",
+      "type": "string"
+    },
+    {
+      "key": "useHyde",
+      "value": "false",
       "type": "string"
     },
     {
