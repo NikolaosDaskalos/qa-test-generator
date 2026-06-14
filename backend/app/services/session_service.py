@@ -9,7 +9,7 @@ from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
 from app.persistence.repository_store import RepositoryStore
 from app.persistence.session_store import RepositorySessionStore
-from app.schemas.agent_stream import AgentStreamEvent, Citation, Citations, Result, Sources, Stage, Token
+from app.schemas.agent_stream import AgentStreamEvent, Answer, Citation, Result
 from app.schemas.session import RepositorySessionCreate
 
 
@@ -52,9 +52,10 @@ class RepositorySessionService:
     ) -> Generator[AgentStreamEvent, None, None]:
         """Stream a repository-grounded answer and persist the completed exchange.
 
-        Ownership is enforced before any streaming begins. The returned generator
-        emits ordered stage progress, answer tokens, file citations, and one
-        terminal result that reflects the persisted Session History.
+        Ownership is enforced before any streaming begins. The pipeline owns the
+        answer turn (stage progress, tokens, and a terminal ``Answer``); this
+        service passes those through, persists the completed exchange, and emits
+        the one terminal ``Result`` that reflects the persisted Session History.
         """
         repository_session = self._get_accessible(repository_session_id, user)
         history = [{"role": message.role.value, "content": message.content} for message in self.session_store.get_recent_history(repository_session.id)]
@@ -63,47 +64,26 @@ class RepositorySessionService:
     def _stream_answer(
         self, repository_session: RepositorySession, question: str, history: list[dict[str, Any]], pipeline: AnswerPipeline
     ) -> Generator[AgentStreamEvent, None, None]:
-        yield Stage(stage="retrieving")
         answer = ""
-        sources: list[str] = []
-        generating = False
+        citations: list[Citation] = []
         for event in pipeline.answer_stream(question, repository_id=repository_session.repository_id, history=history):
-            if isinstance(event, Token):
-                if not event.content:
-                    continue
-                if not generating:
-                    generating = True
-                    yield Stage(stage="generating")
-                answer += event.content
-                yield event
-            elif isinstance(event, Sources):
-                # Internal hop: collected to build citations, never forwarded to the wire.
-                sources = event.sources
+            if isinstance(event, Answer):
+                # Internal hop: the completed turn, consumed here to persist and build the Result.
+                answer = event.text
+                citations = event.citations
             else:
+                # Stage progress and answer tokens pass straight through to the wire.
                 yield event
 
-        citations = self._to_citations(sources)
         _user_message, assistant_message = self.session_store.append_exchange(
             repository_session.id, user_message=question, assistant_message=self._with_citation_footer(answer, citations)
         )
-        yield Citations(citations=citations)
         yield Result(
             repository_session_id=repository_session.id,
             assistant_message_id=assistant_message.id,
             answer=answer,
             citations=citations,
         )
-
-    @staticmethod
-    def _to_citations(sources: list[str]) -> list[Citation]:
-        """Project retrieved source paths into file citations, de-duplicated in order."""
-        citations: list[Citation] = []
-        seen: set[str] = set()
-        for path in sources:
-            if path and path not in seen:
-                seen.add(path)
-                citations.append(Citation(source=path))
-        return citations
 
     @staticmethod
     def _with_citation_footer(answer: str, citations: list[Citation]) -> str:

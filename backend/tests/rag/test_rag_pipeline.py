@@ -7,7 +7,7 @@ from pydantic import SecretStr
 
 from app.rag import rag_pipeline
 from app.rag.rag_pipeline import RAGPipeline
-from app.schemas.agent_stream import Sources, Token
+from app.schemas.agent_stream import Answer, Citation, Stage, Token
 
 
 def test_pipeline_constructs_components_from_shared_resources(monkeypatch) -> None:
@@ -95,8 +95,9 @@ def test_pipeline_answers_with_repository_scope() -> None:
     class FakeChainBuilder:
         def answer_stream(self, question, **kwargs):
             calls.append((question, kwargs))
+            yield Stage(stage="generating")
             yield Token(content="Answer.")
-            yield Sources(sources=["app/api.py"])
+            yield Answer(text="Answer.", citations=[Citation(source="app/api.py")])
 
     pipeline = RAGPipeline.__new__(RAGPipeline)
     pipeline.user_id = uuid.uuid4()
@@ -105,7 +106,7 @@ def test_pipeline_answers_with_repository_scope() -> None:
     events = list(pipeline.answer_stream("Current question", repository_id=repository_id, history=history))
 
     assert calls == [("Current question", {"repository_id": repository_id, "history": history})]
-    assert events == [Token(content="Answer."), Sources(sources=["app/api.py"])]
+    assert events == [Stage(stage="generating"), Token(content="Answer."), Answer(text="Answer.", citations=[Citation(source="app/api.py")])]
 
 
 def test_pipeline_returns_repository_scoped_statistics() -> None:

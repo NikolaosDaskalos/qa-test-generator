@@ -11,7 +11,7 @@ from app.enums.session import SessionMessageRole
 from app.models.repository import Repository
 from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
-from app.schemas.agent_stream import Citation, Citations, Result, Sources, Stage, Token
+from app.schemas.agent_stream import Answer, Citation, Result, Stage, Token
 from app.schemas.session import RepositorySessionCreate
 from app.services.session_service import RepositorySessionService
 
@@ -151,9 +151,11 @@ def test_answer_question_binds_streams_and_persists_with_citations() -> None:
     session_store = FakeAnsweringSessionStore(repository_session, history)
     pipeline = FakePipeline(
         [
+            Stage(stage="retrieving"),
+            Stage(stage="generating"),
             Token(content="Auth "),
             Token(content="is route-tested."),
-            Sources(sources=["app/auth.py", "app/auth.py", "app/login.py"]),
+            Answer(text="Auth is route-tested.", citations=[Citation(source="app/auth.py"), Citation(source="app/login.py")]),
         ]
     )
     service = RepositorySessionService(session_store, FakeRepositoryStore(None))
@@ -176,13 +178,11 @@ def test_answer_question_binds_streams_and_persists_with_citations() -> None:
         )
     ]
 
-    # Ordered Agent Stream of typed events: stage progress, answer tokens, citations, one terminal result.
-    # The internal Sources event is consumed by the service and never forwarded to the wire.
-    assert [event.type for event in events] == ["stage", "stage", "token", "token", "citations", "result"]
-    assert all(isinstance(event, (Stage, Token, Citations, Result)) for event in events)
+    # The service passes the pipeline's stage progress and tokens straight through and adds the one
+    # terminal Result. The internal Answer event is consumed here and never forwarded to the wire.
+    assert [event.type for event in events] == ["stage", "stage", "token", "token", "result"]
+    assert all(isinstance(event, (Stage, Token, Result)) for event in events)
     assert [event.stage for event in events if isinstance(event, Stage)] == ["retrieving", "generating"]
-    citations_event = next(event for event in events if isinstance(event, Citations))
-    assert citations_event.citations == [Citation(source="app/auth.py"), Citation(source="app/login.py")]
 
     terminal = events[-1]
     assert isinstance(terminal, Result)
@@ -221,8 +221,10 @@ def test_answer_question_persists_insufficient_evidence_with_empty_citations() -
     session_store = FakeAnsweringSessionStore(repository_session)
     pipeline = FakePipeline(
         [
+            Stage(stage="retrieving"),
+            Stage(stage="generating"),
             Token(content="I don't have enough Repository Evidence."),
-            Sources(sources=[]),
+            Answer(text="I don't have enough Repository Evidence.", citations=[]),
         ]
     )
     service = RepositorySessionService(session_store, FakeRepositoryStore(None))
@@ -235,7 +237,6 @@ def test_answer_question_persists_insufficient_evidence_with_empty_citations() -
     terminal = events[-1]
     assert isinstance(terminal, Result)
     assert terminal.citations == []
-    assert next(event for event in events if isinstance(event, Citations)).citations == []
     # The exchange is still persisted, and the assistant message carries no citation footer.
     persisted = session_store.append_calls[0][1]
     assert persisted["assistant_message"] == "I don't have enough Repository Evidence."

@@ -37,21 +37,16 @@ class Token(BaseModel):
     content: str
 
 
-class Sources(BaseModel):
-    """Retrieved source paths.
+class Answer(BaseModel):
+    """The complete generated answer with its de-duplicated file citations.
 
-    An internal hop only: the session service consumes this to build
-    ``Citations`` and never forwards it, so it is never serialized to the wire.
+    An internal hop only: the chain builder emits one at the end of a turn and
+    the session service consumes it to persist the exchange and build the
+    terminal ``Result``, so it is never serialized to the wire.
     """
 
-    type: Literal["sources"] = "sources"
-    sources: list[str]
-
-
-class Citations(BaseModel):
-    """De-duplicated file citations for the answer."""
-
-    type: Literal["citations"] = "citations"
+    type: Literal["answer"] = "answer"
+    text: str
     citations: list[Citation]
 
 
@@ -65,4 +60,4 @@ class Result(BaseModel):
     citations: list[Citation]
 
 
-AgentStreamEvent = Stage | Token | Sources | Citations | Result
+AgentStreamEvent = Stage | Token | Answer | Result

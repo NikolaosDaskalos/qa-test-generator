@@ -11,7 +11,7 @@ from app.api.routes.sessions import router
 from app.dependencies import get_current_user, get_rag_pipeline, get_repository_session_service
 from app.enums.session import SessionMessageRole
 from app.models.session import RepositorySession, SessionHistory
-from app.schemas.agent_stream import Citation, Citations, Result, Stage, Token
+from app.schemas.agent_stream import Citation, Result, Stage, Token
 
 
 class FakeRepositorySessionService:
@@ -121,7 +121,6 @@ def test_question_streams_grounded_answer_as_event_stream() -> None:
         Stage(stage="retrieving"),
         Stage(stage="generating"),
         Token(content="Auth is route-tested."),
-        Citations(citations=[Citation(source="app/auth.py")]),
         Result(
             repository_session_id=session_id,
             assistant_message_id=assistant_message_id,
@@ -139,13 +138,13 @@ def test_question_streams_grounded_answer_as_event_stream() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     streamed = _parse_sse(response.text)
-    # Exactly one terminal frame: the Result. The double-`done` is gone.
-    assert [event["type"] for event in streamed] == ["stage", "stage", "token", "citations", "result"]
-    assert streamed[3]["citations"] == [{"source": "app/auth.py"}]
+    # Exactly one terminal frame: the Result, which carries the citations. The double-`done` is gone.
+    assert [event["type"] for event in streamed] == ["stage", "stage", "token", "result"]
     terminal = streamed[-1]
     assert terminal["repository_session_id"] == str(session_id)
     assert terminal["assistant_message_id"] == str(assistant_message_id)
     assert terminal["answer"] == "Auth is route-tested."
+    assert terminal["citations"] == [{"source": "app/auth.py"}]
     # The route binds the request to the owned session and forwards the pipeline.
     call = service.answer_calls[0]
     assert call["repository_session_id"] == session_id
@@ -158,8 +157,8 @@ def test_question_streams_insufficient_evidence_with_empty_citations() -> None:
     user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
     events = [
         Stage(stage="retrieving"),
+        Stage(stage="generating"),
         Token(content="I don't have enough Repository Evidence."),
-        Citations(citations=[]),
         Result(repository_session_id=uuid.uuid4(), assistant_message_id=uuid.uuid4(), answer="I don't have enough Repository Evidence.", citations=[]),
     ]
     service = FakeAnsweringService(events)
@@ -169,7 +168,7 @@ def test_question_streams_insufficient_evidence_with_empty_citations() -> None:
         response = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"question": "unknown?"})
 
     streamed = _parse_sse(response.text)
-    assert next(event for event in streamed if event["type"] == "citations")["citations"] == []
+    assert next(event for event in streamed if event["type"] == "result")["citations"] == []
     assert "enough Repository Evidence" in next(event for event in streamed if event["type"] == "token")["content"]
 
 

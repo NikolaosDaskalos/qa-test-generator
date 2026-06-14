@@ -17,7 +17,7 @@ from app.core.config import settings
 
 # pyrefly: ignore [missing-import]
 from app.prompts.rag_prompts import CONTEXTUALIZE_PROMPT, QA_SYSTEM_PROMPT
-from app.schemas.agent_stream import Sources, Token
+from app.schemas.agent_stream import Answer, Citation, Stage, Token
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +54,9 @@ class ChainBuilder:
         """Stream answer events using history-aware retrieval.
 
         Yields:
-            Typed Agent Stream events: ``Token`` chunks followed by a terminal
-            ``Sources`` event carrying the retrieved source paths.
+            The ordered Agent Stream for one answer turn: ``Stage`` progress,
+            ``Token`` chunks, and a terminal internal ``Answer`` carrying the
+            complete text with its de-duplicated file citations.
 
         """
         lc_history = self._to_lc_messages(history or [])
@@ -67,6 +68,8 @@ class ChainBuilder:
 
     def _stream_standard(self, question: str, repository_id: uuid.UUID, lc_history: list) -> Generator:
         """Stream history-aware retrieval and generation events."""
+        yield Stage(stage="retrieving")
+
         # Step 1: Reformulate question if there is chat history
         search_query = question
         if lc_history:
@@ -95,20 +98,35 @@ class ChainBuilder:
             [("system", self._system_prompt + "\n\nContext:\n{context}"), MessagesPlaceholder("chat_history"), ("human", "{input}")]
         )
 
+        yield Stage(stage="generating")
         collected = ""
         for token in (qa_prompt | self.llm | StrOutputParser()).stream({"input": question, "chat_history": lc_history, "context": context}):
+            if not token:
+                continue
             collected += token
             yield Token(content=token)
 
         logger.info("Standard RAG answer generation completed source_count=%s response_length=%s", len(sources), len(collected))
-        yield Sources(sources=sources)
+        yield Answer(text=collected, citations=self._to_citations(sources))
 
     # ── Helpers ───────────────────────────────────────────────────
 
     def _stream_insufficient_evidence(self, question: str) -> Generator:
         """Stream a deterministic answer with no citations when evidence is empty."""
+        yield Stage(stage="generating")
         yield Token(content=INSUFFICIENT_EVIDENCE_ANSWER)
-        yield Sources(sources=[])
+        yield Answer(text=INSUFFICIENT_EVIDENCE_ANSWER, citations=[])
+
+    @staticmethod
+    def _to_citations(sources: list[str]) -> list[Citation]:
+        """Project retrieved source paths into file citations, de-duplicated in order."""
+        citations: list[Citation] = []
+        seen: set[str] = set()
+        for path in sources:
+            if path and path not in seen:
+                seen.add(path)
+                citations.append(Citation(source=path))
+        return citations
 
     @staticmethod
     def _format_docs(docs) -> str:
