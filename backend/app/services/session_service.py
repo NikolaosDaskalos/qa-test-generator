@@ -68,6 +68,8 @@ class RepositorySessionService:
         generating = False
         for event in pipeline.answer_stream(question, repository_id=repository_session.repository_id, history=history, use_hyde=use_hyde):
             if event["type"] == "token":
+                if not event["content"]:
+                    continue
                 if not generating:
                     generating = True
                     yield {"type": "stage", "stage": "generating"}

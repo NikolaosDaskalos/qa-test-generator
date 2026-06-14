@@ -139,9 +139,9 @@ def test_question_streams_grounded_answer_as_event_stream() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     streamed = _parse_sse(response.text)
-    assert [event["type"] for event in streamed] == ["stage", "stage", "token", "citations", "result"]
+    assert [event["type"] for event in streamed] == ["stage", "stage", "token", "citations", "result", "done"]
     assert streamed[3]["citations"] == [{"source": "app/auth.py"}]
-    terminal = streamed[-1]
+    terminal = streamed[-2]
     assert terminal["assistant_message_id"] == str(assistant_message_id)
     assert terminal["answer"] == "Auth is route-tested."
     # The route binds the request to the owned session and forwards the pipeline.
@@ -169,6 +169,29 @@ def test_question_streams_insufficient_evidence_with_empty_citations() -> None:
     streamed = _parse_sse(response.text)
     assert next(event for event in streamed if event["type"] == "citations")["citations"] == []
     assert "enough Repository Evidence" in next(event for event in streamed if event["type"] == "token")["content"]
+
+
+def test_question_surfaces_midstream_failure_as_error_then_done() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+
+    class ExplodingService:
+        answer_calls: list = []
+
+        def answer_question(self, **kwargs):
+            def stream():
+                yield {"type": "stage", "stage": "retrieving"}
+                raise RuntimeError("pipeline blew up")
+
+            return stream()
+
+    app = _question_app(ExplodingService(), user=user)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"question": "boom?"})
+
+    streamed = _parse_sse(response.text)
+    assert [event["type"] for event in streamed] == ["stage", "error", "done"]
+    assert "error occurred" in streamed[1]["message"].lower()
 
 
 def test_question_requires_authentication() -> None:
