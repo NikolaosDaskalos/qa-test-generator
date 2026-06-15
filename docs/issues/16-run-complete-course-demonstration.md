@@ -24,7 +24,7 @@ Document the observed results and retain the stated out-of-scope boundaries with
 ## Blocked by
 
 - [03 - Incrementally synchronize Repository Evidence](03-incrementally-synchronize-repository-evidence.md)
-- [07 - Add explicit External Research Requests](07-support-explicit-external-research.md)
+- [09 - Generate canonical test patch (bounded test-gen web search)](09-generate-canonical-test-patch.md)
 - [12 - Perform one bounded Revision Attempt](12-perform-bounded-revision.md)
 - [14 - Reject and discard a reviewed Test Patch](14-reject-reviewed-test-patch.md)
 - [15 - Approve and push a protected generated branch](15-approve-and-push-generated-branch.md)

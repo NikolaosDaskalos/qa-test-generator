@@ -37,12 +37,12 @@ A user-initiated request to run Repository Synchronization in the background and
 _Avoid_: Automatic sync, webhook sync
 
 **External Reference**:
-Web-sourced documentation or testing guidance used only to supplement general recommendations. It must be clearly separated from Repository Evidence and cannot support claims about the Repository's code or behavior.
-_Avoid_: Repository evidence, uncited model knowledge
+Web-sourced documentation or testing guidance the test generator may consult for a test framework's current syntax and best practices. It must be clearly separated from Repository Evidence and can never support claims about the Repository's code or behavior — only how tests are written. Web search is reachable solely on the test-generation path; ordinary Repository questions never reach it.
+_Avoid_: Repository evidence, uncited model knowledge, web access on the repository-question path
 
-**External Research Request**:
-An explicit user request for documentation, best practices, or other external guidance. Only such a request may use web search, and its External References must be presented separately from Repository sources.
-_Avoid_: Automatic web search, implicit external lookup
+**Request Intent**:
+The classified purpose of a question submitted to a Repository Session, inferred at the single questions entry point: either a Repository question, answered by repository-grounded retrieval, or a Test-Generation Task, which starts a Coding Run. Uncertain classification falls back to a Repository question, which has no side effects.
+_Avoid_: Explicit client-supplied mode flag, a separate endpoint per intent, External Research Request
 
 **Research Intent**:
 A planner-produced description of evidence to find, optionally including candidate Repository paths. Candidate paths are untrusted hints; only validated paths and retrieved Repository Evidence may enter agent context.
@@ -73,7 +73,7 @@ A test-generation attempt performed in the Repository's local checkout on a temp
 _Avoid_: Concurrent run, isolated worktree
 
 **Agent Stream**:
-The synchronous server-sent event response for a Repository question or Test-Generation Task. It reports stage progress, generated content, review findings, and the final persisted result without polling or background agent execution. Its events form a closed vocabulary (Stage, Token, Result); citations ride on the terminal Result rather than as a separate event. Deliberate outcomes — including failures such as insufficient evidence or a rejected Test Patch — are normal terminal events in this vocabulary. Only unexpected transport failures (a dropped connection, an upstream crash) are surfaced as an out-of-band error frame by the SSE adapter, outside the event vocabulary.
+The synchronous server-sent event response for a Repository question or Test-Generation Task. It reports stage progress, generated content, review findings, and the final persisted result without polling or background agent execution. Its events form a closed vocabulary: Stage progress markers (classifying, planning, retrieving, researching, generating), Token chunks, and exactly one terminal event — Result for a Repository question (citations ride on it), PatchResult for a generated Test Patch, or RunFailure for a failed Coding Run. Deliberate outcomes — including insufficient evidence, an out-of-scope Test-Generation Task, or a rejected Test Patch — are normal terminal events in this vocabulary. Only unexpected transport failures (a dropped connection, an upstream crash) are surfaced as an out-of-band error frame by the SSE adapter, outside the event vocabulary.
 _Avoid_: WebSocket, polling workflow, error event for a deliberate outcome
 
 **Approval**:
