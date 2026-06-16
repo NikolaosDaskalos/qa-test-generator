@@ -96,6 +96,23 @@ def test_recorder_records_an_accepted_review_through_the_store() -> None:
         assert reviewed.review_findings == [{"category": "conventions", "detail": "matches existing tests"}]
 
 
+def test_recorder_rejects_a_reviewed_run_through_the_store() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        recorder = CodingRunRecorder(store)
+        run_id = recorder.start(thread_id="t-reject", repository_session_id=session_id)
+        recorder.record_review(run_id, accepted=True, findings=[ReviewFinding(category="conventions", detail="matches existing tests")])
+
+        recorder.reject(run_id)
+
+        rejected = store.get_by_id(run_id)
+        assert rejected.status == CodingRunStatus.rejected
+        # The persisted review record survives the rejection for later inspection.
+        assert rejected.review_findings == [{"category": "conventions", "detail": "matches existing tests"}]
+
+
 def test_recorder_records_a_rejected_review_as_changes_requested() -> None:
     engine = _engine()
     with Session(engine) as db:

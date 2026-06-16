@@ -30,6 +30,9 @@ class GenerationWorkspace(Protocol):
     def reset_patch_state(self) -> None:
         """Clear generated/staged files so a revised proposal replaces the prior one."""
 
+    def discard_generation(self, indexed_commit_sha: str, branch: str) -> None:
+        """Restore the checkout to the indexed commit and remove the temporary branch."""
+
     def write_test_files(self, files: list[GeneratedFile]) -> None:
         """Write each validated Test File's complete contents into the checkout."""
 
@@ -52,6 +55,14 @@ class LocalGitWorkspace:
     def reset_patch_state(self) -> None:
         run_git("git", "reset", "--hard", "HEAD", cwd=self.checkout_root)
         run_git("git", "clean", "-fd", cwd=self.checkout_root)
+
+    def discard_generation(self, indexed_commit_sha: str, branch: str) -> None:
+        # Force-detach onto the indexed commit so the temporary branch can be removed,
+        # drop any working-tree changes, clean untracked files, then delete the branch.
+        # All local plumbing: no network, no token, no commit, no push.
+        run_git("git", "checkout", "-f", indexed_commit_sha, cwd=self.checkout_root)
+        run_git("git", "clean", "-fd", cwd=self.checkout_root)
+        run_git("git", "branch", "-D", branch, cwd=self.checkout_root)
 
     def write_test_files(self, files: list[GeneratedFile]) -> None:
         for file in files:

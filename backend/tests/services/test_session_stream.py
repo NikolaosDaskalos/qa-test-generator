@@ -5,15 +5,17 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from langgraph.types import Command
 
 from app.enums.coding_run import CodingRunStatus
 from app.models.coding_run import CodingRun
 from app.models.repository import Repository
 from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
-from app.schemas.agent_stream import Citation, PatchResult, Result, ReviewResult, RunFailure, Stage, Token
+from app.schemas.agent_stream import Citation, PatchResult, Result, ReviewResult, RunFailure, RunRejected, Stage, Token
 from app.schemas.generation import ExternalReference, GeneratedFile
 from app.schemas.review import ReviewFinding
+from app.schemas.session import HumanDecisionRequest
 from app.services.session_service import RepositorySessionService
 
 
@@ -43,9 +45,10 @@ class FakeSessionStore:
 
 
 class FakeGraph:
-    def __init__(self, stream_items, final_values) -> None:
+    def __init__(self, stream_items, final_values, *, next_nodes=()) -> None:
         self._items = stream_items
         self._final = final_values
+        self._next = next_nodes
         self.streamed = []
 
     def stream(self, graph_input, config, stream_mode):
@@ -53,7 +56,7 @@ class FakeGraph:
         yield from self._items
 
     def get_state(self, config):
-        return SimpleNamespace(values=self._final)
+        return SimpleNamespace(values=self._final, next=self._next)
 
 
 def _user():
@@ -199,6 +202,91 @@ class FakeCodingRunStore:
 
     def get_by_id(self, coding_run_id):
         return self.run if self.run is not None and self.run.repository_session_id is not None else None
+
+
+def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t-paused", status=CodingRunStatus.awaiting_approval)
+    service.coding_run_store = FakeCodingRunStore(run)
+    rejection = RunRejected(
+        coding_run_id=run.id,
+        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+        findings=[ReviewFinding(category="readability", detail="clear and idiomatic")],
+    )
+    review = ReviewResult(coding_run_id=run.id, accepted=True, findings=rejection.findings, diff=rejection.diff)
+    items = [("custom", Stage(stage="reviewing"))]
+    final = {"intent": "test_generation", "review_result": review, "rejection_result": rejection}
+    graph = FakeGraph(items, final, next_nodes=("await_decision",))
+    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+
+    events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision))
+
+    # The rejection is the terminal event, preferred over the accepted review still in state.
+    terminal = events[-1]
+    assert isinstance(terminal, RunRejected)
+    assert terminal.coding_run_id == run.id
+    # The graph was resumed on the run's own thread with the owner's decision payload — not a fresh run.
+    resume_input, config, _modes = graph.streamed[0]
+    assert isinstance(resume_input, Command)
+    assert resume_input.resume == {"approved": False, "feedback": ""}
+    assert config["configurable"]["thread_id"] == "t-paused"
+    # Resuming a decision never persists a session answer exchange.
+    assert session_store.appended == []
+
+
+def test_stream_session_rejects_a_decision_when_the_checkpoint_is_not_paused_at_await_decision():
+    user = _user()
+    service, _store, repository_session = _wiring(user)
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t-ended", status=CodingRunStatus.awaiting_approval)
+    service.coding_run_store = FakeCodingRunStore(run)
+    stale_review = ReviewResult(
+        coding_run_id=run.id,
+        accepted=True,
+        findings=[ReviewFinding(category="coverage", detail="covers the behavior")],
+        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+    )
+    graph = FakeGraph([], {"intent": "test_generation", "review_result": stale_review}, next_nodes=())
+    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+
+    with pytest.raises(HTTPException) as exc:
+        list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision))
+
+    assert exc.value.status_code == 409
+    assert graph.streamed == []
+
+
+def test_stream_session_rejects_a_decision_for_a_run_not_awaiting_a_decision():
+    user = _user()
+    service, _store, repository_session = _wiring(user)
+    for state in (CodingRunStatus.rejected, CodingRunStatus.changes_requested, CodingRunStatus.generating):
+        run = CodingRun(repository_session_id=repository_session.id, thread_id="t", status=state)
+        service.coding_run_store = FakeCodingRunStore(run)
+        graph = FakeGraph([], {})
+        decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+
+        with pytest.raises(HTTPException) as exc:
+            list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="t", decision=decision))
+
+        assert exc.value.status_code == 409
+        # An invalid decision never drives the graph, so the checkout is never touched.
+        assert graph.streamed == []
+
+
+def test_stream_session_rejects_a_decision_from_a_non_owner():
+    user = _user()
+    service, _store, repository_session = _wiring(user)
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t", status=CodingRunStatus.awaiting_approval)
+    service.coding_run_store = FakeCodingRunStore(run)
+    other = _user()
+    graph = FakeGraph([], {})
+    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+
+    with pytest.raises(HTTPException) as exc:
+        list(service.stream_session(repository_session_id=repository_session.id, user=other, question=None, graph=graph, thread_id="t", decision=decision))
+
+    assert exc.value.status_code == 403
+    assert graph.streamed == []
 
 
 def test_get_owned_run_returns_a_run_owned_through_the_session():

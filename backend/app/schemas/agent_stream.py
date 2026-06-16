@@ -120,4 +120,21 @@ class ReviewResult(BaseModel):
     disclaimer: str = REVIEW_DISCLAIMER
 
 
-AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure | PatchResult | ReviewResult
+class RunRejected(BaseModel):
+    """The terminal event for a reviewed Test Patch the owner rejected and discarded.
+
+    Rejection is a deliberate outcome, not an error: the generated changes are
+    discarded from the working tree and the temporary branch removed, but the
+    persisted review record is preserved, so this carries the assessed canonical
+    diff and findings for inspection. ``disclaimer`` restates that the tests were
+    never executed.
+    """
+
+    type: Literal["run_rejected"] = "run_rejected"
+    coding_run_id: uuid.UUID
+    diff: str
+    findings: list[ReviewFinding]
+    disclaimer: str = REVIEW_DISCLAIMER
+
+
+AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure | PatchResult | ReviewResult | RunRejected

@@ -8,6 +8,8 @@ import subprocess
 import uuid
 from pathlib import Path
 
+from langgraph.types import Command
+
 from app.agent.graph import Classification, build_graph
 from app.agent.planner import PlannerOutput
 from app.agent.repository_question import INSUFFICIENT_EVIDENCE_ANSWER
@@ -15,7 +17,7 @@ from app.agent.test_generation import build_review_patch_node
 from app.agent.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStatus
 from app.models.source_document import SourceDocument
-from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunRejected, RunStarted, Stage
 from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 from app.schemas.research_intent import ResearchIntent
 from app.schemas.review import PatchReview, ReviewFinding
@@ -126,6 +128,9 @@ class RecordingRecorder:
     def record_review(self, coding_run_id, *, accepted, findings):
         self.events.append(("record_review", coding_run_id, accepted, findings))
 
+    def reject(self, coding_run_id):
+        self.events.append(("reject", coding_run_id))
+
 
 class FakeGenerator:
     """A ``TestGenerator`` returning a fixed proposal and recording its inputs.
@@ -203,6 +208,7 @@ class FakeWorkspace:
         self.prepared_from = None
         self.written = None
         self.reset_count = 0
+        self.discarded = None
 
     def prepare_branch(self, indexed_commit_sha):
         self.prepared_from = indexed_commit_sha
@@ -210,6 +216,9 @@ class FakeWorkspace:
 
     def reset_patch_state(self):
         self.reset_count += 1
+
+    def discard_generation(self, indexed_commit_sha, branch):
+        self.discarded = (indexed_commit_sha, branch)
 
     def write_test_files(self, files):
         self.written = files
@@ -735,6 +744,87 @@ def test_reviewer_receives_the_task_partitioned_evidence_proposals_and_diff(tmp_
     assert [doc.doc_metadata["source"] for doc in call["test_evidence"]] == ["tests/test_auth.py"]
     assert [file.path for file in call["generated_files"]] == ["tests/test_auth.py"]
     assert call["diff"] == diff
+
+
+def test_accepted_review_pauses_for_a_human_decision(tmp_path) -> None:
+    """An accepted review suspends the run at a human-decision interrupt carrying the patch and findings."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    findings = [ReviewFinding(category="readability", detail="clear and idiomatic")]
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=findings))
+    diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ..."
+    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder, diff=diff)
+    config = _config()
+
+    result = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=config,
+    )
+
+    # The graph paused at the human-decision interrupt instead of ending the run.
+    assert "__interrupt__" in result
+    prompt = result["__interrupt__"][0].value
+    assert prompt["coding_run_id"] == recorder.run_id
+    assert prompt["diff"] == diff
+    assert [finding["category"] for finding in prompt["findings"]] == ["readability"]
+    # The accepted review is recorded (awaiting approval); no rejection has happened yet.
+    assert ("record_review", recorder.run_id, True, findings) in recorder.events
+    assert ("reject", recorder.run_id) not in recorder.events
+    # The run is suspended at the decision node, ready to resume.
+    assert graph.get_state(config).next == ("await_decision",)
+
+
+def test_rejecting_a_paused_run_discards_the_patch_and_records_the_rejection(tmp_path) -> None:
+    """Resuming a paused run with a rejection restores the checkout, removes the branch, and records the rejection."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    findings = [ReviewFinding(category="readability", detail="clear and idiomatic")]
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=findings))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ...")
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+    config = _config()
+    graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=config,
+    )
+
+    final = graph.invoke(Command(resume={"approved": False}), config=config)
+
+    # The discarded patch restores the checkout to the indexed commit and removes the temporary branch.
+    assert workspace.discarded == ("abc", "qa-tests/fake")
+    # The run is recorded rejected, after the accepted review was recorded.
+    assert ("reject", recorder.run_id) in recorder.events
+    # The terminal outcome preserves the assessed diff and findings for inspection.
+    rejection = final["rejection_result"]
+    assert isinstance(rejection, RunRejected)
+    assert rejection.coding_run_id == recorder.run_id
+    assert rejection.diff.startswith("diff --git")
+    assert [finding.category for finding in rejection.findings] == ["readability"]
+    assert "not executed" in rejection.disclaimer.lower()
+    assert final.get("failure") is None
+
+
+def test_approving_a_paused_run_leaves_it_awaiting_approval_without_discarding(tmp_path) -> None:
+    """Resuming with an approval ends the run without discarding the patch (approval handling is a later stage)."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+    config = _config()
+    graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=config,
+    )
+
+    final = graph.invoke(Command(resume={"approved": True}), config=config)
+
+    # An approval neither discards the patch nor rejects the run.
+    assert workspace.discarded is None
+    assert ("reject", recorder.run_id) not in recorder.events
+    assert final.get("rejection_result") is None
 
 
 def test_rejected_first_review_records_its_findings_before_revising(tmp_path) -> None:

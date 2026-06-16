@@ -11,12 +11,14 @@ tested), which are kept apart on the shared state.
 import logging
 from pathlib import Path
 
+from langgraph.types import interrupt
+
 from app.agent.paths import confine_candidate_paths
 from app.agent.stream import emit
 from app.agent.test_files import RejectedTestFile, discover_test_roots, validate_test_file
 from app.core.config import settings
 from app.enums.coding_run import CodingRunStatus
-from app.schemas.agent_stream import PatchResult, ReviewResult, RunFailure, Stage
+from app.schemas.agent_stream import PatchResult, ReviewResult, RunFailure, RunRejected, Stage
 from app.schemas.review import ReviewFinding
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,8 @@ PATCH_DERIVATION_FAILED = "Could not write the generated tests or derive the pat
 # User-safe reasons for a reviewing-stage failure; never raw exception text.
 REVIEW_FAILED = "The patch reviewer could not complete its assessment."
 SECOND_REVIEW_REJECTED = "The reviewer rejected the revised tests after one revision attempt."
+# The prompt the human-in-the-loop interrupt surfaces while awaiting the owner's decision.
+AWAITING_DECISION_MESSAGE = "Review the generated Test Patch and approve or reject it."
 
 
 def build_gather_evidence_node(retriever):
@@ -246,6 +250,56 @@ def build_review_patch_node(reviewer, recorder):
         return {"review_result": review_result, "trace": ["review_patch"]}
 
     return review_patch
+
+
+def build_await_decision_node():
+    """Build the human-in-the-loop node that suspends an accepted run for the owner's decision.
+
+    After an accepted Patch Review the graph pauses here via ``interrupt``, surfacing
+    the Coding Run, the assessed canonical diff, and the review findings. The graph is
+    resumed with the owner's decision payload (``{"approved": bool, "feedback": str}``),
+    which is folded onto state so the post-decision router can approve or reject. No
+    work touches the checkout here; discarding is the rejected branch's concern.
+    """
+
+    def await_decision(state) -> dict:
+        review: ReviewResult | None = state.get("review_result")
+        decision = interrupt(
+            {
+                "coding_run_id": state.get("coding_run_id"),
+                "diff": state.get("diff") or "",
+                "findings": [finding.model_dump() for finding in (review.findings if review is not None else [])],
+                "message": AWAITING_DECISION_MESSAGE,
+            }
+        )
+        approved = bool(decision.get("approved", False)) if isinstance(decision, dict) else bool(decision)
+        feedback = decision.get("feedback", "") if isinstance(decision, dict) else ""
+        return {"approved": approved, "human_feedback": feedback, "trace": ["await_decision"]}
+
+    return await_decision
+
+
+def build_discard_patch_node(workspace_factory, recorder):
+    """Build the node that discards a rejected Test Patch and records the rejection.
+
+    The owner rejected the reviewed patch: the backend restores the shared checkout to
+    the Repository's indexed commit and removes the temporary generation branch using
+    local Git only — never a commit, push, or remote branch — then persists the run as
+    rejected while preserving its review record. The terminal ``RunRejected`` carries
+    the assessed diff and findings so the client can show what was discarded.
+    """
+
+    def discard_patch(state) -> dict:
+        coding_run_id = state.get("coding_run_id")
+        review: ReviewResult | None = state.get("review_result")
+        workspace = workspace_factory(state.get("checkout_root"))
+        workspace.discard_generation(state.get("indexed_commit_sha"), state.get("generation_branch"))
+        recorder.reject(coding_run_id)
+        findings = list(review.findings) if review is not None else []
+        rejection = RunRejected(coding_run_id=coding_run_id, diff=state.get("diff") or "", findings=findings)
+        return {"rejection_result": rejection, "trace": ["discard_patch"]}
+
+    return discard_patch
 
 
 def _verify_test_file_boundary(checkout_root, generated_files) -> ReviewFinding | None:

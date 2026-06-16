@@ -126,6 +126,32 @@ def test_record_review_accepted_advances_to_awaiting_approval_and_persists_findi
         assert reloaded.review_findings == [{"category": "readability", "detail": "clear and idiomatic"}]
 
 
+def test_reject_marks_a_run_rejected_and_preserves_its_review_record() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        run = store.create(repository_session_id=session_id, thread_id="thread-reject")
+        store.complete(
+            run,
+            generation_branch="qa-tests/abc123",
+            diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+            generated_files=[{"path": "tests/test_x.py", "content": "def test_x(): ..."}],
+            external_references=[{"url": "https://docs.pytest.org", "title": "pytest"}],
+        )
+        store.record_review(run, accepted=True, review_findings=[{"category": "readability", "detail": "clear and idiomatic"}])
+
+        store.reject(run)
+
+        reloaded = store.get_by_id(run.id)
+        assert reloaded.status == CodingRunStatus.rejected
+        # The persisted review record is preserved for inspection even though the patch is discarded.
+        assert reloaded.review_findings == [{"category": "readability", "detail": "clear and idiomatic"}]
+        assert reloaded.diff.startswith("diff --git")
+        assert reloaded.generated_files == [{"path": "tests/test_x.py", "content": "def test_x(): ..."}]
+        assert reloaded.generation_branch == "qa-tests/abc123"
+
+
 def test_record_review_rejected_advances_to_changes_requested() -> None:
     engine = _engine()
     with Session(engine) as db:

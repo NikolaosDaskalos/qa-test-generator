@@ -25,7 +25,9 @@ from app.agent.run_recorder import NullRunRecorder
 from app.agent.stream import emit
 from app.agent.test_generation import (
     SECOND_REVIEW_REJECTED,
+    build_await_decision_node,
     build_build_patch_node,
+    build_discard_patch_node,
     build_gather_evidence_node,
     build_generate_tests_node,
     build_prepare_branch_node,
@@ -34,7 +36,7 @@ from app.agent.test_generation import (
 )
 from app.agent.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStatus
-from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunFailure, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunFailure, RunRejected, RunStarted, Stage
 from app.schemas.research_intent import ResearchIntent
 
 Intent = Literal["repository_question", "test_generation"]
@@ -75,6 +77,11 @@ class GraphState(TypedDict, total=False):
     patch_result: PatchResult
     review_result: ReviewResult
     revision_attempts: int
+    # The owner's human-in-the-loop decision on an accepted patch, supplied by resuming
+    # the suspended graph, and the terminal outcome when that decision is a rejection.
+    approved: bool
+    human_feedback: str
+    rejection_result: RunRejected
     failure: RunFailure
     trace: Annotated[list[str], operator.add]
 
@@ -120,6 +127,17 @@ def _route_after_review(state: GraphState) -> Literal["failed", "accepted", "rev
     if review is not None and review.accepted:
         return "accepted"
     return "reject" if state.get("revision_attempts") else "revise"
+
+
+def _route_after_decision(state: GraphState) -> Literal["approve", "reject"]:
+    """Route the owner's human-in-the-loop decision on an accepted Test Patch.
+
+    Resuming the suspended graph supplies the decision; a rejection discards the patch
+    while an approval ends the run at awaiting approval (approval handling is a later
+    stage). The decision defaults closed to neither acting nor discarding silently:
+    only an explicit ``approved`` truthy value approves.
+    """
+    return "approve" if state.get("approved") else "reject"
 
 
 def _reject_run_node():
@@ -196,6 +214,8 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, revie
     graph.add_node("generate_tests", build_generate_tests_node(generator))
     graph.add_node("build_patch", build_build_patch_node(workspaces, recorder))
     graph.add_node("review_patch", build_review_patch_node(reviewer, recorder))
+    graph.add_node("await_decision", build_await_decision_node())
+    graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
     graph.add_node("revise_tests", build_revise_tests_node(generator))
     graph.add_node("reject_run", _reject_run_node())
     graph.add_node("fail_run", _fail_run_node(recorder))
@@ -214,8 +234,10 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, revie
     graph.add_conditional_edges(
         "review_patch",
         _route_after_review,
-        {"failed": "fail_run", "accepted": END, "revise": "revise_tests", "reject": "reject_run"},
+        {"failed": "fail_run", "accepted": "await_decision", "revise": "revise_tests", "reject": "reject_run"},
     )
+    graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": END, "reject": "discard_patch"})
+    graph.add_edge("discard_patch", END)
     graph.add_conditional_edges("revise_tests", _route_if_failed, {"failed": "fail_run", "ok": "build_patch"})
     graph.add_edge("reject_run", "fail_run")
     graph.add_edge("fail_run", END)

@@ -46,6 +46,24 @@ def test_prepare_branch_restores_indexed_commit_on_a_unique_non_default_branch(t
     assert not (repo / "app" / "later.py").exists()
 
 
+def test_discard_generation_restores_indexed_commit_and_removes_the_branch(tmp_path: Path) -> None:
+    """Discarding a generation restores the indexed-commit tree and deletes the temporary branch."""
+    repo, indexed_sha = _init_repo(tmp_path)
+    workspace = LocalGitWorkspace(repo)
+    branch = workspace.prepare_branch(indexed_sha)
+    workspace.write_test_files([GeneratedFile(path="tests/test_auth.py", content="def test_login():\n    assert True\n")])
+
+    workspace.discard_generation(indexed_sha, branch)
+
+    # The working tree is back at the indexed commit: the generated Test File is gone and no diff remains.
+    assert _git(repo, "rev-parse", "HEAD") == indexed_sha
+    assert not (repo / "tests" / "test_auth.py").exists()
+    assert _git(repo, "status", "--porcelain") == ""
+    # The temporary generation branch no longer exists.
+    branches = _git(repo, "branch", "--list", branch)
+    assert branches == ""
+
+
 def test_written_test_files_produce_a_canonical_unified_diff(tmp_path: Path) -> None:
     """Writing a validated Test File yields a Git unified diff naming the path and added content."""
     repo, indexed_sha = _init_repo(tmp_path)

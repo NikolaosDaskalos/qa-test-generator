@@ -41,6 +41,9 @@ class RunRecorder(Protocol):
     def record_review(self, coding_run_id: uuid.UUID, *, accepted: bool, findings: list[ReviewFinding]) -> None:
         """Persist Patch Review findings and advance the run to awaiting approval or changes requested."""
 
+    def reject(self, coding_run_id: uuid.UUID) -> None:
+        """Record an owner's rejection of a reviewed run, leaving its review record intact."""
+
 
 class CodingRunRecorder:
     """Production ``RunRecorder`` backed by the durable ``CodingRunStore``."""
@@ -86,6 +89,11 @@ class CodingRunRecorder:
         if run is not None:
             self.store.record_review(run, accepted=accepted, review_findings=[finding.model_dump() for finding in findings])
 
+    def reject(self, coding_run_id: uuid.UUID) -> None:
+        run = self.store.get_by_id(coding_run_id)
+        if run is not None:
+            self.store.reject(run)
+
 
 class NullRunRecorder:
     """A no-op recorder for graph paths exercised without persistence."""
@@ -111,4 +119,7 @@ class NullRunRecorder:
         return None
 
     def record_review(self, coding_run_id: uuid.UUID, *, accepted: bool, findings: list[ReviewFinding]) -> None:
+        return None
+
+    def reject(self, coding_run_id: uuid.UUID) -> None:
         return None

@@ -13,7 +13,7 @@ from app.enums.coding_run import CodingRunStage, CodingRunStatus
 from app.enums.session import SessionMessageRole
 from app.models.coding_run import CodingRun
 from app.models.session import RepositorySession, SessionHistory
-from app.schemas.agent_stream import Citation, Result, Stage, Token
+from app.schemas.agent_stream import Citation, Result, RunRejected, Stage, Token
 
 
 class FakeRepositorySessionService:
@@ -215,6 +215,60 @@ def test_question_surfaces_midstream_failure_as_out_of_band_error() -> None:
     # A single out-of-band transport error frame closes the stream — no separate `done`.
     assert [event["type"] for event in streamed] == ["stage", "error"]
     assert "error occurred" in streamed[1]["message"].lower()
+
+
+def test_decision_resumes_the_paused_run_through_the_same_stream() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    events = [
+        Stage(stage="reviewing"),
+        RunRejected(coding_run_id=run_id, diff="diff --git a/tests/test_x.py b/tests/test_x.py", findings=[]),
+    ]
+    service = FakeAnsweringService(events)
+    app = _question_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.post(f"/sessions/{session_id}/questions", json={"decision": {"coding_run_id": str(run_id), "approved": False}})
+
+    assert response.status_code == 200
+    streamed = _parse_sse(response.text)
+    # The same stream surfaces the rejection terminal — no separate approval/rejection endpoint.
+    assert [event["type"] for event in streamed] == ["stage", "run_rejected"]
+    assert streamed[-1]["coding_run_id"] == str(run_id)
+    # The route forwards the decision (and no question) to the service to resume the paused run.
+    call = service.answer_calls[0]
+    assert call["decision"].coding_run_id == run_id
+    assert call["decision"].approved is False
+    assert call["question"] is None
+
+
+def test_decision_conflict_from_the_service_surfaces_as_409() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    service = FakeAnsweringService([], raises=HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Coding Run is not awaiting a decision"))
+    app = _question_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"decision": {"coding_run_id": str(uuid.uuid4()), "approved": False}})
+
+    assert response.status_code == 409
+
+
+def test_request_must_carry_either_a_question_or_a_decision() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    service = FakeAnsweringService([])
+    app = _question_app(service, user=user)
+
+    with TestClient(app) as client:
+        empty = client.post(f"/sessions/{uuid.uuid4()}/questions", json={})
+        both = client.post(
+            f"/sessions/{uuid.uuid4()}/questions",
+            json={"question": "q", "decision": {"coding_run_id": str(uuid.uuid4()), "approved": True}},
+        )
+
+    assert empty.status_code == 422
+    assert both.status_code == 422
+    assert service.answer_calls == []
 
 
 def test_question_requires_authentication() -> None:

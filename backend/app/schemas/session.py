@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.enums.coding_run import CodingRunStage, CodingRunStatus
 from app.enums.session import SessionMessageRole
@@ -15,8 +15,37 @@ class RepositorySessionCreate(BaseModel):
     title: str = Field(default="New Repository Session", min_length=1, max_length=255)
 
 
+class HumanDecisionRequest(BaseModel):
+    """The owner's human-in-the-loop decision on a reviewed Test Patch.
+
+    Delivered through the same session stream that produced the patch: it resumes
+    the suspended Coding Run rather than starting a new one. ``approved`` is the
+    verdict; a rejection discards the patch.
+    """
+
+    coding_run_id: uuid.UUID
+    approved: bool
+    feedback: str = Field(default="", max_length=4000)
+
+
 class RepositoryQuestionRequest(BaseModel):
-    question: str = Field(min_length=1, max_length=4000)
+    """One turn on a session stream: a new question or a decision resuming a paused run.
+
+    The same entry point both asks a repository-grounded/test-generation question and
+    delivers the owner's human-in-the-loop decision, so exactly one of ``question`` or
+    ``decision`` must be present — never both, never neither.
+    """
+
+    question: str | None = Field(default=None, max_length=4000)
+    decision: HumanDecisionRequest | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_intent(self) -> "RepositoryQuestionRequest":
+        if (self.question is None) == (self.decision is None):
+            raise ValueError("Provide either a question or a decision, not both")
+        if self.question is not None and not self.question.strip():
+            raise ValueError("question must not be empty")
+        return self
 
 
 class RepositorySessionPublic(BaseModel):

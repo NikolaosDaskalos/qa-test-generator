@@ -42,9 +42,11 @@ def ask_repository_question(
 ) -> StreamingResponse:
     """Infer the Request Intent and stream the routed Agent Stream for an owned session.
 
-    The same entry point serves a repository-grounded answer and a Test-Generation
-    Task; the unified graph's ``classify`` node decides which, so the request schema
-    is unchanged. Each run gets its own checkpointer ``thread_id``.
+    The same entry point serves a repository-grounded answer, a Test-Generation Task,
+    and the owner's human-in-the-loop decision on a reviewed patch; the unified graph's
+    ``classify`` node decides the first two, while a ``decision`` resumes the suspended
+    run that produced the patch. A fresh question gets its own checkpointer ``thread_id``;
+    a decision reuses the paused run's own thread.
     """
     events = repository_session_service.stream_session(
         repository_session_id=repository_session_id,
@@ -52,6 +54,7 @@ def ask_repository_question(
         question=question_in.question,
         graph=session_graph,
         thread_id=str(uuid.uuid4()),
+        decision=question_in.decision,
     )
     return StreamingResponse(_to_sse(events), media_type="text/event-stream")
 

@@ -18,6 +18,7 @@ class CodingRunStatus(str, Enum):
     awaiting_approval = "awaiting_approval"
     changes_requested = "changes_requested"
     succeeded = "succeeded"
+    rejected = "rejected"
     failed = "failed"
 
 
