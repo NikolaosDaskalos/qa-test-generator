@@ -1,6 +1,6 @@
 # Generate canonical diffs for existing Test Files
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 38-40, 42-45, 54
 
@@ -23,23 +23,23 @@ code.
 
 ## Acceptance criteria
 
-- [ ] Generation starts from a clean checkout restored to the Repository's indexed commit on a
+- [x] Generation starts from a clean checkout restored to the Repository's indexed commit on a
       uniquely named non-default temporary branch.
-- [ ] The generator receives the Test-Generation Task, validated Repository Evidence (source and
+- [x] The generator receives the Test-Generation Task, validated Repository Evidence (source and
       test), and may call only the bounded `web_search` tool — no shell or filesystem tools.
-- [ ] The `web_search` loop is bounded; `researching` stage progress is streamed when the tool runs,
+- [x] The `web_search` loop is bounded; `researching` stage progress is streamed when the tool runs,
       and External References are collected separately from Repository Evidence.
-- [ ] Generator output is a structured collection of complete file paths and complete contents
+- [x] Generator output is a structured collection of complete file paths and complete contents
       rather than diff text.
-- [ ] Existing recognized Python Test Files may be modified.
-- [ ] Absolute paths, traversal outside the checkout, symlink targets, non-Python files, and
+- [x] Existing recognized Python Test Files may be modified.
+- [x] Absolute paths, traversal outside the checkout, symlink targets, non-Python files, and
       application or source files are rejected before writing.
-- [ ] The backend writes only validated Test Files and obtains the displayed Test Patch from Git.
-- [ ] The Coding Run persists generated file proposals, collected External References, and the
+- [x] The backend writes only validated Test Files and obtains the displayed Test Patch from Git.
+- [x] The Coding Run persists generated file proposals, collected External References, and the
       canonical diff; the stream emits `generating`/patch progress and a terminal `PatchResult`
       (coding_run_id, diff, generated_files, external_references), or `RunFailure` on generation or
       validation failure.
-- [ ] Tests cover clean branch preparation, structured generation, the bounded web_search loop
+- [x] Tests cover clean branch preparation, structured generation, the bounded web_search loop
       (including that a repository-question never reaches the web), External Reference separation,
       each rejection boundary, canonical diff generation, and generation or validation Run Failure.
 

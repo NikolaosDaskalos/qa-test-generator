@@ -13,6 +13,7 @@ from app.models.repository import Repository
 from app.models.session import RepositorySession
 from app.models.user import User
 from app.persistence.coding_run_store import CodingRunStore
+from app.schemas.generation import ExternalReference, GeneratedFile
 
 
 def _engine():
@@ -54,3 +55,26 @@ def test_recorder_starts_advances_and_fails_through_the_store() -> None:
         assert failed.status == CodingRunStatus.failed
         assert failed.failed_stage == CodingRunStage.planning
         assert failed.failure_reason == "Out of scope"
+
+
+def test_recorder_completes_a_run_with_the_serialized_patch() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        recorder = CodingRunRecorder(store)
+        run_id = recorder.start(thread_id="t-done", repository_session_id=session_id)
+
+        recorder.complete(
+            run_id,
+            branch="qa-tests/xyz",
+            diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+            generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")],
+            external_references=[ExternalReference(url="https://docs.pytest.org", title="pytest")],
+        )
+
+        completed = store.get_by_id(run_id)
+        assert completed.status == CodingRunStatus.awaiting_review
+        assert completed.generation_branch == "qa-tests/xyz"
+        assert completed.generated_files == [{"path": "tests/test_x.py", "content": "def test_x(): ..."}]
+        assert completed.external_references == [{"url": "https://docs.pytest.org", "title": "pytest"}]

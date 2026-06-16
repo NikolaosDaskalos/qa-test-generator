@@ -16,6 +16,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.schemas.generation import ExternalReference, GeneratedFile
+
 
 class Citation(BaseModel):
     """A single Repository source backing an answer."""
@@ -27,7 +29,7 @@ class Stage(BaseModel):
     """Ordered progress marker for a Repository question or Test-Generation Task."""
 
     type: Literal["stage"] = "stage"
-    stage: Literal["classifying", "planning", "retrieving", "generating"]
+    stage: Literal["classifying", "planning", "retrieving", "researching", "generating"]
 
 
 class Token(BaseModel):
@@ -81,4 +83,19 @@ class RunFailure(BaseModel):
     reason: str
 
 
-AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure
+class PatchResult(BaseModel):
+    """The terminal event for a Test-Generation Task that produced a Test Patch.
+
+    Carries the canonical unified diff derived by Git, the complete generated file
+    proposals, and the External References consulted while writing them. The
+    persisted Coding Run backing the run is always identified.
+    """
+
+    type: Literal["patch_result"] = "patch_result"
+    coding_run_id: uuid.UUID
+    diff: str
+    generated_files: list[GeneratedFile]
+    external_references: list[ExternalReference]
+
+
+AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure | PatchResult

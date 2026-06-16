@@ -58,10 +58,18 @@ class RepositorySessionService:
         history = [{"role": message.role.value, "content": message.content} for message in self.session_store.get_recent_history(repository_session.id)]
         repository = self.repository_store.get_by_id(repository_session.repository_id)
         checkout_root = repository.local_path if repository else None
-        return self._stream_session(repository_session, question, history, checkout_root, graph, thread_id)
+        indexed_commit_sha = repository.indexed_commit_sha if repository else None
+        return self._stream_session(repository_session, question, history, checkout_root, indexed_commit_sha, graph, thread_id)
 
     def _stream_session(
-        self, repository_session: RepositorySession, question: str, history: list[dict[str, Any]], checkout_root: str | None, graph: Any, thread_id: str
+        self,
+        repository_session: RepositorySession,
+        question: str,
+        history: list[dict[str, Any]],
+        checkout_root: str | None,
+        indexed_commit_sha: str | None,
+        graph: Any,
+        thread_id: str,
     ) -> Generator[AgentStreamEvent, None, None]:
         config = {"configurable": {"thread_id": thread_id}}
         graph_input = {
@@ -70,6 +78,7 @@ class RepositorySessionService:
             "repository_id": repository_session.repository_id,
             "repository_session_id": repository_session.id,
             "checkout_root": checkout_root,
+            "indexed_commit_sha": indexed_commit_sha,
         }
         yield from map_graph_stream(graph.stream(graph_input, config=config, stream_mode=["custom", "messages"]))
 
@@ -77,6 +86,10 @@ class RepositorySessionService:
         failure = final.get("failure")
         if failure is not None:
             yield failure
+            return
+        patch_result = final.get("patch_result")
+        if patch_result is not None:
+            yield patch_result
             return
         if final.get("intent") == "repository_question":
             answer = final.get("answer", "")

@@ -9,7 +9,8 @@ from fastapi import HTTPException
 from app.models.repository import Repository
 from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
-from app.schemas.agent_stream import Citation, Result, RunFailure, Stage, Token
+from app.schemas.agent_stream import Citation, PatchResult, Result, RunFailure, Stage, Token
+from app.schemas.generation import ExternalReference, GeneratedFile
 from app.services.session_service import RepositorySessionService
 
 
@@ -56,8 +57,10 @@ def _user():
     return User(id=uuid.uuid4(), email="o@example.com", hashed_password="x")
 
 
-def _wiring(user):
-    repository = Repository(id=uuid.uuid4(), user_id=user.id, name="r", repository_url="https://github.com/o/r.git", owner="o", local_path="/checkout")
+def _wiring(user, *, indexed_commit_sha=None):
+    repository = Repository(
+        id=uuid.uuid4(), user_id=user.id, name="r", repository_url="https://github.com/o/r.git", owner="o", local_path="/checkout", indexed_commit_sha=indexed_commit_sha
+    )
     repository_session = RepositorySession(id=uuid.uuid4(), owner_id=user.id, repository_id=repository.id)
     session_store = FakeSessionStore(repository_session)
     service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
@@ -114,6 +117,41 @@ def test_stream_session_emits_run_failure_terminal_for_rejected_task():
     assert terminal.coding_run_id == run_id
     # A rejected task never persists a session exchange.
     assert session_store.appended == []
+
+
+def test_stream_session_emits_patch_result_terminal_for_a_generated_patch():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    run_id = uuid.uuid4()
+    patch = PatchResult(
+        coding_run_id=run_id,
+        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+        generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")],
+        external_references=[ExternalReference(url="https://docs.pytest.org", title="pytest")],
+    )
+    items = [("custom", Stage(stage="generating"))]
+    final = {"intent": "test_generation", "patch_result": patch}
+    graph = FakeGraph(items, final)
+
+    events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-3"))
+
+    terminal = events[-1]
+    assert isinstance(terminal, PatchResult)
+    assert terminal.coding_run_id == run_id
+    assert [file.path for file in terminal.generated_files] == ["tests/test_x.py"]
+    # A generated patch is reported, not persisted as a session answer exchange.
+    assert session_store.appended == []
+
+
+def test_stream_session_passes_the_indexed_commit_to_the_graph():
+    user = _user()
+    service, _store, repository_session = _wiring(user, indexed_commit_sha="a" * 40)
+    graph = FakeGraph([], {"intent": "test_generation"})
+
+    list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-4"))
+
+    graph_input, _config, _modes = graph.streamed[0]
+    assert graph_input["indexed_commit_sha"] == "a" * 40
 
 
 def test_stream_session_rejects_a_session_owned_by_another_user():

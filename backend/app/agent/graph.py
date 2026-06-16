@@ -23,9 +23,10 @@ from app.agent.planner import build_plan_node
 from app.agent.repository_question import build_generate_node, build_retrieve_node
 from app.agent.run_recorder import NullRunRecorder
 from app.agent.stream import emit
-from app.agent.test_generation import build_gather_evidence_node
+from app.agent.test_generation import build_build_patch_node, build_gather_evidence_node, build_generate_tests_node, build_prepare_branch_node
+from app.agent.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStatus
-from app.schemas.agent_stream import Citation, RunFailure, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, RunFailure, RunStarted, Stage
 from app.schemas.research_intent import ResearchIntent
 
 Intent = Literal["repository_question", "test_generation"]
@@ -51,6 +52,7 @@ class GraphState(TypedDict, total=False):
     coding_run_id: uuid.UUID
     intent: Intent
     checkout_root: str
+    indexed_commit_sha: str
     evidence: list
     answer: str
     citations: list[Citation]
@@ -58,6 +60,10 @@ class GraphState(TypedDict, total=False):
     source_evidence: list
     test_evidence: list
     candidate_hints: list[str]
+    generation_branch: str
+    generated_files: list
+    external_references: list
+    patch_result: PatchResult
     failure: RunFailure
     trace: Annotated[list[str], operator.add]
 
@@ -83,6 +89,10 @@ def _route_intent(state: GraphState) -> Intent:
 
 def _route_after_plan(state: GraphState) -> Literal["failed", "planned"]:
     return "failed" if state.get("failure") else "planned"
+
+
+def _route_if_failed(state: GraphState) -> Literal["failed", "ok"]:
+    return "failed" if state.get("failure") else "ok"
 
 
 def _persist_run_node(recorder):
@@ -125,7 +135,11 @@ def _fail_run_node(recorder):
     return fail_run
 
 
-def build_graph(*, classifier_llm, retriever, llm, planner_llm, run_recorder=None, checkpointer=None):
+def _default_workspace_factory(checkout_root):
+    return LocalGitWorkspace(checkout_root)
+
+
+def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, run_recorder=None, workspace_factory=None, checkpointer=None):
     """Compile the unified intent-routed graph.
 
     ``checkpointer`` is the durable graph-state store. Production passes the
@@ -135,12 +149,16 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, run_recorder=Non
     ``MemorySaver``.
     """
     recorder = run_recorder or NullRunRecorder()
+    workspaces = workspace_factory or _default_workspace_factory
     graph = StateGraph(GraphState)
     graph.add_node("classify", _classify_node(classifier_llm))
     graph.add_node("persist_run", _persist_run_node(recorder))
     graph.add_node("plan", build_plan_node(planner_llm))
     graph.add_node("begin_retrieving", _begin_retrieving_node(recorder))
     graph.add_node("gather_evidence", build_gather_evidence_node(retriever))
+    graph.add_node("prepare_branch", build_prepare_branch_node(workspaces, recorder))
+    graph.add_node("generate_tests", build_generate_tests_node(generator))
+    graph.add_node("build_patch", build_build_patch_node(workspaces, recorder))
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("retrieve", build_retrieve_node(retriever))
     graph.add_node("generate", build_generate_node(llm))
@@ -150,7 +168,10 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, run_recorder=Non
     graph.add_edge("persist_run", "plan")
     graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "begin_retrieving"})
     graph.add_edge("begin_retrieving", "gather_evidence")
-    graph.add_edge("gather_evidence", END)
+    graph.add_edge("gather_evidence", "prepare_branch")
+    graph.add_conditional_edges("prepare_branch", _route_if_failed, {"failed": "fail_run", "ok": "generate_tests"})
+    graph.add_conditional_edges("generate_tests", _route_if_failed, {"failed": "fail_run", "ok": "build_patch"})
+    graph.add_conditional_edges("build_patch", _route_if_failed, {"failed": "fail_run", "ok": END})
     graph.add_edge("fail_run", END)
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)

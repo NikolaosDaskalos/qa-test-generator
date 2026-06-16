@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime
+from sqlalchemy import JSON, Column, DateTime, Text
 from sqlmodel import Field, Relationship, SQLModel
 
 from app.enums.coding_run import CodingRunStage, CodingRunStatus
@@ -32,6 +32,14 @@ class CodingRun(SQLModel, table=True):
     # A sanitized, user-safe explanation; never carries raw exception or model output.
     failure_reason: str | None = Field(default=None)
     revision_count: int = Field(default=0, ge=0)
+    # The uniquely named, non-default temporary branch the Test Patch was built on.
+    generation_branch: str | None = Field(default=None, max_length=255)
+    # The canonical unified diff (Test Patch) derived by Git; the displayed record of truth.
+    diff: str | None = Field(default=None, sa_column=Column(Text))
+    # The complete generated file proposals ({path, content}) and the External References
+    # consulted while writing them, kept separate from Repository Evidence.
+    generated_files: list | None = Field(default=None, sa_column=Column(JSON))
+    external_references: list | None = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), sa_type=DateTime(timezone=True))  # type: ignore
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

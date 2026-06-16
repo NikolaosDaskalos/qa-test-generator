@@ -11,6 +11,7 @@ from typing import Protocol
 
 from app.enums.coding_run import CodingRunStage, CodingRunStatus
 from app.persistence.coding_run_store import CodingRunStore
+from app.schemas.generation import ExternalReference, GeneratedFile
 
 
 class RunRecorder(Protocol):
@@ -24,6 +25,17 @@ class RunRecorder(Protocol):
 
     def fail(self, coding_run_id: uuid.UUID, *, failed_stage: str, reason: str) -> None:
         """Mark a Coding Run failed at ``failed_stage`` with a sanitized ``reason``."""
+
+    def complete(
+        self,
+        coding_run_id: uuid.UUID,
+        *,
+        branch: str,
+        diff: str,
+        generated_files: list[GeneratedFile],
+        external_references: list[ExternalReference],
+    ) -> None:
+        """Persist the generated Test Patch and advance the run to awaiting review."""
 
 
 class CodingRunRecorder:
@@ -46,6 +58,25 @@ class CodingRunRecorder:
         if run is not None:
             self.store.mark_failed(run, failed_stage=CodingRunStage(failed_stage), failure_reason=reason)
 
+    def complete(
+        self,
+        coding_run_id: uuid.UUID,
+        *,
+        branch: str,
+        diff: str,
+        generated_files: list[GeneratedFile],
+        external_references: list[ExternalReference],
+    ) -> None:
+        run = self.store.get_by_id(coding_run_id)
+        if run is not None:
+            self.store.complete(
+                run,
+                generation_branch=branch,
+                diff=diff,
+                generated_files=[file.model_dump() for file in generated_files],
+                external_references=[reference.model_dump() for reference in external_references],
+            )
+
 
 class NullRunRecorder:
     """A no-op recorder for graph paths exercised without persistence."""
@@ -57,4 +88,15 @@ class NullRunRecorder:
         return None
 
     def fail(self, coding_run_id: uuid.UUID, *, failed_stage: str, reason: str) -> None:
+        return None
+
+    def complete(
+        self,
+        coding_run_id: uuid.UUID,
+        *,
+        branch: str,
+        diff: str,
+        generated_files: list[GeneratedFile],
+        external_references: list[ExternalReference],
+    ) -> None:
         return None

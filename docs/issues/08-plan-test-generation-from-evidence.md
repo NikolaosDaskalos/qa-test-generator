@@ -1,6 +1,6 @@
 # Route Request Intent and plan Test-Generation Tasks from Repository Evidence
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 33-37, 53, 55, 70
 
@@ -30,28 +30,28 @@ Generation, the `web_search` tool, and the `PatchResult` terminal are issue 09.
 
 ## Acceptance criteria
 
-- [ ] `POST /questions` infers Request Intent via a `classify` node and routes the unified graph;
+- [x] `POST /questions` infers Request Intent via a `classify` node and routes the unified graph;
       the endpoint and request schema are unchanged.
-- [ ] Uncertain classification routes to `repository_question`; the repository-question branch
+- [x] Uncertain classification routes to `repository_question`; the repository-question branch
       preserves the existing streamed answer and `Result` (answer + citations).
-- [ ] An authenticated owner submitting a Test-Generation Task for a ready Repository Session
+- [x] An authenticated owner submitting a Test-Generation Task for a ready Repository Session
       receives an Agent Stream.
-- [ ] Requests outside adding or improving tests are rejected at the `plan` stage as
+- [x] Requests outside adding or improving tests are rejected at the `plan` stage as
       `RunFailure(failed_stage=planning)` before generation.
-- [ ] A persisted Coding Run is created in `queued` state and advances through `planning` and
+- [x] A persisted Coding Run is created in `queued` state and advances through `planning` and
       `retrieving`; the per-run checkpointer `thread_id` is persisted on the Coding Run.
-- [ ] Coding Run persistence defines the planned state vocabulary, Repository and Repository Session
+- [x] Coding Run persistence defines the planned state vocabulary, Repository and Repository Session
       ownership, failure stage, sanitized failure reason, and revision count needed by later stages.
-- [ ] Planner output is structured as Research Intents with optional candidate Repository paths,
+- [x] Planner output is structured as Research Intents with optional candidate Repository paths,
       tagged source vs. test.
-- [ ] Candidate paths are normalized, confined to the checkout, rejected when unsafe, and treated
+- [x] Candidate paths are normalized, confined to the checkout, rejected when unsafe, and treated
       only as retrieval hints.
-- [ ] The retrieve node uses the session's Repository identity and supplies only validated
+- [x] The retrieve node uses the session's Repository identity and supplies only validated
       Repository Evidence, partitioned into separate `source_evidence` and `test_evidence`.
-- [ ] Agent Stream events expose ordered `classifying`/`planning`/`retrieving` progress (via
+- [x] Agent Stream events expose ordered `classifying`/`planning`/`retrieving` progress (via
       `messages`/`custom` stream modes mapped onto the typed `AgentStreamEvent` union) and identify
       the persisted Coding Run.
-- [ ] Model, migration, persistence, and deterministic graph tests cover routing both intents,
+- [x] Model, migration, persistence, and deterministic graph tests cover routing both intents,
       valid planning, invalid task scope, unsafe path hints, empty evidence, source/test partition,
       state persistence, relationships, state values, and event ordering without external model
       calls.

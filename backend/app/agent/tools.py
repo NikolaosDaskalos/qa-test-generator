@@ -6,7 +6,9 @@ from typing import Any
 from langchain_core.tools import tool
 from langchain_tavily import TavilySearch
 
+from app.agent.stream import emit
 from app.core.config import settings
+from app.schemas.agent_stream import Stage
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +22,25 @@ _tavily_search = TavilySearch(max_results=3, topic="general", include_answer=Tru
 
 @tool
 def web_search(query: str) -> str:
-    """
-    Search the web using Tavily and return JSON-serialized results.
-    Use this when fresh or external information is needed.
+    """Look up a test framework's current syntax and best practices on the web.
+
+    Use this ONLY to confirm how to write tests — e.g. a testing library's current
+    API, fixtures, assertion style, mocking patterns, or idioms (pytest, unittest,
+    etc.). Good queries name the framework and the technique, like
+    "pytest parametrize fixtures example" or "unittest mock patch async".
+
+    Do NOT use it to learn anything about the repository under test: its modules,
+    functions, behavior, or file layout come only from the provided Repository
+    Evidence, never from the web. Results are external references about test-writing
+    technique and must not ground claims about the repository's own code.
+
+    Returns JSON-serialized search results.
     """
 
     if not query or not query.strip():
         logger.warning("Web search rejected because the query is empty")
         return json.dumps({"error": "No query provided"}, ensure_ascii=False)
+    emit(Stage(stage="researching"))
     try:
         logger.info("Web search started query_length=%s", len(query.strip()))
         result: Any = _tavily_search.invoke({"query": query})

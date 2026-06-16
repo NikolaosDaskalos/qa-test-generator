@@ -41,3 +41,22 @@ class CodingRunStore:
         self.session.commit()
         self.session.refresh(coding_run)
         return coding_run
+
+    def complete(
+        self,
+        coding_run: CodingRun,
+        *,
+        generation_branch: str,
+        diff: str,
+        generated_files: list,
+        external_references: list,
+    ) -> CodingRun:
+        coding_run.status = CodingRunStatus.awaiting_review
+        coding_run.generation_branch = generation_branch
+        coding_run.diff = diff
+        coding_run.generated_files = generated_files
+        coding_run.external_references = external_references
+        self.session.add(coding_run)
+        self.session.commit()
+        self.session.refresh(coding_run)
+        return coding_run

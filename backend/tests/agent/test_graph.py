@@ -11,7 +11,8 @@ from app.agent.planner import PlannerOutput
 from app.agent.repository_question import INSUFFICIENT_EVIDENCE_ANSWER
 from app.enums.coding_run import CodingRunStatus
 from app.models.source_document import SourceDocument
-from app.schemas.agent_stream import Citation, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, RunStarted, Stage
+from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 from app.schemas.research_intent import ResearchIntent
 
 
@@ -114,6 +115,52 @@ class RecordingRecorder:
     def fail(self, coding_run_id, *, failed_stage, reason):
         self.events.append(("fail", coding_run_id, failed_stage, reason))
 
+    def complete(self, coding_run_id, *, branch, diff, generated_files, external_references):
+        self.events.append(("complete", coding_run_id, branch, diff, generated_files, external_references))
+
+
+class FakeGenerator:
+    """A ``TestGenerator`` returning a fixed proposal and recording its inputs."""
+
+    def __init__(self, proposal: GenerationProposal | None = None) -> None:
+        self.proposal = proposal or GenerationProposal()
+        self.calls = []
+
+    def generate(self, *, task, source_evidence, test_evidence):
+        self.calls.append({"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence})
+        return self.proposal
+
+
+class RaisingGenerator:
+    """A ``TestGenerator`` that fails to produce a proposal."""
+
+    def generate(self, *, task, source_evidence, test_evidence):
+        raise RuntimeError("model unavailable")
+
+
+class FakeWorkspace:
+    """A ``GenerationWorkspace`` that records writes and returns a canned diff."""
+
+    def __init__(self, diff: str = "") -> None:
+        self._diff = diff
+        self.prepared_from = None
+        self.written = None
+
+    def prepare_branch(self, indexed_commit_sha):
+        self.prepared_from = indexed_commit_sha
+        return "qa-tests/fake"
+
+    def write_test_files(self, files):
+        self.written = files
+
+    def diff(self):
+        return self._diff
+
+
+def _workspace_factory(workspace=None):
+    workspace = workspace or FakeWorkspace()
+    return lambda _checkout_root: workspace
+
 
 def _source(repository_id: uuid.UUID, source: str, content: str = "evidence") -> SourceDocument:
     return SourceDocument(repository_id=repository_id, content=content, doc_metadata={"source": source})
@@ -123,13 +170,15 @@ def _config(thread_id: str = "t1") -> dict:
     return {"configurable": {"thread_id": thread_id}}
 
 
-def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, recorder=None):
+def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, recorder=None, generator=None, workspace=None):
     return build_graph(
         classifier_llm=classifier_llm,
         retriever=retriever if retriever is not None else FakeRetriever(),
         llm=llm if llm is not None else FakeGeneratorLLM(),
         planner_llm=planner_llm if planner_llm is not None else FakePlannerLLM(PlannerOutput(in_scope=True, intents=[])),
+        generator=generator if generator is not None else FakeGenerator(),
         run_recorder=recorder,
+        workspace_factory=_workspace_factory(workspace),
     )
 
 
@@ -335,8 +384,8 @@ def test_test_generation_retrieve_confines_candidate_paths_to_validated_hints(tm
 # ── test_generation branch: Coding Run persistence ────────────────
 
 
-def test_test_generation_persists_a_queued_run_and_advances_planning_then_retrieving() -> None:
-    """A routed task creates a Coding Run and advances it through planning and retrieving."""
+def test_test_generation_persists_a_queued_run_and_advances_through_generation() -> None:
+    """A routed task creates a Coding Run and advances it planning → retrieving → generating → complete."""
     recorder = RecordingRecorder()
     session_id = uuid.uuid4()
     repository_id = uuid.uuid4()
@@ -344,14 +393,16 @@ def test_test_generation_persists_a_queued_run_and_advances_planning_then_retrie
     graph = _build(FakeClassifierLLM("test_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": repository_id, "repository_session_id": session_id},
+        {"question": "add tests", "repository_id": repository_id, "repository_session_id": session_id, "checkout_root": "/unused"},
         config=_config("run-thread"),
     )
 
-    assert [event[0] for event in recorder.events] == ["start", "advance", "advance"]
+    assert [event[0] for event in recorder.events] == ["start", "advance", "advance", "advance", "complete"]
     assert recorder.events[0] == ("start", "run-thread", session_id)
     assert recorder.events[1][2] == CodingRunStatus.planning
     assert recorder.events[2][2] == CodingRunStatus.retrieving
+    assert recorder.events[3][2] == CodingRunStatus.generating
+    assert recorder.events[4][1] == recorder.run_id
     assert final["coding_run_id"] == recorder.run_id
 
 
@@ -373,6 +424,133 @@ def test_test_generation_marks_failure_at_planning_when_out_of_scope() -> None:
     assert final["failure"].coding_run_id == recorder.run_id
 
 
+# ── test_generation branch: generation & patch ────────────────────
+
+
+def _generation_graph(*, generator, recorder=None, workspace=None):
+    planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
+    return _build(FakeClassifierLLM("test_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output), generator=generator, workspace=workspace)
+
+
+def test_generator_receives_partitioned_evidence_and_emits_structured_files() -> None:
+    """The generator is handed the task and partitioned evidence and returns complete-file proposals."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever({"impl": [_source(repository_id, "app/auth.py", "code")]})
+    planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="impl")])
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _build(
+        FakeClassifierLLM("test_generation"),
+        retriever=retriever,
+        planner_llm=FakePlannerLLM(planner_output),
+        generator=generator,
+    )
+
+    final = graph.invoke(
+        {"question": "add tests for auth", "repository_id": repository_id, "checkout_root": "/unused"},
+        config=_config(),
+    )
+
+    assert generator.calls[0]["task"] == "add tests for auth"
+    assert [doc.doc_metadata["source"] for doc in generator.calls[0]["source_evidence"]] == ["app/auth.py"]
+    assert [file.path for file in final["generated_files"]] == ["tests/test_auth.py"]
+
+
+def test_external_references_are_collected_separately_from_repository_evidence() -> None:
+    """Web results ride external_references, never mixed into source or test evidence."""
+    repository_id = uuid.uuid4()
+    generator = FakeGenerator(
+        GenerationProposal(
+            generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")],
+            external_references=[ExternalReference(url="https://docs.pytest.org", title="pytest")],
+        )
+    )
+    graph = _generation_graph(generator=generator)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": repository_id, "checkout_root": "/unused"},
+        config=_config(),
+    )
+
+    assert [reference.url for reference in final["external_references"]] == ["https://docs.pytest.org"]
+    assert all("docs.pytest.org" not in doc.content for doc in final.get("source_evidence", []))
+    assert all("docs.pytest.org" not in doc.content for doc in final.get("test_evidence", []))
+
+
+def test_build_patch_writes_validated_files_and_emits_a_patch_result() -> None:
+    """Validated proposals are written, the diff is derived, and the run is completed with it."""
+    recorder = RecordingRecorder()
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ...")
+    files = [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
+    references = [ExternalReference(url="https://docs.pytest.org", title="pytest")]
+    generator = FakeGenerator(GenerationProposal(generated_files=files, external_references=references))
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": "/unused", "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    assert workspace.prepared_from == "abc"
+    assert [file.path for file in workspace.written] == ["tests/test_auth.py"]
+    patch_result = final["patch_result"]
+    assert isinstance(patch_result, PatchResult)
+    assert patch_result.coding_run_id == recorder.run_id
+    assert patch_result.diff == workspace.diff()
+    assert [file.path for file in patch_result.generated_files] == ["tests/test_auth.py"]
+    complete = next(event for event in recorder.events if event[0] == "complete")
+    assert complete[2] == "qa-tests/fake"  # branch
+    assert complete[3] == workspace.diff()
+
+
+def test_unsafe_proposed_path_is_rejected_before_writing_as_a_generating_failure(tmp_path) -> None:
+    """A proposal targeting application code fails at generating and is never written."""
+    recorder = RecordingRecorder()
+    workspace = FakeWorkspace()
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="app/auth.py", content="malicious")]))
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)},
+        config=_config(),
+    )
+
+    assert final["failure"].failed_stage == "generating"
+    assert final.get("patch_result") is None
+    assert workspace.written is None
+    assert recorder.events[-1][0] == "fail"
+
+
+def test_repository_question_never_reaches_the_web_search_generator() -> None:
+    """The web-search-capable generator is unreachable from a read-only repository question."""
+    repository_id = uuid.uuid4()
+    generator = FakeGenerator()
+    graph = _build(
+        FakeClassifierLLM("repository_question"),
+        retriever=FakeRetriever([_source(repository_id, "app/a.py", "x")]),
+        llm=FakeGeneratorLLM(("a",)),
+        generator=generator,
+    )
+
+    graph.invoke({"question": "how does auth work?", "repository_id": repository_id}, config=_config())
+
+    assert generator.calls == []
+
+
+def test_generation_failure_is_a_generating_run_failure() -> None:
+    """A generator that cannot produce a proposal fails the run at the generating stage."""
+    recorder = RecordingRecorder()
+    graph = _generation_graph(generator=RaisingGenerator(), recorder=recorder)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": "/unused"},
+        config=_config(),
+    )
+
+    assert final["failure"].failed_stage == "generating"
+    assert final["failure"].coding_run_id == recorder.run_id
+    assert final.get("patch_result") is None
+
+
 # ── Agent Stream ordering (custom mode) ───────────────────────────
 
 
@@ -382,14 +560,14 @@ def _custom_events(graph, graph_input):
 
 
 def test_test_generation_stream_emits_ordered_stage_and_run_markers() -> None:
-    """Test-generation progress is classifying → planning → retrieving and identifies the run."""
+    """Test-generation progress is classifying → planning → retrieving → generating and identifies the run."""
     recorder = RecordingRecorder()
     planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
     graph = _build(FakeClassifierLLM("test_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output))
 
-    events = _custom_events(graph, {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4()})
+    events = _custom_events(graph, {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": "/unused"})
 
-    assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "planning", "retrieving"]
+    assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "planning", "retrieving", "generating"]
     run_markers = [event for event in events if isinstance(event, RunStarted)]
     assert len(run_markers) == 1
     assert run_markers[0].coding_run_id == recorder.run_id

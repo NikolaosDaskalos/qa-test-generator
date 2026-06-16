@@ -11,11 +11,12 @@ from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
 from sqlmodel import Session
 
+from app.agent.generator import ReActTestGenerator
+from app.agent.graph import build_graph
+from app.agent.run_recorder import CodingRunRecorder
 from app.core import security
 from app.core.config import settings
 from app.core.db import engine
-from app.agent.graph import build_graph
-from app.agent.run_recorder import CodingRunRecorder
 from app.core.vector_db import WeaviateResources, get_weaviate_resources
 from app.models.user import User
 from app.persistence.coding_run_store import CodingRunStore
@@ -165,6 +166,7 @@ def get_session_graph(request: Request, rag_pipeline: RAGPipelineDep, coding_run
         retriever=rag_pipeline.document_retriever,
         llm=rag_pipeline.llm,
         planner_llm=rag_pipeline.llm,
+        generator=ReActTestGenerator(rag_pipeline.llm),
         run_recorder=CodingRunRecorder(coding_run_store),
         checkpointer=request.app.state.session_checkpointer,
     )

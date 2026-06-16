@@ -87,3 +87,26 @@ def test_mark_failed_records_failure_stage_and_sanitized_reason() -> None:
         assert reloaded.status == CodingRunStatus.failed
         assert reloaded.failed_stage == CodingRunStage.planning
         assert reloaded.failure_reason == "Request is out of scope for test generation"
+
+
+def test_complete_persists_the_patch_and_advances_to_awaiting_review() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        run = store.create(repository_session_id=session_id, thread_id="thread-done")
+
+        store.complete(
+            run,
+            generation_branch="qa-tests/abc123",
+            diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+            generated_files=[{"path": "tests/test_x.py", "content": "def test_x(): ..."}],
+            external_references=[{"url": "https://docs.pytest.org", "title": "pytest"}],
+        )
+
+        reloaded = store.get_by_id(run.id)
+        assert reloaded.status == CodingRunStatus.awaiting_review
+        assert reloaded.generation_branch == "qa-tests/abc123"
+        assert reloaded.diff.startswith("diff --git")
+        assert reloaded.generated_files == [{"path": "tests/test_x.py", "content": "def test_x(): ..."}]
+        assert reloaded.external_references == [{"url": "https://docs.pytest.org", "title": "pytest"}]

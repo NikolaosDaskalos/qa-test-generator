@@ -8,26 +8,16 @@ process timeouts, and error sanitization. Raw user URLs must be validated by
 import logging
 import os
 import shutil
-import subprocess
 import uuid
 from base64 import b64encode
-from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.config import settings
 from app.errors.git_errors import GitError
+from app.git.git_process import GitResult, run_git
 from app.git.repository_url import ParsedRepositoryUrl, parse_repository_url
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class GitResult:
-    """Captured standard output and error from a successful Git command."""
-
-    stdout: str
-    stderr: str
-
 
 SHA_LENGTH: int = 40
 
@@ -219,13 +209,11 @@ class GitCommands:
         return (self.repo_path / ".git").is_dir()
 
     def _run(self, *args: str, cwd: Path, token: str | None = None) -> GitResult:
-        """Run Git without a shell and translate process failures to ``GitError``.
+        """Run Git via the shared seam, building token-bearing authentication env.
 
-        Tokens are passed through a child-process-only environment and redacted
-        from captured failures before the error reaches application logs.
+        Tokens are passed through a child-process-only environment and never on
+        the command line.
         """
-        command = " ".join(args[:2])
-        logger.info("Running Git command=%s cwd=%s authenticated=%s", command, cwd, token is not None)
         environment = os.environ.copy()
         if token is not None:
             environment.update(
@@ -246,20 +234,7 @@ class GitCommands:
                 }
             )
 
-        try:
-            result = subprocess.run([*args], cwd=cwd.resolve(), timeout=120, text=True, check=True, shell=False, capture_output=True, env=environment)
-        except subprocess.TimeoutExpired as exc:
-            logger.error("Git command timed out command=%s cwd=%s", command, cwd)
-            raise GitError("Git command timed out") from exc
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or exc.stdout or "Git command failed").strip()
-            if token:
-                detail = detail.replace(token, "[REDACTED]")
-            logger.error("Git command failed command=%s cwd=%s return_code=%s", command, cwd, exc.returncode)
-            raise GitError(detail[:1000]) from exc
-
-        logger.info("Git command completed command=%s cwd=%s", command, cwd)
-        return GitResult(stdout=result.stdout.strip(), stderr=result.stderr.strip())
+        return run_git(*args, cwd=cwd, env=environment, token=token)
 
     def _credential_username(self) -> str:
         return "x-access-token"

@@ -8,7 +8,8 @@ import pytest
 
 from app.core.config import settings
 from app.errors.git_errors import GitError
-from app.git.git_commands import GitCommands, GitResult
+from app.git.git_commands import GitCommands
+from app.git.git_process import GitResult
 from app.git.repository_url import parse_repository_url
 
 
