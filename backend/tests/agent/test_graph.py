@@ -4,12 +4,15 @@ These exercise the compiled ``StateGraph`` through its public ``invoke`` with
 fake language models and a fake retriever, so no external model is ever called.
 """
 
+import subprocess
 import uuid
+from pathlib import Path
 
 from app.agent.graph import Classification, build_graph
 from app.agent.planner import PlannerOutput
 from app.agent.repository_question import INSUFFICIENT_EVIDENCE_ANSWER
 from app.agent.test_generation import build_review_patch_node
+from app.agent.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStatus
 from app.models.source_document import SourceDocument
 from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunStarted, Stage
@@ -125,15 +128,34 @@ class RecordingRecorder:
 
 
 class FakeGenerator:
-    """A ``TestGenerator`` returning a fixed proposal and recording its inputs."""
+    """A ``TestGenerator`` returning a fixed proposal and recording its inputs.
 
-    def __init__(self, proposal: GenerationProposal | None = None) -> None:
+    When a ``revision`` proposal is supplied it is returned by ``revise``; the
+    revise inputs (prior proposal, canonical diff, reviewer findings) are recorded.
+    """
+
+    def __init__(self, proposal: GenerationProposal | None = None, *, revision: GenerationProposal | None = None) -> None:
         self.proposal = proposal or GenerationProposal()
+        self.revision = revision
         self.calls = []
+        self.revise_calls = []
 
     def generate(self, *, task, source_evidence, test_evidence):
         self.calls.append({"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence})
         return self.proposal
+
+    def revise(self, *, task, source_evidence, test_evidence, prior_files, diff, findings):
+        self.revise_calls.append(
+            {
+                "task": task,
+                "source_evidence": source_evidence,
+                "test_evidence": test_evidence,
+                "prior_files": prior_files,
+                "diff": diff,
+                "findings": findings,
+            }
+        )
+        return self.revision if self.revision is not None else self.proposal
 
 
 class RaisingGenerator:
@@ -144,17 +166,26 @@ class RaisingGenerator:
 
 
 class FakeReviewer:
-    """A ``PatchReviewer`` returning a fixed decision and recording its inputs."""
+    """A ``PatchReviewer`` returning fixed decisions and recording its inputs.
 
-    def __init__(self, review: PatchReview | None = None) -> None:
-        self.review_decision = review if review is not None else PatchReview(accepted=True, findings=[])
+    A single ``review`` is returned on every call; a ``reviews`` sequence returns
+    one decision per call (clamped to the last), so first-review and second-review
+    verdicts can differ across a Revision Attempt.
+    """
+
+    def __init__(self, review: PatchReview | None = None, *, reviews: list[PatchReview] | None = None) -> None:
+        if reviews is not None:
+            self._reviews = list(reviews)
+        else:
+            self._reviews = [review if review is not None else PatchReview(accepted=True, findings=[])]
         self.calls = []
 
     def review(self, *, task, source_evidence, test_evidence, generated_files, diff):
         self.calls.append(
             {"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence, "generated_files": generated_files, "diff": diff}
         )
-        return self.review_decision
+        index = min(len(self.calls) - 1, len(self._reviews) - 1)
+        return self._reviews[index]
 
 
 class RaisingReviewer:
@@ -171,10 +202,14 @@ class FakeWorkspace:
         self._diff = diff
         self.prepared_from = None
         self.written = None
+        self.reset_count = 0
 
     def prepare_branch(self, indexed_commit_sha):
         self.prepared_from = indexed_commit_sha
         return "qa-tests/fake"
+
+    def reset_patch_state(self):
+        self.reset_count += 1
 
     def write_test_files(self, files):
         self.written = files
@@ -194,6 +229,23 @@ def _source(repository_id: uuid.UUID, source: str, content: str = "evidence") ->
 
 def _config(thread_id: str = "t1") -> dict:
     return {"configurable": {"thread_id": thread_id}}
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()
+
+
+def _init_repo_with_test_root(tmp_path: Path) -> tuple[Path, str]:
+    repo = tmp_path / "checkout"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "Tester")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_existing.py").write_text("def test_existing():\n    assert True\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "indexed")
+    return repo, _git(repo, "rev-parse", "HEAD")
 
 
 def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, recorder=None, generator=None, workspace=None, reviewer=None):
@@ -685,12 +737,12 @@ def test_reviewer_receives_the_task_partitioned_evidence_proposals_and_diff(tmp_
     assert call["diff"] == diff
 
 
-def test_rejected_review_records_a_rejection_with_findings(tmp_path) -> None:
-    """A rejected review surfaces its findings on the ReviewResult and records a rejection, not a failure."""
+def test_rejected_first_review_records_its_findings_before_revising(tmp_path) -> None:
+    """A first rejection persists its findings as a recorded review and routes onward to a Revision Attempt, not a failure."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="imports", detail="imports a helper not visible in Repository Evidence")]
-    reviewer = FakeReviewer(PatchReview(accepted=False, findings=findings))
+    reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=findings), PatchReview(accepted=True, findings=[])])
     graph = _reviewed_graph(reviewer=reviewer, recorder=recorder)
 
     final = graph.invoke(
@@ -698,14 +750,11 @@ def test_rejected_review_records_a_rejection_with_findings(tmp_path) -> None:
         config=_config(),
     )
 
-    review = final["review_result"]
-    assert review.accepted is False
-    assert [finding.category for finding in review.findings] == ["imports"]
-    # A rejection is a deliberate outcome recorded as a review, never a RunFailure.
+    # The first rejection is recorded with its findings; it is a deliberate review outcome, not a RunFailure.
+    first_record = next(event for event in recorder.events if event[0] == "record_review")
+    assert first_record[2] is False
+    assert [finding.category for finding in first_record[3]] == ["imports"]
     assert final.get("failure") is None
-    record = next(event for event in recorder.events if event[0] == "record_review")
-    assert record[2] is False
-    assert [finding.category for finding in record[3]] == ["imports"]
 
 
 def test_review_rejects_a_patch_with_changes_unrelated_to_the_task(tmp_path) -> None:
@@ -713,19 +762,18 @@ def test_review_rejects_a_patch_with_changes_unrelated_to_the_task(tmp_path) -> 
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="scope", detail="adds an unrelated test unrelated to the requested task")]
-    reviewer = FakeReviewer(PatchReview(accepted=False, findings=findings))
+    reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=findings), PatchReview(accepted=True, findings=[])])
     graph = _reviewed_graph(reviewer=reviewer, recorder=recorder)
 
-    final = graph.invoke(
+    graph.invoke(
         {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
         config=_config(),
     )
 
-    review = final["review_result"]
-    assert review.accepted is False
-    assert any("unrelated" in finding.detail for finding in review.findings)
+    # The reviewer's rejection of the unrelated change is recorded with its finding.
     record = next(event for event in recorder.events if event[0] == "record_review")
     assert record[2] is False
+    assert any("unrelated" in finding.detail for finding in record[3])
 
 
 def test_backend_independently_rejects_out_of_scope_files_even_when_reviewer_accepts(tmp_path) -> None:
@@ -772,6 +820,239 @@ def test_reviewer_failure_is_a_reviewing_run_failure(tmp_path) -> None:
     assert fail[2] == "reviewing"
     # A reviewer crash is sanitized, never leaking raw exception text.
     assert "unavailable" not in final["failure"].reason
+
+
+# ── test_generation branch: bounded revision ──────────────────────
+
+
+def test_first_rejection_triggers_one_revision_that_is_accepted(tmp_path) -> None:
+    """A rejected first review routes through one Revision Attempt; an accepted second review reaches awaiting approval."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    findings = [ReviewFinding(category="coverage", detail="missing unhappy-path test")]
+    reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=findings), PatchReview(accepted=True, findings=[])])
+    revised = GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")])
+    generator = FakeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=revised,
+    )
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    # Exactly one revision happened and the second review accepted the revised patch.
+    assert len(generator.revise_calls) == 1
+    assert final["review_result"].accepted is True
+    assert final.get("failure") is None
+    # Two reviews were recorded in order: the rejection, then the acceptance.
+    review_records = [event for event in recorder.events if event[0] == "record_review"]
+    assert [record[2] for record in review_records] == [False, True]
+
+
+def test_revision_receives_the_task_evidence_prior_proposal_diff_and_findings(tmp_path) -> None:
+    """The Revision Attempt is handed the original task, partitioned evidence, its prior proposal, the canonical diff, and the findings."""
+    (tmp_path / "tests").mkdir()
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever(
+        {
+            "auth implementation": [_source(repository_id, "app/auth.py", "impl")],
+            "auth tests": [_source(repository_id, "tests/test_auth.py", "existing test")],
+        }
+    )
+    planner_output = PlannerOutput(
+        in_scope=True,
+        intents=[
+            ResearchIntent(target="source", description="auth implementation"),
+            ResearchIntent(target="test", description="auth tests"),
+        ],
+    )
+    findings = [ReviewFinding(category="coverage", detail="missing unhappy-path test")]
+    reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=findings), PatchReview(accepted=True, findings=[])])
+    prior = GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")
+    generator = FakeGenerator(
+        GenerationProposal(generated_files=[prior]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")]),
+    )
+    diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py"
+    graph = _build(
+        FakeClassifierLLM("test_generation"),
+        retriever=retriever,
+        planner_llm=FakePlannerLLM(planner_output),
+        generator=generator,
+        workspace=FakeWorkspace(diff=diff),
+        reviewer=reviewer,
+    )
+
+    graph.invoke(
+        {"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    revise = generator.revise_calls[0]
+    assert revise["task"] == "add tests for auth"
+    assert [doc.doc_metadata["source"] for doc in revise["source_evidence"]] == ["app/auth.py"]
+    assert [doc.doc_metadata["source"] for doc in revise["test_evidence"]] == ["tests/test_auth.py"]
+    assert [file.path for file in revise["prior_files"]] == ["tests/test_auth.py"]
+    assert revise["diff"] == diff
+    assert [finding.category for finding in revise["findings"]] == ["coverage"]
+
+
+def test_revised_files_are_validated_and_rediffed_through_the_same_path(tmp_path) -> None:
+    """Revised proposals are written and a new canonical diff is derived by Git, exactly like initial generation."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=[]), PatchReview(accepted=True, findings=[])])
+    revised_file = GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")
+    generator = FakeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[revised_file]),
+    )
+    revised_diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_y(): ..."
+    workspace = FakeWorkspace(diff=revised_diff)
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    # The revised file was written and the new diff carried onto the accepted review.
+    assert workspace.written[-1].content == revised_file.content
+    assert final["review_result"].diff == revised_diff
+    # The revised second review assessed the new canonical diff, not the original.
+    assert reviewer.calls[-1]["diff"] == revised_diff
+
+
+def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_path) -> None:
+    """A revised proposal replaces the rejected patch, including files it omits."""
+    repo, indexed_sha = _init_repo_with_test_root(tmp_path)
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=[]), PatchReview(accepted=True, findings=[])])
+    generator = FakeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_removed.py", content="def test_removed():\n    assert True\n")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_kept.py", content="def test_kept():\n    assert True\n")]),
+    )
+    graph = build_graph(
+        classifier_llm=FakeClassifierLLM("test_generation"),
+        retriever=FakeRetriever(),
+        llm=FakeGeneratorLLM(),
+        planner_llm=FakePlannerLLM(PlannerOutput(in_scope=True, intents=[])),
+        generator=generator,
+        reviewer=reviewer,
+        run_recorder=recorder,
+        workspace_factory=lambda checkout_root: LocalGitWorkspace(checkout_root),
+    )
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(repo), "indexed_commit_sha": indexed_sha},
+        config=_config(),
+    )
+
+    assert final["review_result"].accepted is True
+    assert "tests/test_kept.py" in final["diff"]
+    assert "tests/test_removed.py" not in final["diff"]
+    assert (repo / "tests" / "test_kept.py").exists()
+    assert not (repo / "tests" / "test_removed.py").exists()
+
+
+def test_second_review_rejection_terminates_as_a_review_stage_failure(tmp_path) -> None:
+    """A rejected second review fails the run at the review stage with a sanitized reason, never an unbounded retry."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=False, findings=[ReviewFinding(category="coverage", detail="still incomplete")]))
+    generator = FakeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
+    )
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    # Exactly one revision was attempted, then the run terminated as a review-stage failure.
+    assert len(generator.revise_calls) == 1
+    failure = final["failure"]
+    assert failure.failed_stage == "reviewing"
+    assert failure.coding_run_id == recorder.run_id
+    # The reason is user-safe and never leaks raw model output or exception text.
+    assert "reject" in failure.reason.lower()
+    # Both reviews recorded a rejection and the run was failed.
+    assert [event[2] for event in recorder.events if event[0] == "record_review"] == [False, False]
+    assert recorder.events[-1][0] == "fail"
+
+
+def test_revision_generation_failure_is_a_generating_run_failure(tmp_path) -> None:
+    """A reviser that cannot produce a revised proposal fails the run at the generating stage."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=False, findings=[]))
+
+    class RaisingReviser(FakeGenerator):
+        def revise(self, *, task, source_evidence, test_evidence, prior_files, diff, findings):
+            raise RuntimeError("model unavailable")
+
+    generator = RaisingReviser(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    assert final["failure"].failed_stage == "generating"
+    assert final["failure"].coding_run_id == recorder.run_id
+    # A reviser crash is sanitized, never leaking raw exception text.
+    assert "unavailable" not in final["failure"].reason
+    assert recorder.events[-1][0] == "fail"
+
+
+def test_revision_validation_failure_is_a_generating_run_failure(tmp_path) -> None:
+    """A revised proposal escaping Test File scope is rejected before writing as a generating-stage failure."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "auth.py").write_text("real application code")
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=False, findings=[]))
+    generator = FakeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="app/auth.py", content="malicious")]),
+    )
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    assert final["failure"].failed_stage == "generating"
+    # The revised out-of-scope file was never written.
+    assert all(file.path != "app/auth.py" for file in (workspace.written or []))
+    assert recorder.events[-1][0] == "fail"
+
+
+def test_revision_stream_distinguishes_revising_and_second_review_stages(tmp_path) -> None:
+    """The Agent Stream marks the revision and second-review passes with distinct stages and ends with one terminal review result."""
+    (tmp_path / "tests").mkdir()
+    reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=[]), PatchReview(accepted=True, findings=[])])
+    generator = FakeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")]),
+    )
+    graph = _generation_graph(generator=generator, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer)
+
+    events = _custom_events(
+        graph,
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+    )
+
+    stages = [event.stage for event in events if isinstance(event, Stage)]
+    assert stages == ["classifying", "planning", "retrieving", "generating", "reviewing", "revising", "re_reviewing"]
 
 
 # ── Agent Stream ordering (custom mode) ───────────────────────────

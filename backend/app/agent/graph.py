@@ -24,11 +24,13 @@ from app.agent.repository_question import build_generate_node, build_retrieve_no
 from app.agent.run_recorder import NullRunRecorder
 from app.agent.stream import emit
 from app.agent.test_generation import (
+    SECOND_REVIEW_REJECTED,
     build_build_patch_node,
     build_gather_evidence_node,
     build_generate_tests_node,
     build_prepare_branch_node,
     build_review_patch_node,
+    build_revise_tests_node,
 )
 from app.agent.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStatus
@@ -72,6 +74,7 @@ class GraphState(TypedDict, total=False):
     diff: str
     patch_result: PatchResult
     review_result: ReviewResult
+    revision_attempts: int
     failure: RunFailure
     trace: Annotated[list[str], operator.add]
 
@@ -101,6 +104,31 @@ def _route_after_plan(state: GraphState) -> Literal["failed", "planned"]:
 
 def _route_if_failed(state: GraphState) -> Literal["failed", "ok"]:
     return "failed" if state.get("failure") else "ok"
+
+
+def _route_after_review(state: GraphState) -> Literal["failed", "accepted", "revise", "reject"]:
+    """Route a completed Patch Review: accept, attempt one revision, or exhaust it.
+
+    A reviewing-stage Run Failure routes to failure handling; an acceptance ends the
+    run at awaiting approval. A first rejection routes to exactly one Revision
+    Attempt; a rejection after that attempt is a terminal review-stage Run Failure,
+    never an unbounded retry.
+    """
+    if state.get("failure"):
+        return "failed"
+    review = state.get("review_result")
+    if review is not None and review.accepted:
+        return "accepted"
+    return "reject" if state.get("revision_attempts") else "revise"
+
+
+def _reject_run_node():
+    """Build the node that turns a post-revision rejection into a review-stage failure."""
+
+    def reject_run(state: GraphState) -> dict:
+        return {"failure": RunFailure(failed_stage="reviewing", reason=SECOND_REVIEW_REJECTED), "trace": ["reject_run"]}
+
+    return reject_run
 
 
 def _persist_run_node(recorder):
@@ -168,6 +196,8 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, revie
     graph.add_node("generate_tests", build_generate_tests_node(generator))
     graph.add_node("build_patch", build_build_patch_node(workspaces, recorder))
     graph.add_node("review_patch", build_review_patch_node(reviewer, recorder))
+    graph.add_node("revise_tests", build_revise_tests_node(generator))
+    graph.add_node("reject_run", _reject_run_node())
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("retrieve", build_retrieve_node(retriever))
     graph.add_node("generate", build_generate_node(llm))
@@ -181,7 +211,13 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, revie
     graph.add_conditional_edges("prepare_branch", _route_if_failed, {"failed": "fail_run", "ok": "generate_tests"})
     graph.add_conditional_edges("generate_tests", _route_if_failed, {"failed": "fail_run", "ok": "build_patch"})
     graph.add_conditional_edges("build_patch", _route_if_failed, {"failed": "fail_run", "ok": "review_patch"})
-    graph.add_conditional_edges("review_patch", _route_if_failed, {"failed": "fail_run", "ok": END})
+    graph.add_conditional_edges(
+        "review_patch",
+        _route_after_review,
+        {"failed": "fail_run", "accepted": END, "revise": "revise_tests", "reject": "reject_run"},
+    )
+    graph.add_conditional_edges("revise_tests", _route_if_failed, {"failed": "fail_run", "ok": "build_patch"})
+    graph.add_edge("reject_run", "fail_run")
     graph.add_edge("fail_run", END)
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)

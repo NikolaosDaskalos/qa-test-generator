@@ -52,6 +52,20 @@ class ReActTestGenerator:
 
     def generate(self, *, task: str, source_evidence: list, test_evidence: list) -> GenerationProposal:
         prompt = _build_prompt(task, source_evidence, test_evidence)
+        return self._propose(prompt)
+
+    def revise(self, *, task: str, source_evidence: list, test_evidence: list, prior_files: list, diff: str, findings: list) -> GenerationProposal:
+        """Replace a rejected proposal once, grounded in the reviewer's findings.
+
+        The reviser sees the same task and Repository Evidence as initial generation
+        plus its own prior complete-file proposal, the canonical diff that was
+        reviewed, and the categorized findings to address, and returns a full
+        replacement proposal — never a diff.
+        """
+        prompt = _build_revision_prompt(task, source_evidence, test_evidence, prior_files, diff, findings)
+        return self._propose(prompt)
+
+    def _propose(self, prompt: str) -> GenerationProposal:
         result = self._agent.invoke({"messages": [HumanMessage(content=prompt)]}, config={"recursion_limit": self._recursion_limit})
         response = result.get("structured_response")
         generated_files = response.generated_files if response else []
@@ -69,6 +83,34 @@ def _build_prompt(task: str, source_evidence: list, test_evidence: list) -> str:
     if test_evidence:
         sections.append("Existing tests:\n" + _format_evidence(test_evidence))
     return "\n\n".join(sections)
+
+
+def _build_revision_prompt(task: str, source_evidence: list, test_evidence: list, prior_files: list, diff: str, findings: list) -> str:
+    """Assemble the revision prompt: the generation context plus the rejected proposal and findings.
+
+    The reviewer's findings frame the revision as a directed fix, and the prior
+    proposal and canonical diff show exactly what was rejected so the model replaces
+    it wholesale rather than guessing at the prior attempt.
+    """
+    sections = [_build_prompt(task, source_evidence, test_evidence)]
+    sections.append(
+        "Your previous proposal was reviewed and rejected. Address every finding below and return the complete, "
+        "corrected contents of each test file; never return a diff."
+    )
+    if findings:
+        sections.append("Reviewer findings to address:\n" + _format_findings(findings))
+    if prior_files:
+        sections.append("Your rejected proposal:\n" + _format_files(prior_files))
+    sections.append(f"Canonical diff that was reviewed:\n{diff}")
+    return "\n\n".join(sections)
+
+
+def _format_findings(findings: list) -> str:
+    return "\n".join(f"- [{finding.category}] {finding.detail}" for finding in findings)
+
+
+def _format_files(files: list) -> str:
+    return "\n\n---\n\n".join(f"[File: {file.path}]\n{file.content}" for file in files)
 
 
 def _format_evidence(evidence: list) -> str:

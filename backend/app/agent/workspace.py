@@ -27,6 +27,9 @@ class GenerationWorkspace(Protocol):
     def prepare_branch(self, indexed_commit_sha: str) -> str:
         """Restore the checkout to ``indexed_commit_sha`` on a fresh branch; return its name."""
 
+    def reset_patch_state(self) -> None:
+        """Clear generated/staged files so a revised proposal replaces the prior one."""
+
     def write_test_files(self, files: list[GeneratedFile]) -> None:
         """Write each validated Test File's complete contents into the checkout."""
 
@@ -45,6 +48,10 @@ class LocalGitWorkspace:
         run_git("git", "checkout", "-f", "-B", branch, indexed_commit_sha, cwd=self.checkout_root)
         run_git("git", "clean", "-fd", cwd=self.checkout_root)
         return branch
+
+    def reset_patch_state(self) -> None:
+        run_git("git", "reset", "--hard", "HEAD", cwd=self.checkout_root)
+        run_git("git", "clean", "-fd", cwd=self.checkout_root)
 
     def write_test_files(self, files: list[GeneratedFile]) -> None:
         for file in files:

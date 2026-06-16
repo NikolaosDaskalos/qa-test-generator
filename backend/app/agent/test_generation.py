@@ -24,9 +24,11 @@ logger = logging.getLogger(__name__)
 # User-safe reasons for a generating-stage failure; never raw exception text.
 BRANCH_PREPARATION_FAILED = "Could not prepare a clean branch to generate tests on."
 GENERATION_FAILED = "The test generator could not produce a valid proposal."
+REVISION_FAILED = "The test generator could not revise its proposal."
 PATCH_DERIVATION_FAILED = "Could not write the generated tests or derive the patch."
-# User-safe reason for a reviewing-stage failure; never raw exception text.
+# User-safe reasons for a reviewing-stage failure; never raw exception text.
 REVIEW_FAILED = "The patch reviewer could not complete its assessment."
+SECOND_REVIEW_REJECTED = "The reviewer rejected the revised tests after one revision attempt."
 
 
 def build_gather_evidence_node(retriever):
@@ -111,6 +113,43 @@ def build_generate_tests_node(generator):
     return generate_tests
 
 
+def build_revise_tests_node(generator):
+    """Build the node that performs one bounded Revision Attempt after a rejection.
+
+    The generator is handed the original task, partitioned Repository Evidence, its
+    own prior complete-file proposal, the canonical diff that was reviewed, and the
+    reviewer's findings, and may replace the proposal once. The revised files flow
+    back through the same write/validation/review path as initial generation; a
+    generator failure here is a generating-stage Run Failure. ``revision_attempts``
+    is stamped so the post-review router admits no second revision.
+    """
+
+    def revise_tests(state) -> dict:
+        emit(Stage(stage="revising"))
+        review: ReviewResult | None = state.get("review_result")
+        findings = list(review.findings) if review is not None else []
+        try:
+            proposal = generator.revise(
+                task=state["question"],
+                source_evidence=state.get("source_evidence") or [],
+                test_evidence=state.get("test_evidence") or [],
+                prior_files=state.get("generated_files") or [],
+                diff=state.get("diff") or "",
+                findings=findings,
+            )
+        except Exception:
+            logger.exception("Test revision failed")
+            return {"failure": RunFailure(failed_stage="generating", reason=REVISION_FAILED), "trace": ["revise_tests"]}
+        return {
+            "generated_files": proposal.generated_files,
+            "external_references": proposal.external_references,
+            "revision_attempts": 1,
+            "trace": ["revise_tests"],
+        }
+
+    return revise_tests
+
+
 def build_build_patch_node(workspace_factory, recorder):
     """Build the node that validates, writes, and derives the canonical Test Patch.
 
@@ -134,6 +173,8 @@ def build_build_patch_node(workspace_factory, recorder):
 
         try:
             workspace = workspace_factory(state.get("checkout_root"))
+            if state.get("revision_attempts"):
+                workspace.reset_patch_state()
             workspace.write_test_files(validated)
             diff = workspace.diff()
         except Exception:
@@ -170,7 +211,9 @@ def build_review_patch_node(reviewer, recorder):
     def review_patch(state) -> dict:
         coding_run_id = state.get("coding_run_id")
         recorder.advance(coding_run_id, CodingRunStatus.reviewing)
-        emit(Stage(stage="reviewing"))
+        # A second pass over this node is the review of a Revision Attempt; surface it
+        # as a distinct stage marker so the Agent Stream tells the two reviews apart.
+        emit(Stage(stage="re_reviewing" if state.get("revision_attempts") else "reviewing"))
         diff = state.get("diff") or ""
         generated_files = state.get("generated_files") or []
 

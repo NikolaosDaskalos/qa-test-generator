@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agent.generator import ReActTestGenerator, _GeneratorResponse
 from app.schemas.generation import GeneratedFile
+from app.schemas.review import ReviewFinding
 
 
 class FakeAgent:
@@ -59,3 +60,33 @@ def test_generator_caps_the_web_search_loop_with_a_recursion_limit() -> None:
 
     _agent_input, config = agent.invocations[0]
     assert config["recursion_limit"] == 5
+
+
+def test_generator_revises_a_prior_proposal_against_reviewer_findings() -> None:
+    """Revision returns the new files and prompts with the prior proposal, the canonical diff, and the findings."""
+    final_state = {
+        "messages": [],
+        "structured_response": _GeneratorResponse(
+            generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")]
+        ),
+    }
+    agent = FakeAgent(final_state)
+    generator = ReActTestGenerator(llm=object(), agent=agent, recursion_limit=7)
+
+    proposal = generator.revise(
+        task="add tests for auth",
+        source_evidence=[],
+        test_evidence=[],
+        prior_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")],
+        diff="diff --git a/tests/test_auth.py b/tests/test_auth.py",
+        findings=[ReviewFinding(category="coverage", detail="missing unhappy-path test")],
+    )
+
+    assert [file.path for file in proposal.generated_files] == ["tests/test_auth.py"]
+    agent_input, config = agent.invocations[0]
+    assert config["recursion_limit"] == 7
+    prompt = agent_input["messages"][0].content
+    # The revision prompt grounds the model in the rejected proposal, the diff, and the findings to address.
+    assert "missing unhappy-path test" in prompt
+    assert "diff --git a/tests/test_auth.py" in prompt
+    assert "def test_x(): ..." in prompt
