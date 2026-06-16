@@ -1,6 +1,6 @@
 # Review a Test Patch before Approval
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 47-50, 54-55
 
@@ -12,15 +12,15 @@ Patch Review is evidence-based static assessment only. It must not execute gener
 
 ## Acceptance criteria
 
-- [ ] A generated Coding Run enters `reviewing` and invokes Patch Review with the task, Repository Evidence, complete proposals, and canonical diff.
-- [ ] Patch Review returns a structured accepted or rejected decision with human-readable findings.
-- [ ] Review checks task alignment, existing test conventions, imports visible in Repository Evidence, unrelated changes, and Test File-only scope.
-- [ ] The backend independently verifies the Test File boundary even when the reviewer accepts the patch.
-- [ ] An accepted first review transitions the Coding Run to `awaiting_approval`.
-- [ ] Reviewer findings, final diff, and the persisted run result are emitted through the Agent Stream.
-- [ ] Owned run lookup and patch lookup endpoints expose persisted Coding Run state, Test Patch content, Patch Review findings, failure information, and the canonical diff after streaming ends.
-- [ ] User-visible output states that tests were not executed and runtime correctness was not verified.
-- [ ] Route and deterministic graph tests cover lookup ownership, accepted and rejected reviews, unrelated changes, invalid imports, source-file changes, persisted findings, and event order.
+- [x] A generated Coding Run enters `reviewing` and invokes Patch Review with the task, Repository Evidence, complete proposals, and canonical diff.
+- [x] Patch Review returns a structured accepted or rejected decision with human-readable findings.
+- [x] Review checks task alignment, existing test conventions, imports visible in Repository Evidence, unrelated changes, and Test File-only scope.
+- [x] The backend independently verifies the Test File boundary even when the reviewer accepts the patch.
+- [x] An accepted first review transitions the Coding Run to `awaiting_approval`.
+- [x] Reviewer findings, final diff, and the persisted run result are emitted through the Agent Stream.
+- [x] Owned run lookup and patch lookup endpoints expose persisted Coding Run state, Test Patch content, Patch Review findings, failure information, and the canonical diff after streaming ends.
+- [x] User-visible output states that tests were not executed and runtime correctness was not verified.
+- [x] Route and deterministic graph tests cover lookup ownership, accepted and rejected reviews, unrelated changes, invalid imports, source-file changes, persisted findings, and event order.
 
 ## Blocked by
 
