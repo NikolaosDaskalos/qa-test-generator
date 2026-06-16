@@ -1,22 +1,19 @@
 import uuid
 from collections.abc import Generator
-from typing import Any, Protocol
+from typing import Any
 
 from fastapi import HTTPException, status
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
+from app.agent.stream import map_graph_stream
 from app.enums.repository import RepositoryStatus
+from app.enums.session import SessionMessageRole
 from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
 from app.persistence.repository_store import RepositoryStore
 from app.persistence.session_store import RepositorySessionStore
-from app.schemas.agent_stream import AgentStreamEvent, Answer, Citation, Result
+from app.schemas.agent_stream import AgentStreamEvent, Result
 from app.schemas.session import RepositorySessionCreate
-
-
-class AnswerPipeline(Protocol):
-    """The repository-scoped answer source consumed when answering a question."""
-
-    def answer_stream(self, question: str, *, repository_id: uuid.UUID, history: list[dict[str, Any]]) -> Generator[AgentStreamEvent, None, None]: ...
 
 
 class RepositorySessionService:
@@ -47,46 +44,63 @@ class RepositorySessionService:
         repository_session = self._get_accessible(repository_session_id, user)
         return self.session_store.append_exchange(repository_session.id, user_message=user_message, assistant_message=assistant_message)
 
-    def answer_question(
-        self, *, repository_session_id: uuid.UUID, user: User, question: str, pipeline: AnswerPipeline
+    def stream_session(
+        self, *, repository_session_id: uuid.UUID, user: User, question: str, graph: Any, thread_id: str
     ) -> Generator[AgentStreamEvent, None, None]:
-        """Stream a repository-grounded answer and persist the completed exchange.
+        """Drive the unified intent-routed graph for one owned session.
 
-        Ownership is enforced before any streaming begins. The pipeline owns the
-        answer turn (stage progress, tokens, and a terminal ``Answer``); this
-        service passes those through, persists the completed exchange, and emits
-        the one terminal ``Result`` that reflects the persisted Session History.
+        Ownership is enforced before streaming. In-flight stage/token/run markers
+        pass straight through; the terminal event is decided from the graph's
+        final state — a repository answer is persisted and reported as ``Result``,
+        while a rejected Test-Generation Task surfaces its ``RunFailure``.
         """
         repository_session = self._get_accessible(repository_session_id, user)
         history = [{"role": message.role.value, "content": message.content} for message in self.session_store.get_recent_history(repository_session.id)]
-        return self._stream_answer(repository_session, question, history, pipeline)
+        repository = self.repository_store.get_by_id(repository_session.repository_id)
+        checkout_root = repository.local_path if repository else None
+        return self._stream_session(repository_session, question, history, checkout_root, graph, thread_id)
 
-    def _stream_answer(
-        self, repository_session: RepositorySession, question: str, history: list[dict[str, Any]], pipeline: AnswerPipeline
+    def _stream_session(
+        self, repository_session: RepositorySession, question: str, history: list[dict[str, Any]], checkout_root: str | None, graph: Any, thread_id: str
     ) -> Generator[AgentStreamEvent, None, None]:
-        answer = ""
-        citations: list[Citation] = []
-        for event in pipeline.answer_stream(question, repository_id=repository_session.repository_id, history=history):
-            if isinstance(event, Answer):
-                # Internal hop: the completed turn, consumed here to persist and build the Result.
-                answer = event.text
-                citations = event.citations
-            else:
-                # Stage progress and answer tokens pass straight through to the wire.
-                yield event
+        config = {"configurable": {"thread_id": thread_id}}
+        graph_input = {
+            "messages": [*self._to_messages(history), HumanMessage(content=question)],
+            "question": question,
+            "repository_id": repository_session.repository_id,
+            "repository_session_id": repository_session.id,
+            "checkout_root": checkout_root,
+        }
+        yield from map_graph_stream(graph.stream(graph_input, config=config, stream_mode=["custom", "messages"]))
 
-        _user_message, assistant_message = self.session_store.append_exchange(
-            repository_session.id,
-            user_message=question,
-            assistant_message=answer,
-            assistant_citations=[citation.model_dump() for citation in citations],
-        )
-        yield Result(
-            repository_session_id=repository_session.id,
-            assistant_message_id=assistant_message.id,
-            answer=answer,
-            citations=citations,
-        )
+        final = graph.get_state(config).values
+        failure = final.get("failure")
+        if failure is not None:
+            yield failure
+            return
+        if final.get("intent") == "repository_question":
+            answer = final.get("answer", "")
+            citations = final.get("citations", [])
+            _user_message, assistant_message = self.session_store.append_exchange(
+                repository_session.id,
+                user_message=question,
+                assistant_message=answer,
+                assistant_citations=[citation.model_dump() for citation in citations],
+            )
+            yield Result(
+                repository_session_id=repository_session.id,
+                assistant_message_id=assistant_message.id,
+                answer=answer,
+                citations=citations,
+            )
+
+    @staticmethod
+    def _to_messages(history: list[dict[str, Any]]) -> list[BaseMessage]:
+        """Project recent Session History rows into LangChain messages for the graph spine."""
+        return [
+            AIMessage(content=entry["content"]) if entry["role"] == SessionMessageRole.assistant.value else HumanMessage(content=entry["content"])
+            for entry in history
+        ]
 
     def _get_accessible(self, repository_session_id: uuid.UUID, user: User) -> RepositorySession:
         repository_session = self.session_store.get_by_id(repository_session_id)

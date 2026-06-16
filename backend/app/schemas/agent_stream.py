@@ -24,10 +24,10 @@ class Citation(BaseModel):
 
 
 class Stage(BaseModel):
-    """Stage progress for the synchronous answer flow."""
+    """Ordered progress marker for a Repository question or Test-Generation Task."""
 
     type: Literal["stage"] = "stage"
-    stage: Literal["retrieving", "generating"]
+    stage: Literal["classifying", "planning", "retrieving", "generating"]
 
 
 class Token(BaseModel):
@@ -60,4 +60,25 @@ class Result(BaseModel):
     citations: list[Citation]
 
 
-AgentStreamEvent = Stage | Token | Answer | Result
+class RunStarted(BaseModel):
+    """Identifies the persisted Coding Run backing a Test-Generation Task stream."""
+
+    type: Literal["run_started"] = "run_started"
+    coding_run_id: uuid.UUID
+
+
+class RunFailure(BaseModel):
+    """The terminal event for a Test-Generation Task that fails a bounded stage.
+
+    ``failed_stage`` names where the run stopped and ``reason`` is a sanitized,
+    user-safe explanation — never raw exception text or model output. The
+    persisted Coding Run is identified once it exists.
+    """
+
+    type: Literal["run_failure"] = "run_failure"
+    coding_run_id: uuid.UUID | None = None
+    failed_stage: Literal["planning", "retrieving", "generating"]
+    reason: str
+
+
+AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure

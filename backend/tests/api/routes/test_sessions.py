@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
 from app.api.routes.sessions import router
-from app.dependencies import get_current_user, get_rag_pipeline, get_repository_session_service
+from app.dependencies import get_current_user, get_repository_session_service, get_session_graph
 from app.enums.session import SessionMessageRole
 from app.models.session import RepositorySession, SessionHistory
 from app.schemas.agent_stream import Citation, Result, Stage, Token
@@ -101,7 +101,7 @@ class FakeAnsweringService:
         self.raises = raises
         self.answer_calls = []
 
-    def answer_question(self, **kwargs):
+    def stream_session(self, **kwargs):
         self.answer_calls.append(kwargs)
         if self.raises is not None:
             raise self.raises
@@ -112,11 +112,11 @@ def _parse_sse(body: str) -> list[dict]:
     return [json.loads(line[len("data: ") :]) for line in body.splitlines() if line.startswith("data: ")]
 
 
-def _question_app(service, *, user=None, pipeline=object()):
+def _question_app(service, *, user=None, graph=object()):
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_repository_session_service] = lambda: service
-    app.dependency_overrides[get_rag_pipeline] = lambda: pipeline
+    app.dependency_overrides[get_session_graph] = lambda: graph
     if user is not None:
         app.dependency_overrides[get_current_user] = lambda: user
     return app
@@ -138,9 +138,9 @@ def test_question_streams_grounded_answer_as_event_stream() -> None:
             citations=[Citation(source="app/auth.py")],
         ),
     ]
-    pipeline = object()
+    graph = object()
     service = FakeAnsweringService(events)
-    app = _question_app(service, user=user, pipeline=pipeline)
+    app = _question_app(service, user=user, graph=graph)
 
     with TestClient(app) as client:
         response = client.post(f"/sessions/{session_id}/questions", json={"question": "How is auth tested?"})
@@ -155,12 +155,13 @@ def test_question_streams_grounded_answer_as_event_stream() -> None:
     assert terminal["assistant_message_id"] == str(assistant_message_id)
     assert terminal["answer"] == "Auth is route-tested."
     assert terminal["citations"] == [{"source": "app/auth.py"}]
-    # The route binds the request to the owned session and forwards the pipeline.
+    # The route binds the request to the owned session and drives the unified graph under a per-run thread id.
     call = service.answer_calls[0]
     assert call["repository_session_id"] == session_id
     assert call["user"] is user
     assert call["question"] == "How is auth tested?"
-    assert call["pipeline"] is pipeline
+    assert call["graph"] is graph
+    assert isinstance(call["thread_id"], str) and call["thread_id"]
 
 
 def test_question_streams_insufficient_evidence_with_empty_citations() -> None:
@@ -188,7 +189,7 @@ def test_question_surfaces_midstream_failure_as_out_of_band_error() -> None:
     class ExplodingService:
         answer_calls: list = []
 
-        def answer_question(self, **kwargs):
+        def stream_session(self, **kwargs):
             def stream():
                 yield Stage(stage="retrieving")
                 raise RuntimeError("pipeline blew up")

@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 
+from app.agent.checkpointer import close_checkpointer, open_checkpointer
 from app.api.main import api_router
 from app.core import vector_db
 from app.core.config import settings
@@ -29,15 +30,18 @@ else:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """Initialize Weaviate at startup and close it during shutdown."""
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Initialize Weaviate and the session-graph checkpointer at startup; close both on shutdown."""
     logger.info("Application startup started")
     vector_db.initialize_weaviate()
+    checkpointer, checkpointer_pool = open_checkpointer()
+    app.state.session_checkpointer = checkpointer
     logger.info("Application startup completed")
     try:
         yield
     finally:
         logger.info("Application shutdown started")
+        close_checkpointer(checkpointer_pool)
         vector_db.close_weaviate()
         logger.info("Application shutdown completed")
 

@@ -173,6 +173,10 @@ class Settings(BaseSettings):
     # alpha value: 1.0 -> Pure vector search, 0.0 -> pure BM25 search
     HYBRID_SEARCH_ALPHA: float = Field(default=0.3, ge=0.0, le=1.0)
 
+    # Max connections in the shared PostgresSaver pool backing the session graph checkpointer.
+    CHECKPOINTER_POOL_MAX_SIZE: int = Field(default=10, ge=1)
+    CHECKPOINTER_POOL_MIN_SIZE: int = Field(default=3, ge=1)
+
     REPO_PATH: Path = Field(default_factory=lambda: PROJECT_PATH / ".tmp/repositories")
 
     def model_post_init(self, __context) -> None:

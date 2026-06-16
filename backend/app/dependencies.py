@@ -5,7 +5,7 @@ from collections.abc import Generator
 from typing import Annotated
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
@@ -14,8 +14,11 @@ from sqlmodel import Session
 from app.core import security
 from app.core.config import settings
 from app.core.db import engine
+from app.agent.graph import build_graph
+from app.agent.run_recorder import CodingRunRecorder
 from app.core.vector_db import WeaviateResources, get_weaviate_resources
 from app.models.user import User
+from app.persistence.coding_run_store import CodingRunStore
 from app.persistence.repository_store import RepositoryStore
 from app.persistence.session_store import RepositorySessionStore
 from app.persistence.source_document_store import SourceDocumentStore
@@ -138,3 +141,33 @@ def get_rag_pipeline(
 
 
 RAGPipelineDep = Annotated[RAGPipeline, Depends(get_rag_pipeline)]
+
+
+def get_coding_run_store(session: SessionDep) -> CodingRunStore:
+    """Build the PostgreSQL store for Coding Run records."""
+    return CodingRunStore(session)
+
+
+CodingRunStoreDep = Annotated[CodingRunStore, Depends(get_coding_run_store)]
+
+
+def get_session_graph(request: Request, rag_pipeline: RAGPipelineDep, coding_run_store: CodingRunStoreDep):
+    """Compile the unified intent-routed graph for one request.
+
+    Classifier and planner reuse the pipeline's chat model via structured output;
+    retrieval and generation reuse the pipeline's repository-scoped components; the
+    Coding Run recorder persists the test-generation lifecycle. The durable
+    ``PostgresSaver`` checkpointer is the process-wide singleton opened in the
+    application lifespan; only the (in-memory) graph wiring is rebuilt per request.
+    """
+    return build_graph(
+        classifier_llm=rag_pipeline.llm,
+        retriever=rag_pipeline.document_retriever,
+        llm=rag_pipeline.llm,
+        planner_llm=rag_pipeline.llm,
+        run_recorder=CodingRunRecorder(coding_run_store),
+        checkpointer=request.app.state.session_checkpointer,
+    )
+
+
+SessionGraphDep = Annotated[object, Depends(get_session_graph)]

@@ -6,7 +6,7 @@ from collections.abc import Generator, Iterable
 from fastapi import APIRouter, status
 from fastapi.responses import StreamingResponse
 
-from app.dependencies import CurrentUser, RAGPipelineDep, RepositorySessionServiceDep
+from app.dependencies import CurrentUser, RepositorySessionServiceDep, SessionGraphDep
 from app.models.session import RepositorySession
 from app.schemas.agent_stream import AgentStreamEvent
 from app.schemas.session import RepositoryQuestionRequest, RepositorySessionCreate, RepositorySessionPublic, SessionHistoriesPublic, SessionHistoryPublic
@@ -28,16 +28,22 @@ def ask_repository_question(
     *,
     repository_session_service: RepositorySessionServiceDep,
     current_user: CurrentUser,
-    rag_pipeline: RAGPipelineDep,
+    session_graph: SessionGraphDep,
     repository_session_id: uuid.UUID,
     question_in: RepositoryQuestionRequest,
 ) -> StreamingResponse:
-    """Stream a repository-grounded answer with file citations for an owned session."""
-    events = repository_session_service.answer_question(
+    """Infer the Request Intent and stream the routed Agent Stream for an owned session.
+
+    The same entry point serves a repository-grounded answer and a Test-Generation
+    Task; the unified graph's ``classify`` node decides which, so the request schema
+    is unchanged. Each run gets its own checkpointer ``thread_id``.
+    """
+    events = repository_session_service.stream_session(
         repository_session_id=repository_session_id,
         user=current_user,
         question=question_in.question,
-        pipeline=rag_pipeline,
+        graph=session_graph,
+        thread_id=str(uuid.uuid4()),
     )
     return StreamingResponse(_to_sse(events), media_type="text/event-stream")
 
