@@ -1036,7 +1036,13 @@ def test_first_rejection_triggers_one_revision_that_is_accepted(tmp_path) -> Non
     findings = [ReviewFinding(category="coverage", detail="missing unhappy-path test")]
     reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=findings), PatchReview(accepted=True, findings=[])])
     revised = GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")])
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]), revision=revised)
+    generator = FakeGenerator(
+        GenerationProposal(
+            generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")],
+            external_references=[ExternalReference(url="https://docs.pytest.org", title="pytest")],
+        ),
+        revision=revised,
+    )
     graph = _generation_graph(
         generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer
     )
@@ -1056,6 +1062,7 @@ def test_first_rejection_triggers_one_revision_that_is_accepted(tmp_path) -> Non
     assert len(generator.revise_calls) == 1
     assert final["review_result"].accepted is True
     assert final.get("failure") is None
+    assert [reference.url for reference in final["external_references"]] == ["https://docs.pytest.org"]
     # Two reviews were recorded in order: the rejection, then the acceptance.
     review_records = [event for event in recorder.events if event[0] == "record_review"]
     assert [record[2] for record in review_records] == [False, True]

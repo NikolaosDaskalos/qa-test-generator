@@ -136,7 +136,7 @@ def build_revise_tests_node(generator):
             return {"failure": RunFailure(failed_stage="generating", reason=REVISION_FAILED), "trace": ["revise_tests"]}
         return {
             "generated_files": proposal.generated_files,
-            "external_references": proposal.external_references,
+            "external_references": proposal.external_references or state.get("external_references") or [],
             "revision_attempts": 1,
             "trace": ["revise_tests"],
         }

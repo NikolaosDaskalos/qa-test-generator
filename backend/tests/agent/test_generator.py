@@ -90,3 +90,25 @@ def test_generator_revises_a_prior_proposal_against_reviewer_findings() -> None:
     assert "missing unhappy-path test" in prompt
     assert "diff --git a/tests/test_auth.py" in prompt
     assert "def test_x(): ..." in prompt
+
+
+def test_generator_uses_a_separate_revision_agent_without_web_search(monkeypatch) -> None:
+    """Revision is deterministic: it does not reopen the web-search ReAct loop."""
+    created = []
+
+    def fake_create_agent(_llm, tools=None, **kwargs):
+        agent = FakeAgent({"messages": [], "structured_response": _GeneratorResponse(generated_files=[])})
+        created.append({"agent": agent, "tools": tools or [], "system_prompt": kwargs["system_prompt"]})
+        return agent
+
+    monkeypatch.setattr("app.agent.generator.create_agent", fake_create_agent)
+
+    generator = ReActTestGenerator(llm=object())
+
+    generator.revise(task="add tests", source_evidence=[], test_evidence=[], prior_files=[], diff="", findings=[])
+
+    assert len(created) == 2
+    assert len(created[0]["tools"]) == 1
+    assert created[1]["tools"] == []
+    assert len(created[0]["agent"].invocations) == 0
+    assert len(created[1]["agent"].invocations) == 1
