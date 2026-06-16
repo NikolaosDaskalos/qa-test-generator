@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "92c95e9a-f9f8-4ccd-b7ae-db9f920db57d",
     "name": "QA Test Generator API",
-    "description": "Sign up, log in, and exercise the repository and session endpoints. Set `githubToken` and `replacementGithubToken` before running repository requests. Login stores `accessToken`, repository creation stores `repositoryId`, and session creation stores `repositorySessionId`. The repository must be ready before creating a session.",
+    "description": "Sign up, log in, and exercise the repository, session, agent stream, human-in-the-loop, and coding-run endpoints. Set `githubToken` and `replacementGithubToken` before running repository requests. Login stores `accessToken`, repository creation stores `repositoryId`, session creation stores `repositorySessionId`, and test generation stores `codingRunId`. The repository must be ready before creating a session.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -474,20 +474,21 @@
                   "pm.test('Status code is 200', function () {",
                   "    pm.response.to.have.status(200);",
                   "});",
-                  "",
                   "pm.test('Response is a server-sent event stream', function () {",
                   "    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream');",
                   "});",
                   "",
-                  "pm.test('Stream ends with a single terminal result frame', function () {",
-                  "    const events = pm.response.text()",
+                  "function readSseEvents() {",
+                  "    return pm.response.text()",
                   "        .split(/\\r?\\n/)",
                   "        .filter(line => line.startsWith('data: '))",
                   "        .map(line => JSON.parse(line.slice(6)));",
+                  "}",
+                  "",
+                  "pm.test('Stream ends with a single terminal result frame', function () {",
+                  "    const events = readSseEvents();",
                   "    pm.expect(events).not.to.be.empty;",
                   "    pm.expect(events.some(event => event.type === 'token')).to.be.true;",
-                  "    pm.expect(events.some(event => event.type === 'citations')).to.be.true;",
-                  "    // The double-`done` is collapsed: the terminal frame is the Result, with no trailing `done`.",
                   "    pm.expect(events.some(event => event.type === 'done')).to.be.false;",
                   "    pm.expect(events.filter(event => event.type === 'result')).to.have.lengthOf(1);",
                   "    const result = events[events.length - 1];",
@@ -535,7 +536,275 @@
                 "questions"
               ]
             },
-            "description": "Streams a repository-grounded answer as server-sent events. The stream emits progress, token, citation, and terminal result events."
+            "description": "Streams a repository-grounded answer as server-sent events. The stream emits progress, token, and terminal `result` events; citations are included on the terminal result."
+          },
+          "response": []
+        },
+        {
+          "name": "Start Test Generation (Await Human Decision)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.environment.set('codingRunAwaitingDecision', 'false');",
+                  "pm.collectionVariables.set('codingRunAwaitingDecision', 'false');",
+                  "",
+                  "pm.test('Response is a server-sent event stream', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream');",
+                  "});",
+                  "",
+                  "function readSseEvents() {",
+                  "    return pm.response.text()",
+                  "        .split(/\\r?\\n/)",
+                  "        .filter(line => line.startsWith('data: '))",
+                  "        .map(line => JSON.parse(line.slice(6)));",
+                  "}",
+                  "",
+                  "pm.test('Test-generation stream exposes and stores the coding run id', function () {",
+                  "    const events = readSseEvents();",
+                  "    pm.expect(events).not.to.be.empty;",
+                  "    pm.expect(events.some(event => event.type === 'run_started')).to.be.true;",
+                  "    pm.expect(events.some(event => event.type === 'done')).to.be.false;",
+                  "    const runEvent = events.find(event => event.coding_run_id);",
+                  "    pm.expect(runEvent, JSON.stringify(events)).to.exist;",
+                  "    pm.expect(runEvent.coding_run_id).to.be.a('string').and.not.empty;",
+                  "    pm.environment.set('codingRunId', runEvent.coding_run_id);",
+                  "    pm.collectionVariables.set('codingRunId', runEvent.coding_run_id);",
+                  "});",
+                  "",
+                  "pm.test('review_result carries the human-decision handoff when accepted', function () {",
+                  "    const events = readSseEvents();",
+                  "    const terminal = events[events.length - 1];",
+                  "    pm.expect(terminal.type).to.be.oneOf(['review_result', 'run_failure']);",
+                  "    if (terminal.type === 'review_result') {",
+                  "        pm.expect(terminal.accepted).to.be.a('boolean');",
+                  "        pm.expect(terminal.coding_run_id).to.eql(pm.variables.get('codingRunId'));",
+                  "        pm.expect(terminal.findings).to.be.an('array');",
+                  "        pm.expect(terminal.diff).to.be.a('string');",
+                  "        pm.expect(terminal.disclaimer).to.be.a('string').and.not.empty;",
+                  "        if (terminal.accepted) {",
+                  "            pm.environment.set('codingRunAwaitingDecision', 'true');",
+                  "            pm.collectionVariables.set('codingRunAwaitingDecision', 'true');",
+                  "        } else {",
+                  "            pm.environment.set('codingRunAwaitingDecision', 'false');",
+                  "            pm.collectionVariables.set('codingRunAwaitingDecision', 'false');",
+                  "        }",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"{{testGenerationQuestion}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/questions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "{{repositorySessionId}}",
+                "questions"
+              ]
+            },
+            "description": "Starts a Test-Generation Task through the unified session stream. When review accepts the generated patch, the stream ends with `review_result` and the persisted run waits for the owner decision at `awaiting_approval`; the request stores `codingRunId` for the decision and `/runs/*` requests."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coding Run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Coding run state is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.id).to.eql(pm.variables.get('codingRunId'));",
+                  "    pm.expect(response.status).to.be.oneOf(['queued', 'planning', 'retrieving', 'generating', 'awaiting_review', 'reviewing', 'awaiting_approval', 'changes_requested', 'approved', 'succeeded', 'rejected', 'failed']);",
+                  "    pm.expect(response.review_findings).to.be.an('array');",
+                  "    pm.expect(response.disclaimer).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/runs/{{codingRunId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "{{repositorySessionId}}",
+                "runs",
+                "{{codingRunId}}"
+              ]
+            },
+            "description": "Reads the persisted lifecycle, review, diff, and failure state for an owned Coding Run after the stream has closed."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coding Run Patch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Coding run patch is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.coding_run_id).to.eql(pm.variables.get('codingRunId'));",
+                  "    pm.expect(response.diff).to.be.a('string');",
+                  "    pm.expect(response.generated_files).to.be.an('array');",
+                  "    pm.expect(response.external_references).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/runs/{{codingRunId}}/patch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "{{repositorySessionId}}",
+                "runs",
+                "{{codingRunId}}",
+                "patch"
+              ]
+            },
+            "description": "Reads the persisted canonical diff, generated file proposals, and external references for an owned Coding Run."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Coding Run Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is a server-sent event stream', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream');",
+                  "});",
+                  "",
+                  "function readSseEvents() {",
+                  "    return pm.response.text()",
+                  "        .split(/\\r?\\n/)",
+                  "        .filter(line => line.startsWith('data: '))",
+                  "        .map(line => JSON.parse(line.slice(6)));",
+                  "}",
+                  "",
+                  "pm.test('Decision resumes the paused run and emits an approval/rejection terminal event', function () {",
+                  "    const events = readSseEvents();",
+                  "    pm.expect(events).not.to.be.empty;",
+                  "    const terminal = events[events.length - 1];",
+                  "    const expectedTerminal = String(pm.variables.get('approveCodingRun')) === 'true' ? 'run_approved' : 'run_rejected';",
+                  "    pm.expect(terminal.type).to.eql(expectedTerminal);",
+                  "    pm.expect(terminal.coding_run_id).to.eql(pm.variables.get('codingRunId'));",
+                  "    pm.expect(terminal.diff).to.be.a('string');",
+                  "    pm.expect(terminal.disclaimer).to.be.a('string').and.not.empty;",
+                  "    if (terminal.type === 'run_approved') {",
+                  "        pm.expect(terminal.branch).to.be.a('string').and.not.empty;",
+                  "    } else {",
+                  "        pm.expect(terminal.findings).to.be.an('array');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": {\n    \"coding_run_id\": \"{{codingRunId}}\",\n    \"approved\": {{approveCodingRun}},\n    \"feedback\": \"{{decisionFeedback}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/questions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "{{repositorySessionId}}",
+                "questions"
+              ]
+            },
+            "description": "Resumes a paused `awaiting_approval` Coding Run through the same `POST /sessions/{repositorySessionId}/questions` endpoint. Set `approveCodingRun` to `true` to commit and push the generated branch, or `false` to reject and discard the patch."
           },
           "response": []
         },
@@ -670,6 +939,31 @@
     {
       "key": "limit",
       "value": "100",
+      "type": "string"
+    },
+    {
+      "key": "testGenerationQuestion",
+      "value": "Generate focused pytest tests for authentication behavior in this repository.",
+      "type": "string"
+    },
+    {
+      "key": "codingRunId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "approveCodingRun",
+      "value": "false",
+      "type": "string"
+    },
+    {
+      "key": "codingRunAwaitingDecision",
+      "value": "false",
+      "type": "string"
+    },
+    {
+      "key": "decisionFeedback",
+      "value": "Rejecting from Postman to verify the human-in-the-loop resume path.",
       "type": "string"
     }
   ]
