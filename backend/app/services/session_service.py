@@ -8,8 +8,10 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from app.agent.stream import map_graph_stream
 from app.enums.repository import RepositoryStatus
 from app.enums.session import SessionMessageRole
+from app.models.coding_run import CodingRun
 from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
+from app.persistence.coding_run_store import CodingRunStore
 from app.persistence.repository_store import RepositoryStore
 from app.persistence.session_store import RepositorySessionStore
 from app.schemas.agent_stream import AgentStreamEvent, Result
@@ -19,9 +21,10 @@ from app.schemas.session import RepositorySessionCreate
 class RepositorySessionService:
     """Own Repository Session authorization and lifecycle rules."""
 
-    def __init__(self, session_store: RepositorySessionStore, repository_store: RepositoryStore) -> None:
+    def __init__(self, session_store: RepositorySessionStore, repository_store: RepositoryStore, coding_run_store: CodingRunStore | None = None) -> None:
         self.session_store = session_store
         self.repository_store = repository_store
+        self.coding_run_store = coding_run_store
 
     def create_session(self, *, session_in: RepositorySessionCreate, user: User) -> RepositorySession:
         repository = self.repository_store.get_by_id(session_in.repository_id)
@@ -37,6 +40,19 @@ class RepositorySessionService:
     def get_recent_history(self, *, repository_session_id: uuid.UUID, user: User) -> list[SessionHistory]:
         repository_session = self._get_accessible(repository_session_id, user)
         return self.session_store.get_recent_history(repository_session.id)
+
+    def get_owned_run(self, *, repository_session_id: uuid.UUID, coding_run_id: uuid.UUID, user: User) -> CodingRun:
+        """Return a Coding Run the user owns through the named session, else 404.
+
+        Ownership flows through the session: the session must be accessible to the
+        user and the run must belong to that session, so a run cannot be read via a
+        session the caller does not own.
+        """
+        repository_session = self._get_accessible(repository_session_id, user)
+        run = self.coding_run_store.get_by_id(coding_run_id) if self.coding_run_store else None
+        if run is None or run.repository_session_id != repository_session.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Coding Run not found")
+        return run
 
     def record_exchange(
         self, *, repository_session_id: uuid.UUID, user: User, user_message: str, assistant_message: str
@@ -86,6 +102,10 @@ class RepositorySessionService:
         failure = final.get("failure")
         if failure is not None:
             yield failure
+            return
+        review_result = final.get("review_result")
+        if review_result is not None:
+            yield review_result
             return
         patch_result = final.get("patch_result")
         if patch_result is not None:

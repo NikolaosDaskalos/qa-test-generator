@@ -23,10 +23,16 @@ from app.agent.planner import build_plan_node
 from app.agent.repository_question import build_generate_node, build_retrieve_node
 from app.agent.run_recorder import NullRunRecorder
 from app.agent.stream import emit
-from app.agent.test_generation import build_build_patch_node, build_gather_evidence_node, build_generate_tests_node, build_prepare_branch_node
+from app.agent.test_generation import (
+    build_build_patch_node,
+    build_gather_evidence_node,
+    build_generate_tests_node,
+    build_prepare_branch_node,
+    build_review_patch_node,
+)
 from app.agent.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStatus
-from app.schemas.agent_stream import Citation, PatchResult, RunFailure, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunFailure, RunStarted, Stage
 from app.schemas.research_intent import ResearchIntent
 
 Intent = Literal["repository_question", "test_generation"]
@@ -63,7 +69,9 @@ class GraphState(TypedDict, total=False):
     generation_branch: str
     generated_files: list
     external_references: list
+    diff: str
     patch_result: PatchResult
+    review_result: ReviewResult
     failure: RunFailure
     trace: Annotated[list[str], operator.add]
 
@@ -139,7 +147,7 @@ def _default_workspace_factory(checkout_root):
     return LocalGitWorkspace(checkout_root)
 
 
-def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, run_recorder=None, workspace_factory=None, checkpointer=None):
+def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, reviewer, run_recorder=None, workspace_factory=None, checkpointer=None):
     """Compile the unified intent-routed graph.
 
     ``checkpointer`` is the durable graph-state store. Production passes the
@@ -159,6 +167,7 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, run_r
     graph.add_node("prepare_branch", build_prepare_branch_node(workspaces, recorder))
     graph.add_node("generate_tests", build_generate_tests_node(generator))
     graph.add_node("build_patch", build_build_patch_node(workspaces, recorder))
+    graph.add_node("review_patch", build_review_patch_node(reviewer, recorder))
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("retrieve", build_retrieve_node(retriever))
     graph.add_node("generate", build_generate_node(llm))
@@ -171,7 +180,8 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, run_r
     graph.add_edge("gather_evidence", "prepare_branch")
     graph.add_conditional_edges("prepare_branch", _route_if_failed, {"failed": "fail_run", "ok": "generate_tests"})
     graph.add_conditional_edges("generate_tests", _route_if_failed, {"failed": "fail_run", "ok": "build_patch"})
-    graph.add_conditional_edges("build_patch", _route_if_failed, {"failed": "fail_run", "ok": END})
+    graph.add_conditional_edges("build_patch", _route_if_failed, {"failed": "fail_run", "ok": "review_patch"})
+    graph.add_conditional_edges("review_patch", _route_if_failed, {"failed": "fail_run", "ok": END})
     graph.add_edge("fail_run", END)
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)

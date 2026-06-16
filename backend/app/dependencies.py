@@ -13,6 +13,7 @@ from sqlmodel import Session
 
 from app.agent.generator import ReActTestGenerator
 from app.agent.graph import build_graph
+from app.agent.reviewer import ReActPatchReviewer
 from app.agent.run_recorder import CodingRunRecorder
 from app.core import security
 from app.core.config import settings
@@ -84,10 +85,18 @@ def get_repository_session_store(session: SessionDep) -> RepositorySessionStore:
 RepositorySessionStoreDep = Annotated[RepositorySessionStore, Depends(get_repository_session_store)]
 
 
+def get_coding_run_store(session: SessionDep) -> CodingRunStore:
+    """Build the PostgreSQL store for Coding Run records."""
+    return CodingRunStore(session)
+
+
+CodingRunStoreDep = Annotated[CodingRunStore, Depends(get_coding_run_store)]
+
+
 def get_repository_session_service(
-    session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep
+    session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep, coding_run_store: CodingRunStoreDep
 ) -> RepositorySessionService:
-    return RepositorySessionService(session_store, repository_store)
+    return RepositorySessionService(session_store, repository_store, coding_run_store)
 
 
 RepositorySessionServiceDep = Annotated[RepositorySessionService, Depends(get_repository_session_service)]
@@ -144,14 +153,6 @@ def get_rag_pipeline(
 RAGPipelineDep = Annotated[RAGPipeline, Depends(get_rag_pipeline)]
 
 
-def get_coding_run_store(session: SessionDep) -> CodingRunStore:
-    """Build the PostgreSQL store for Coding Run records."""
-    return CodingRunStore(session)
-
-
-CodingRunStoreDep = Annotated[CodingRunStore, Depends(get_coding_run_store)]
-
-
 def get_session_graph(request: Request, rag_pipeline: RAGPipelineDep, coding_run_store: CodingRunStoreDep):
     """Compile the unified intent-routed graph for one request.
 
@@ -167,6 +168,7 @@ def get_session_graph(request: Request, rag_pipeline: RAGPipelineDep, coding_run
         llm=rag_pipeline.llm,
         planner_llm=rag_pipeline.llm,
         generator=ReActTestGenerator(rag_pipeline.llm),
+        reviewer=ReActPatchReviewer(rag_pipeline.llm),
         run_recorder=CodingRunRecorder(coding_run_store),
         checkpointer=request.app.state.session_checkpointer,
     )

@@ -9,17 +9,21 @@ from fastapi.testclient import TestClient
 
 from app.api.routes.sessions import router
 from app.dependencies import get_current_user, get_repository_session_service, get_session_graph
+from app.enums.coding_run import CodingRunStage, CodingRunStatus
 from app.enums.session import SessionMessageRole
+from app.models.coding_run import CodingRun
 from app.models.session import RepositorySession, SessionHistory
 from app.schemas.agent_stream import Citation, Result, Stage, Token
 
 
 class FakeRepositorySessionService:
-    def __init__(self, repository_session: RepositorySession, history: list[SessionHistory] | None = None) -> None:
+    def __init__(self, repository_session: RepositorySession, history: list[SessionHistory] | None = None, run: CodingRun | None = None) -> None:
         self.repository_session = repository_session
         self.history = history or []
+        self.run = run
         self.create_calls = []
         self.history_calls = []
+        self.run_calls = []
 
     def create_session(self, **kwargs) -> RepositorySession:
         self.create_calls.append(kwargs)
@@ -28,6 +32,12 @@ class FakeRepositorySessionService:
     def get_recent_history(self, **kwargs) -> list[SessionHistory]:
         self.history_calls.append(kwargs)
         return self.history
+
+    def get_owned_run(self, **kwargs) -> CodingRun:
+        self.run_calls.append(kwargs)
+        if self.run is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Coding Run not found")
+        return self.run
 
 
 def test_owner_can_create_repository_session_for_ready_repository() -> None:
@@ -227,3 +237,111 @@ def test_question_enforces_session_ownership() -> None:
         response = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"question": "q"})
 
     assert response.status_code == 403
+
+
+def _lookup_app(service, *, user):
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+    app.dependency_overrides[get_current_user] = lambda: user
+    return app
+
+
+def test_owner_can_read_coding_run_state_and_findings() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    run = CodingRun(
+        repository_session_id=session_id,
+        thread_id="t-1",
+        status=CodingRunStatus.changes_requested,
+        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+        review_findings=[{"category": "coverage", "detail": "missing unhappy-path test"}],
+    )
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, owner_id=user.id, repository_id=uuid.uuid4()), run=run)
+    app = _lookup_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{session_id}/runs/{run.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "changes_requested"
+    assert body["diff"].startswith("diff --git")
+    assert body["review_findings"] == [{"category": "coverage", "detail": "missing unhappy-path test"}]
+    # User-visible output states tests were not executed and runtime correctness was not verified.
+    assert "not executed" in body["disclaimer"].lower()
+    call = service.run_calls[0]
+    assert call["repository_session_id"] == session_id
+    assert call["coding_run_id"] == run.id
+    assert call["user"] is user
+
+
+def test_run_lookup_exposes_failure_information() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    run = CodingRun(
+        repository_session_id=session_id,
+        thread_id="t-2",
+        status=CodingRunStatus.failed,
+        failed_stage=CodingRunStage.generating,
+        failure_reason="The test generator could not produce a valid proposal.",
+    )
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, owner_id=user.id, repository_id=uuid.uuid4()), run=run)
+    app = _lookup_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{session_id}/runs/{run.id}")
+
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["failed_stage"] == "generating"
+    assert "valid proposal" in body["failure_reason"]
+
+
+def test_owner_can_read_coding_run_patch_content() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    run = CodingRun(
+        repository_session_id=session_id,
+        thread_id="t-3",
+        status=CodingRunStatus.awaiting_approval,
+        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+        generated_files=[{"path": "tests/test_x.py", "content": "def test_x(): ..."}],
+        external_references=[{"url": "https://docs.pytest.org", "title": "pytest"}],
+    )
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, owner_id=user.id, repository_id=uuid.uuid4()), run=run)
+    app = _lookup_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{session_id}/runs/{run.id}/patch")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["diff"].startswith("diff --git")
+    assert body["generated_files"] == [{"path": "tests/test_x.py", "content": "def test_x(): ..."}]
+    assert body["external_references"] == [{"url": "https://docs.pytest.org", "title": "pytest"}]
+
+
+def test_run_lookup_returns_404_for_a_run_not_owned_through_the_session() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, owner_id=user.id, repository_id=uuid.uuid4()), run=None)
+    app = _lookup_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{session_id}/runs/{uuid.uuid4()}")
+
+    assert response.status_code == 404
+
+
+def test_run_lookup_requires_authentication() -> None:
+    service = FakeRepositorySessionService(RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4()))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{uuid.uuid4()}/runs/{uuid.uuid4()}")
+
+    assert response.status_code == 401
+    assert service.run_calls == []

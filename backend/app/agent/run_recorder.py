@@ -12,6 +12,7 @@ from typing import Protocol
 from app.enums.coding_run import CodingRunStage, CodingRunStatus
 from app.persistence.coding_run_store import CodingRunStore
 from app.schemas.generation import ExternalReference, GeneratedFile
+from app.schemas.review import ReviewFinding
 
 
 class RunRecorder(Protocol):
@@ -36,6 +37,9 @@ class RunRecorder(Protocol):
         external_references: list[ExternalReference],
     ) -> None:
         """Persist the generated Test Patch and advance the run to awaiting review."""
+
+    def record_review(self, coding_run_id: uuid.UUID, *, accepted: bool, findings: list[ReviewFinding]) -> None:
+        """Persist Patch Review findings and advance the run to awaiting approval or changes requested."""
 
 
 class CodingRunRecorder:
@@ -77,6 +81,11 @@ class CodingRunRecorder:
                 external_references=[reference.model_dump() for reference in external_references],
             )
 
+    def record_review(self, coding_run_id: uuid.UUID, *, accepted: bool, findings: list[ReviewFinding]) -> None:
+        run = self.store.get_by_id(coding_run_id)
+        if run is not None:
+            self.store.record_review(run, accepted=accepted, review_findings=[finding.model_dump() for finding in findings])
+
 
 class NullRunRecorder:
     """A no-op recorder for graph paths exercised without persistence."""
@@ -99,4 +108,7 @@ class NullRunRecorder:
         generated_files: list[GeneratedFile],
         external_references: list[ExternalReference],
     ) -> None:
+        return None
+
+    def record_review(self, coding_run_id: uuid.UUID, *, accepted: bool, findings: list[ReviewFinding]) -> None:
         return None

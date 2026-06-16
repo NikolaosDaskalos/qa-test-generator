@@ -14,6 +14,7 @@ from app.models.session import RepositorySession
 from app.models.user import User
 from app.persistence.coding_run_store import CodingRunStore
 from app.schemas.generation import ExternalReference, GeneratedFile
+from app.schemas.review import ReviewFinding
 
 
 def _engine():
@@ -78,3 +79,33 @@ def test_recorder_completes_a_run_with_the_serialized_patch() -> None:
         assert completed.generation_branch == "qa-tests/xyz"
         assert completed.generated_files == [{"path": "tests/test_x.py", "content": "def test_x(): ..."}]
         assert completed.external_references == [{"url": "https://docs.pytest.org", "title": "pytest"}]
+
+
+def test_recorder_records_an_accepted_review_through_the_store() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        recorder = CodingRunRecorder(store)
+        run_id = recorder.start(thread_id="t-review", repository_session_id=session_id)
+
+        recorder.record_review(run_id, accepted=True, findings=[ReviewFinding(category="conventions", detail="matches existing tests")])
+
+        reviewed = store.get_by_id(run_id)
+        assert reviewed.status == CodingRunStatus.awaiting_approval
+        assert reviewed.review_findings == [{"category": "conventions", "detail": "matches existing tests"}]
+
+
+def test_recorder_records_a_rejected_review_as_changes_requested() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        recorder = CodingRunRecorder(store)
+        run_id = recorder.start(thread_id="t-review-no", repository_session_id=session_id)
+
+        recorder.record_review(run_id, accepted=False, findings=[ReviewFinding(category="imports", detail="unknown import")])
+
+        reviewed = store.get_by_id(run_id)
+        assert reviewed.status == CodingRunStatus.changes_requested
+        assert reviewed.review_findings == [{"category": "imports", "detail": "unknown import"}]

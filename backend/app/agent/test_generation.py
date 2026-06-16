@@ -16,7 +16,8 @@ from app.agent.stream import emit
 from app.agent.test_files import RejectedTestFile, discover_test_roots, validate_test_file
 from app.core.config import settings
 from app.enums.coding_run import CodingRunStatus
-from app.schemas.agent_stream import PatchResult, RunFailure, Stage
+from app.schemas.agent_stream import PatchResult, ReviewResult, RunFailure, Stage
+from app.schemas.review import ReviewFinding
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 BRANCH_PREPARATION_FAILED = "Could not prepare a clean branch to generate tests on."
 GENERATION_FAILED = "The test generator could not produce a valid proposal."
 PATCH_DERIVATION_FAILED = "Could not write the generated tests or derive the patch."
+# User-safe reason for a reviewing-stage failure; never raw exception text.
+REVIEW_FAILED = "The patch reviewer could not complete its assessment."
 
 
 def build_gather_evidence_node(retriever):
@@ -147,9 +150,77 @@ def build_build_patch_node(workspace_factory, recorder):
             external_references=external_references,
         )
         patch_result = PatchResult(coding_run_id=coding_run_id, diff=diff, generated_files=validated, external_references=external_references)
-        return {"patch_result": patch_result, "trace": ["build_patch"]}
+        return {"patch_result": patch_result, "diff": diff, "generated_files": validated, "trace": ["build_patch"]}
 
     return build_patch
+
+
+def build_review_patch_node(reviewer, recorder):
+    """Build the node that statically reviews a generated Test Patch before approval.
+
+    Review is evidence-based static assessment only: the reviewer never executes
+    the generated tests, installs dependencies, or implies runtime correctness. The
+    backend independently re-verifies the Test File boundary, so a patch that
+    escapes Test-File scope is rejected even when the reviewer accepts it. The
+    decision is persisted (accepted → awaiting approval, rejected → changes
+    requested) and surfaced as a ``ReviewResult`` carrying the findings and the
+    assessed diff.
+    """
+
+    def review_patch(state) -> dict:
+        coding_run_id = state.get("coding_run_id")
+        recorder.advance(coding_run_id, CodingRunStatus.reviewing)
+        emit(Stage(stage="reviewing"))
+        diff = state.get("diff") or ""
+        generated_files = state.get("generated_files") or []
+
+        # The reviewer is an LLM/tool loop: a failure in its model call, structured
+        # response parsing, or web_search loop is a reviewing-stage Run Failure, not
+        # an escaping exception that would leave the run stuck in ``reviewing``.
+        try:
+            review = reviewer.review(
+                task=state["question"],
+                source_evidence=state.get("source_evidence") or [],
+                test_evidence=state.get("test_evidence") or [],
+                generated_files=generated_files,
+                diff=diff,
+            )
+        except Exception:
+            logger.exception("Patch review failed")
+            return {"failure": RunFailure(failed_stage="reviewing", reason=REVIEW_FAILED), "trace": ["review_patch"]}
+        accepted = bool(review.accepted)
+        findings = list(review.findings)
+
+        # The reviewer's acceptance is never the sole gate: the backend independently
+        # re-verifies that every proposal stays within the Test File boundary.
+        boundary_finding = _verify_test_file_boundary(state.get("checkout_root"), generated_files)
+        if boundary_finding is not None:
+            accepted = False
+            findings = [*findings, boundary_finding]
+
+        recorder.record_review(coding_run_id, accepted=accepted, findings=findings)
+        review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, findings=findings, diff=diff)
+        return {"review_result": review_result, "trace": ["review_patch"]}
+
+    return review_patch
+
+
+def _verify_test_file_boundary(checkout_root, generated_files) -> ReviewFinding | None:
+    """Independently re-assert the Test File boundary over the proposed files.
+
+    Returns a ``scope`` finding for the first proposal that escapes Test-File
+    scope, or ``None`` when every proposal is within bounds.
+    """
+    if not checkout_root:
+        return None
+    root = Path(checkout_root)
+    test_roots = discover_test_roots(root)
+    for file in generated_files:
+        try:
+            validate_test_file(root, file.path, test_roots)
+        except RejectedTestFile as rejection:
+            return ReviewFinding(category="scope", detail=rejection.reason)
+    return None
 
 
 def _dedupe(paths: list[str]) -> list[str]:

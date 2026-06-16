@@ -60,3 +60,11 @@ class CodingRunStore:
         self.session.commit()
         self.session.refresh(coding_run)
         return coding_run
+
+    def record_review(self, coding_run: CodingRun, *, accepted: bool, review_findings: list) -> CodingRun:
+        coding_run.status = CodingRunStatus.awaiting_approval if accepted else CodingRunStatus.changes_requested
+        coding_run.review_findings = review_findings
+        self.session.add(coding_run)
+        self.session.commit()
+        self.session.refresh(coding_run)
+        return coding_run

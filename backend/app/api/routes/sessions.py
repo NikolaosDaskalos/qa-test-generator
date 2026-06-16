@@ -9,7 +9,15 @@ from fastapi.responses import StreamingResponse
 from app.dependencies import CurrentUser, RepositorySessionServiceDep, SessionGraphDep
 from app.models.session import RepositorySession
 from app.schemas.agent_stream import AgentStreamEvent
-from app.schemas.session import RepositoryQuestionRequest, RepositorySessionCreate, RepositorySessionPublic, SessionHistoriesPublic, SessionHistoryPublic
+from app.schemas.session import (
+    CodingRunPublic,
+    RepositoryQuestionRequest,
+    RepositorySessionCreate,
+    RepositorySessionPublic,
+    RunPatchPublic,
+    SessionHistoriesPublic,
+    SessionHistoryPublic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +62,40 @@ def read_repository_session_history(
 ) -> SessionHistoriesPublic:
     history = repository_session_service.get_recent_history(repository_session_id=repository_session_id, user=current_user)
     return SessionHistoriesPublic(data=[SessionHistoryPublic.model_validate(message) for message in history])
+
+@router.get("/{repository_session_id}/runs/{coding_run_id}", response_model=CodingRunPublic)
+def read_coding_run(
+    *, repository_session_service: RepositorySessionServiceDep, current_user: CurrentUser, repository_session_id: uuid.UUID, coding_run_id: uuid.UUID
+) -> CodingRunPublic:
+    """Read an owned Coding Run's persisted state, review findings, and failure information.
+
+    Serves the durable record after the ephemeral Agent Stream has closed, so a
+    client that reloads or reconnects can recover the run's outcome.
+    """
+    run = repository_session_service.get_owned_run(repository_session_id=repository_session_id, coding_run_id=coding_run_id, user=current_user)
+    return CodingRunPublic(
+        id=run.id,
+        status=run.status,
+        failed_stage=run.failed_stage,
+        failure_reason=run.failure_reason,
+        review_findings=run.review_findings or [],
+        diff=run.diff,
+    )
+
+
+@router.get("/{repository_session_id}/runs/{coding_run_id}/patch", response_model=RunPatchPublic)
+def read_coding_run_patch(
+    *, repository_session_service: RepositorySessionServiceDep, current_user: CurrentUser, repository_session_id: uuid.UUID, coding_run_id: uuid.UUID
+) -> RunPatchPublic:
+    """Read an owned Coding Run's persisted Test Patch content (canonical diff and proposals)."""
+    run = repository_session_service.get_owned_run(repository_session_id=repository_session_id, coding_run_id=coding_run_id, user=current_user)
+    return RunPatchPublic(
+        coding_run_id=run.id,
+        diff=run.diff or "",
+        generated_files=run.generated_files or [],
+        external_references=run.external_references or [],
+    )
+
 
 def _to_sse(events: Iterable[AgentStreamEvent]) -> Generator[str, None, None]:
     """Serialize typed Agent Stream events as server-sent event frames.

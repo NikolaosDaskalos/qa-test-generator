@@ -3,8 +3,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.enums.coding_run import CodingRunStage, CodingRunStatus
 from app.enums.session import SessionMessageRole
-from app.schemas.agent_stream import Citation
+from app.schemas.agent_stream import REVIEW_DISCLAIMER, Citation
+from app.schemas.generation import ExternalReference, GeneratedFile
+from app.schemas.review import ReviewFinding
 
 
 class RepositorySessionCreate(BaseModel):
@@ -41,3 +44,28 @@ class SessionHistoryPublic(BaseModel):
 
 class SessionHistoriesPublic(BaseModel):
     data: list[SessionHistoryPublic]
+
+
+class CodingRunPublic(BaseModel):
+    """Post-stream read of a Coding Run's persisted lifecycle, review, and failure state.
+
+    ``disclaimer`` restates that the generated tests were not executed and their
+    runtime correctness was not verified — the Patch Review was static only.
+    """
+
+    id: uuid.UUID
+    status: CodingRunStatus
+    failed_stage: CodingRunStage | None = None
+    failure_reason: str | None = None
+    review_findings: list[ReviewFinding] = Field(default_factory=list)
+    diff: str | None = None
+    disclaimer: str = REVIEW_DISCLAIMER
+
+
+class RunPatchPublic(BaseModel):
+    """Post-stream read of a Coding Run's persisted Test Patch content."""
+
+    coding_run_id: uuid.UUID
+    diff: str
+    generated_files: list[GeneratedFile] = Field(default_factory=list)
+    external_references: list[ExternalReference] = Field(default_factory=list)

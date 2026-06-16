@@ -110,3 +110,31 @@ def test_complete_persists_the_patch_and_advances_to_awaiting_review() -> None:
         assert reloaded.diff.startswith("diff --git")
         assert reloaded.generated_files == [{"path": "tests/test_x.py", "content": "def test_x(): ..."}]
         assert reloaded.external_references == [{"url": "https://docs.pytest.org", "title": "pytest"}]
+
+
+def test_record_review_accepted_advances_to_awaiting_approval_and_persists_findings() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        run = store.create(repository_session_id=session_id, thread_id="thread-review-ok")
+
+        store.record_review(run, accepted=True, review_findings=[{"category": "readability", "detail": "clear and idiomatic"}])
+
+        reloaded = store.get_by_id(run.id)
+        assert reloaded.status == CodingRunStatus.awaiting_approval
+        assert reloaded.review_findings == [{"category": "readability", "detail": "clear and idiomatic"}]
+
+
+def test_record_review_rejected_advances_to_changes_requested() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        run = store.create(repository_session_id=session_id, thread_id="thread-review-no")
+
+        store.record_review(run, accepted=False, review_findings=[{"category": "coverage", "detail": "missing unhappy-path test"}])
+
+        reloaded = store.get_by_id(run.id)
+        assert reloaded.status == CodingRunStatus.changes_requested
+        assert reloaded.review_findings == [{"category": "coverage", "detail": "missing unhappy-path test"}]

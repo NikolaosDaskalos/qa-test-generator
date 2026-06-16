@@ -17,6 +17,11 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.schemas.generation import ExternalReference, GeneratedFile
+from app.schemas.review import ReviewFinding
+
+# User-safe disclaimer carried on every review outcome: Patch Review is a static,
+# evidence-based assessment that never runs the generated tests.
+REVIEW_DISCLAIMER = "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."
 
 
 class Citation(BaseModel):
@@ -29,7 +34,7 @@ class Stage(BaseModel):
     """Ordered progress marker for a Repository question or Test-Generation Task."""
 
     type: Literal["stage"] = "stage"
-    stage: Literal["classifying", "planning", "retrieving", "researching", "generating"]
+    stage: Literal["classifying", "planning", "retrieving", "researching", "generating", "reviewing"]
 
 
 class Token(BaseModel):
@@ -79,7 +84,7 @@ class RunFailure(BaseModel):
 
     type: Literal["run_failure"] = "run_failure"
     coding_run_id: uuid.UUID | None = None
-    failed_stage: Literal["planning", "retrieving", "generating"]
+    failed_stage: Literal["planning", "retrieving", "generating", "reviewing"]
     reason: str
 
 
@@ -98,4 +103,21 @@ class PatchResult(BaseModel):
     external_references: list[ExternalReference]
 
 
-AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure | PatchResult
+class ReviewResult(BaseModel):
+    """The terminal event for a Test-Generation Task that completed Patch Review.
+
+    A review is a deliberate accept/reject decision, not an error: ``accepted``
+    carries the verdict, ``findings`` the human-readable observations behind it,
+    and ``diff`` the assessed canonical Test Patch. ``disclaimer`` states that the
+    tests were not executed and runtime correctness was not verified.
+    """
+
+    type: Literal["review_result"] = "review_result"
+    coding_run_id: uuid.UUID
+    accepted: bool
+    findings: list[ReviewFinding]
+    diff: str
+    disclaimer: str = REVIEW_DISCLAIMER
+
+
+AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure | PatchResult | ReviewResult

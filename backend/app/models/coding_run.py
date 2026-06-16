@@ -40,6 +40,8 @@ class CodingRun(SQLModel, table=True):
     # consulted while writing them, kept separate from Repository Evidence.
     generated_files: list | None = Field(default=None, sa_column=Column(JSON))
     external_references: list | None = Field(default=None, sa_column=Column(JSON))
+    # The Patch Review findings ({category, detail}) recorded for the latest review.
+    review_findings: list | None = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), sa_type=DateTime(timezone=True))  # type: ignore
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

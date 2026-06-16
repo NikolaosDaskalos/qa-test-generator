@@ -9,11 +9,13 @@ import uuid
 from app.agent.graph import Classification, build_graph
 from app.agent.planner import PlannerOutput
 from app.agent.repository_question import INSUFFICIENT_EVIDENCE_ANSWER
+from app.agent.test_generation import build_review_patch_node
 from app.enums.coding_run import CodingRunStatus
 from app.models.source_document import SourceDocument
-from app.schemas.agent_stream import Citation, PatchResult, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunStarted, Stage
 from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 from app.schemas.research_intent import ResearchIntent
+from app.schemas.review import PatchReview, ReviewFinding
 
 
 class FakeClassifierLLM:
@@ -118,6 +120,9 @@ class RecordingRecorder:
     def complete(self, coding_run_id, *, branch, diff, generated_files, external_references):
         self.events.append(("complete", coding_run_id, branch, diff, generated_files, external_references))
 
+    def record_review(self, coding_run_id, *, accepted, findings):
+        self.events.append(("record_review", coding_run_id, accepted, findings))
+
 
 class FakeGenerator:
     """A ``TestGenerator`` returning a fixed proposal and recording its inputs."""
@@ -136,6 +141,27 @@ class RaisingGenerator:
 
     def generate(self, *, task, source_evidence, test_evidence):
         raise RuntimeError("model unavailable")
+
+
+class FakeReviewer:
+    """A ``PatchReviewer`` returning a fixed decision and recording its inputs."""
+
+    def __init__(self, review: PatchReview | None = None) -> None:
+        self.review_decision = review if review is not None else PatchReview(accepted=True, findings=[])
+        self.calls = []
+
+    def review(self, *, task, source_evidence, test_evidence, generated_files, diff):
+        self.calls.append(
+            {"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence, "generated_files": generated_files, "diff": diff}
+        )
+        return self.review_decision
+
+
+class RaisingReviewer:
+    """A ``PatchReviewer`` whose model/tool loop fails to produce a decision."""
+
+    def review(self, *, task, source_evidence, test_evidence, generated_files, diff):
+        raise RuntimeError("reviewer model unavailable")
 
 
 class FakeWorkspace:
@@ -170,13 +196,14 @@ def _config(thread_id: str = "t1") -> dict:
     return {"configurable": {"thread_id": thread_id}}
 
 
-def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, recorder=None, generator=None, workspace=None):
+def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, recorder=None, generator=None, workspace=None, reviewer=None):
     return build_graph(
         classifier_llm=classifier_llm,
         retriever=retriever if retriever is not None else FakeRetriever(),
         llm=llm if llm is not None else FakeGeneratorLLM(),
         planner_llm=planner_llm if planner_llm is not None else FakePlannerLLM(PlannerOutput(in_scope=True, intents=[])),
         generator=generator if generator is not None else FakeGenerator(),
+        reviewer=reviewer if reviewer is not None else FakeReviewer(),
         run_recorder=recorder,
         workspace_factory=_workspace_factory(workspace),
     )
@@ -397,12 +424,14 @@ def test_test_generation_persists_a_queued_run_and_advances_through_generation()
         config=_config("run-thread"),
     )
 
-    assert [event[0] for event in recorder.events] == ["start", "advance", "advance", "advance", "complete"]
+    assert [event[0] for event in recorder.events] == ["start", "advance", "advance", "advance", "complete", "advance", "record_review"]
     assert recorder.events[0] == ("start", "run-thread", session_id)
     assert recorder.events[1][2] == CodingRunStatus.planning
     assert recorder.events[2][2] == CodingRunStatus.retrieving
     assert recorder.events[3][2] == CodingRunStatus.generating
     assert recorder.events[4][1] == recorder.run_id
+    assert recorder.events[5][2] == CodingRunStatus.reviewing
+    assert recorder.events[6][0] == "record_review"
     assert final["coding_run_id"] == recorder.run_id
 
 
@@ -427,9 +456,16 @@ def test_test_generation_marks_failure_at_planning_when_out_of_scope() -> None:
 # ── test_generation branch: generation & patch ────────────────────
 
 
-def _generation_graph(*, generator, recorder=None, workspace=None):
+def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None):
     planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
-    return _build(FakeClassifierLLM("test_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output), generator=generator, workspace=workspace)
+    return _build(
+        FakeClassifierLLM("test_generation"),
+        recorder=recorder,
+        planner_llm=FakePlannerLLM(planner_output),
+        generator=generator,
+        workspace=workspace,
+        reviewer=reviewer,
+    )
 
 
 def test_generator_receives_partitioned_evidence_and_emits_structured_files() -> None:
@@ -571,6 +607,173 @@ def test_generation_failure_is_a_generating_run_failure() -> None:
     assert final.get("patch_result") is None
 
 
+# ── test_generation branch: patch review ──────────────────────────
+
+
+def _reviewed_graph(*, reviewer, recorder=None, files=None, diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"):
+    files = files if files is not None else [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
+    generator = FakeGenerator(GenerationProposal(generated_files=files))
+    return _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=diff), reviewer=reviewer)
+
+
+def test_accepted_review_advances_to_awaiting_approval_and_emits_review_result(tmp_path) -> None:
+    """An accepted first review records an accepted review and emits a ReviewResult carrying the final diff."""
+    (tmp_path / "tests").mkdir()  # an existing test root so the proposal validates
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
+    diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ..."
+    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder, diff=diff)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    review = final["review_result"]
+    assert isinstance(review, ReviewResult)
+    assert review.accepted is True
+    assert review.coding_run_id == recorder.run_id
+    assert review.diff == diff
+    # User-visible output states tests were not executed and runtime correctness was not verified.
+    assert "not executed" in review.disclaimer.lower()
+    # The run advanced into reviewing and recorded an accepted review decision.
+    assert ("advance", recorder.run_id, CodingRunStatus.reviewing) in recorder.events
+    record = next(event for event in recorder.events if event[0] == "record_review")
+    assert record[2] is True
+
+
+def test_reviewer_receives_the_task_partitioned_evidence_proposals_and_diff(tmp_path) -> None:
+    """Review is invoked with the task, Repository Evidence (source/test), the proposals, and the canonical diff."""
+    (tmp_path / "tests").mkdir()
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever(
+        {
+            "auth implementation": [_source(repository_id, "app/auth.py", "impl")],
+            "auth tests": [_source(repository_id, "tests/test_auth.py", "existing test")],
+        }
+    )
+    planner_output = PlannerOutput(
+        in_scope=True,
+        intents=[
+            ResearchIntent(target="source", description="auth implementation"),
+            ResearchIntent(target="test", description="auth tests"),
+        ],
+    )
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
+    files = [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
+    generator = FakeGenerator(GenerationProposal(generated_files=files))
+    diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py"
+    graph = _build(
+        FakeClassifierLLM("test_generation"),
+        retriever=retriever,
+        planner_llm=FakePlannerLLM(planner_output),
+        generator=generator,
+        workspace=FakeWorkspace(diff=diff),
+        reviewer=reviewer,
+    )
+
+    graph.invoke(
+        {"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    call = reviewer.calls[0]
+    assert call["task"] == "add tests for auth"
+    assert [doc.doc_metadata["source"] for doc in call["source_evidence"]] == ["app/auth.py"]
+    assert [doc.doc_metadata["source"] for doc in call["test_evidence"]] == ["tests/test_auth.py"]
+    assert [file.path for file in call["generated_files"]] == ["tests/test_auth.py"]
+    assert call["diff"] == diff
+
+
+def test_rejected_review_records_a_rejection_with_findings(tmp_path) -> None:
+    """A rejected review surfaces its findings on the ReviewResult and records a rejection, not a failure."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    findings = [ReviewFinding(category="imports", detail="imports a helper not visible in Repository Evidence")]
+    reviewer = FakeReviewer(PatchReview(accepted=False, findings=findings))
+    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    review = final["review_result"]
+    assert review.accepted is False
+    assert [finding.category for finding in review.findings] == ["imports"]
+    # A rejection is a deliberate outcome recorded as a review, never a RunFailure.
+    assert final.get("failure") is None
+    record = next(event for event in recorder.events if event[0] == "record_review")
+    assert record[2] is False
+    assert [finding.category for finding in record[3]] == ["imports"]
+
+
+def test_review_rejects_a_patch_with_changes_unrelated_to_the_task(tmp_path) -> None:
+    """The reviewer rejects a patch that introduces changes unrelated to the Test-Generation Task."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    findings = [ReviewFinding(category="scope", detail="adds an unrelated test unrelated to the requested task")]
+    reviewer = FakeReviewer(PatchReview(accepted=False, findings=findings))
+    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    review = final["review_result"]
+    assert review.accepted is False
+    assert any("unrelated" in finding.detail for finding in review.findings)
+    record = next(event for event in recorder.events if event[0] == "record_review")
+    assert record[2] is False
+
+
+def test_backend_independently_rejects_out_of_scope_files_even_when_reviewer_accepts(tmp_path) -> None:
+    """The reviewer's acceptance is not the sole gate: a non-Test File is rejected by the backend's own check."""
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "auth.py").write_text("real application code")
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
+    node = build_review_patch_node(reviewer, recorder)
+    state = {
+        "coding_run_id": recorder.run_id,
+        "question": "add tests",
+        "checkout_root": str(tmp_path),
+        "diff": "diff --git a/app/auth.py b/app/auth.py",
+        "generated_files": [GeneratedFile(path="app/auth.py", content="malicious")],
+    }
+
+    result = node(state)
+
+    review = result["review_result"]
+    assert review.accepted is False
+    assert any(finding.category == "scope" for finding in review.findings)
+    record = next(event for event in recorder.events if event[0] == "record_review")
+    assert record[2] is False
+
+
+def test_reviewer_failure_is_a_reviewing_run_failure(tmp_path) -> None:
+    """A reviewer that raises records a reviewing-stage failure instead of leaving the run stuck."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    graph = _reviewed_graph(reviewer=RaisingReviewer(), recorder=recorder)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=_config(),
+    )
+
+    assert final["failure"].failed_stage == "reviewing"
+    assert final["failure"].coding_run_id == recorder.run_id
+    assert final.get("review_result") is None
+    # The run advanced into reviewing and then recorded the failure; it is never left without one.
+    assert ("advance", recorder.run_id, CodingRunStatus.reviewing) in recorder.events
+    fail = next(event for event in recorder.events if event[0] == "fail")
+    assert fail[2] == "reviewing"
+    # A reviewer crash is sanitized, never leaking raw exception text.
+    assert "unavailable" not in final["failure"].reason
+
+
 # ── Agent Stream ordering (custom mode) ───────────────────────────
 
 
@@ -587,7 +790,7 @@ def test_test_generation_stream_emits_ordered_stage_and_run_markers() -> None:
 
     events = _custom_events(graph, {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": "/unused"})
 
-    assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "planning", "retrieving", "generating"]
+    assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "planning", "retrieving", "generating", "reviewing"]
     run_markers = [event for event in events if isinstance(event, RunStarted)]
     assert len(run_markers) == 1
     assert run_markers[0].coding_run_id == recorder.run_id

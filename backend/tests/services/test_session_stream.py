@@ -6,11 +6,14 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+from app.enums.coding_run import CodingRunStatus
+from app.models.coding_run import CodingRun
 from app.models.repository import Repository
 from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
-from app.schemas.agent_stream import Citation, PatchResult, Result, RunFailure, Stage, Token
+from app.schemas.agent_stream import Citation, PatchResult, Result, ReviewResult, RunFailure, Stage, Token
 from app.schemas.generation import ExternalReference, GeneratedFile
+from app.schemas.review import ReviewFinding
 from app.services.session_service import RepositorySessionService
 
 
@@ -143,6 +146,31 @@ def test_stream_session_emits_patch_result_terminal_for_a_generated_patch():
     assert session_store.appended == []
 
 
+def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    run_id = uuid.uuid4()
+    review = ReviewResult(
+        coding_run_id=run_id,
+        accepted=True,
+        findings=[ReviewFinding(category="coverage", detail="covers happy and unhappy paths")],
+        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+    )
+    items = [("custom", Stage(stage="reviewing"))]
+    final = {"intent": "test_generation", "review_result": review}
+    graph = FakeGraph(items, final)
+
+    events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-rev"))
+
+    terminal = events[-1]
+    assert isinstance(terminal, ReviewResult)
+    assert terminal.coding_run_id == run_id
+    assert terminal.accepted is True
+    assert "not executed" in terminal.disclaimer.lower()
+    # A reviewed patch is reported, not persisted as a session answer exchange.
+    assert session_store.appended == []
+
+
 def test_stream_session_passes_the_indexed_commit_to_the_graph():
     user = _user()
     service, _store, repository_session = _wiring(user, indexed_commit_sha="a" * 40)
@@ -161,5 +189,49 @@ def test_stream_session_rejects_a_session_owned_by_another_user():
 
     with pytest.raises(HTTPException) as exc:
         list(service.stream_session(repository_session_id=repository_session.id, user=other, question="q", graph=FakeGraph([], {}), thread_id="t"))
+
+    assert exc.value.status_code == 403
+
+
+class FakeCodingRunStore:
+    def __init__(self, run) -> None:
+        self.run = run
+
+    def get_by_id(self, coding_run_id):
+        return self.run if self.run is not None and self.run.repository_session_id is not None else None
+
+
+def test_get_owned_run_returns_a_run_owned_through_the_session():
+    user = _user()
+    service, _store, repository_session = _wiring(user)
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t-own", status=CodingRunStatus.awaiting_approval)
+    service.coding_run_store = FakeCodingRunStore(run)
+
+    found = service.get_owned_run(repository_session_id=repository_session.id, coding_run_id=run.id, user=user)
+
+    assert found is run
+
+
+def test_get_owned_run_rejects_a_run_belonging_to_another_session():
+    user = _user()
+    service, _store, repository_session = _wiring(user)
+    foreign_run = CodingRun(repository_session_id=uuid.uuid4(), thread_id="t-foreign", status=CodingRunStatus.awaiting_approval)
+    service.coding_run_store = FakeCodingRunStore(foreign_run)
+
+    with pytest.raises(HTTPException) as exc:
+        service.get_owned_run(repository_session_id=repository_session.id, coding_run_id=foreign_run.id, user=user)
+
+    assert exc.value.status_code == 404
+
+
+def test_get_owned_run_rejects_a_session_owned_by_another_user():
+    user = _user()
+    service, _store, repository_session = _wiring(user)
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t-x", status=CodingRunStatus.awaiting_approval)
+    service.coding_run_store = FakeCodingRunStore(run)
+    other = _user()
+
+    with pytest.raises(HTTPException) as exc:
+        service.get_owned_run(repository_session_id=repository_session.id, coding_run_id=run.id, user=other)
 
     assert exc.value.status_code == 403

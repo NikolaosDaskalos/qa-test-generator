@@ -14,6 +14,9 @@ class CodingRunStatus(str, Enum):
     retrieving = "retrieving"
     generating = "generating"
     awaiting_review = "awaiting_review"
+    reviewing = "reviewing"
+    awaiting_approval = "awaiting_approval"
+    changes_requested = "changes_requested"
     succeeded = "succeeded"
     failed = "failed"
 
@@ -24,3 +27,4 @@ class CodingRunStage(str, Enum):
     planning = "planning"
     retrieving = "retrieving"
     generating = "generating"
+    reviewing = "reviewing"
