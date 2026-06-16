@@ -13,7 +13,7 @@ from pathlib import Path
 
 from app.agent.paths import confine_candidate_paths
 from app.agent.stream import emit
-from app.agent.test_files import RejectedTestFile, validate_test_file
+from app.agent.test_files import RejectedTestFile, discover_test_roots, validate_test_file
 from app.core.config import settings
 from app.enums.coding_run import CodingRunStatus
 from app.schemas.agent_stream import PatchResult, RunFailure, Stage
@@ -118,10 +118,13 @@ def build_build_patch_node(workspace_factory, recorder):
     """
 
     def build_patch(state) -> dict:
-        checkout_root = state.get("checkout_root")
+        checkout_root = Path(state["checkout_root"]) if state.get("checkout_root") else None
+        # Discover the Repository's existing test roots once, before any proposal is
+        # written, so new files are admitted only beneath an established root.
+        test_roots = discover_test_roots(checkout_root) if checkout_root else frozenset()
         try:
             validated = [
-                file.model_copy(update={"path": validate_test_file(Path(checkout_root), file.path)}) for file in state.get("generated_files") or []
+                file.model_copy(update={"path": validate_test_file(checkout_root, file.path, test_roots)}) for file in state.get("generated_files") or []
             ]
         except RejectedTestFile as rejection:
             return {"failure": RunFailure(failed_stage="generating", reason=rejection.reason), "trace": ["build_patch"]}

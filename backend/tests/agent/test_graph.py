@@ -476,8 +476,9 @@ def test_external_references_are_collected_separately_from_repository_evidence()
     assert all("docs.pytest.org" not in doc.content for doc in final.get("test_evidence", []))
 
 
-def test_build_patch_writes_validated_files_and_emits_a_patch_result() -> None:
+def test_build_patch_writes_validated_files_and_emits_a_patch_result(tmp_path) -> None:
     """Validated proposals are written, the diff is derived, and the run is completed with it."""
+    (tmp_path / "tests").mkdir()  # an existing test root admits the new test file
     recorder = RecordingRecorder()
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ...")
     files = [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
@@ -486,7 +487,7 @@ def test_build_patch_writes_validated_files_and_emits_a_patch_result() -> None:
     graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": "/unused", "indexed_commit_sha": "abc"},
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
         config=_config(),
     )
 
@@ -503,7 +504,9 @@ def test_build_patch_writes_validated_files_and_emits_a_patch_result() -> None:
 
 
 def test_unsafe_proposed_path_is_rejected_before_writing_as_a_generating_failure(tmp_path) -> None:
-    """A proposal targeting application code fails at generating and is never written."""
+    """A proposal replacing an existing application file fails at generating and is never written."""
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "auth.py").write_text("real code")
     recorder = RecordingRecorder()
     workspace = FakeWorkspace()
     generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="app/auth.py", content="malicious")]))
@@ -518,6 +521,23 @@ def test_unsafe_proposed_path_is_rejected_before_writing_as_a_generating_failure
     assert final.get("patch_result") is None
     assert workspace.written is None
     assert recorder.events[-1][0] == "fail"
+
+
+def test_new_test_file_without_an_existing_test_root_is_rejected_before_writing(tmp_path) -> None:
+    """build_patch discovers test roots; a new test-named file with none fails and is never written."""
+    recorder = RecordingRecorder()
+    workspace = FakeWorkspace()
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
+
+    final = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)},
+        config=_config(),
+    )
+
+    assert final["failure"].failed_stage == "generating"
+    assert final.get("patch_result") is None
+    assert workspace.written is None
 
 
 def test_repository_question_never_reaches_the_web_search_generator() -> None:
