@@ -13,11 +13,7 @@ class CodingRunStore:
         self.session = session
 
     def create(self, *, repository_session_id: uuid.UUID, thread_id: str) -> CodingRun:
-        run = CodingRun(
-            repository_session_id=repository_session_id,
-            thread_id=thread_id,
-            status=CodingRunStatus.queued,
-        )
+        run = CodingRun(repository_session_id=repository_session_id, thread_id=thread_id, status=CodingRunStatus.queued)
         self.session.add(run)
         self.session.commit()
         self.session.refresh(run)
@@ -42,15 +38,7 @@ class CodingRunStore:
         self.session.refresh(coding_run)
         return coding_run
 
-    def complete(
-        self,
-        coding_run: CodingRun,
-        *,
-        generation_branch: str,
-        diff: str,
-        generated_files: list,
-        external_references: list,
-    ) -> CodingRun:
+    def complete(self, coding_run: CodingRun, *, generation_branch: str, diff: str, generated_files: list, external_references: list) -> CodingRun:
         coding_run.status = CodingRunStatus.awaiting_review
         coding_run.generation_branch = generation_branch
         coding_run.diff = diff
@@ -64,6 +52,14 @@ class CodingRunStore:
     def reject(self, coding_run: CodingRun) -> CodingRun:
         """Mark a reviewed run rejected, leaving its persisted review record intact."""
         coding_run.status = CodingRunStatus.rejected
+        self.session.add(coding_run)
+        self.session.commit()
+        self.session.refresh(coding_run)
+        return coding_run
+
+    def approve(self, coding_run: CodingRun) -> CodingRun:
+        """Mark a reviewed run approved, leaving its pushed patch record intact."""
+        coding_run.status = CodingRunStatus.approved
         self.session.add(coding_run)
         self.session.commit()
         self.session.refresh(coding_run)

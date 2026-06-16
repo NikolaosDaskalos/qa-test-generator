@@ -19,12 +19,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
+from app.agent.patch_publisher import NullPatchPublisher
 from app.agent.planner import build_plan_node
 from app.agent.repository_question import build_generate_node, build_retrieve_node
 from app.agent.run_recorder import NullRunRecorder
 from app.agent.stream import emit
 from app.agent.test_generation import (
     SECOND_REVIEW_REJECTED,
+    build_approve_patch_node,
     build_await_decision_node,
     build_build_patch_node,
     build_discard_patch_node,
@@ -36,7 +38,7 @@ from app.agent.test_generation import (
 )
 from app.agent.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStatus
-from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunFailure, RunRejected, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, RunStarted, Stage
 from app.schemas.research_intent import ResearchIntent
 
 Intent = Literal["repository_question", "test_generation"]
@@ -82,6 +84,7 @@ class GraphState(TypedDict, total=False):
     approved: bool
     human_feedback: str
     rejection_result: RunRejected
+    approval_result: RunApproved
     failure: RunFailure
     trace: Annotated[list[str], operator.add]
 
@@ -133,9 +136,9 @@ def _route_after_decision(state: GraphState) -> Literal["approve", "reject"]:
     """Route the owner's human-in-the-loop decision on an accepted Test Patch.
 
     Resuming the suspended graph supplies the decision; a rejection discards the patch
-    while an approval ends the run at awaiting approval (approval handling is a later
-    stage). The decision defaults closed to neither acting nor discarding silently:
-    only an explicit ``approved`` truthy value approves.
+    while an approval commits and pushes its branch. The decision defaults closed to
+    neither acting nor discarding silently: only an explicit ``approved`` truthy value
+    approves.
     """
     return "approve" if state.get("approved") else "reject"
 
@@ -143,7 +146,7 @@ def _route_after_decision(state: GraphState) -> Literal["approve", "reject"]:
 def _reject_run_node():
     """Build the node that turns a post-revision rejection into a review-stage failure."""
 
-    def reject_run(state: GraphState) -> dict:
+    def reject_run(_state: GraphState) -> dict:
         return {"failure": RunFailure(failed_stage="reviewing", reason=SECOND_REVIEW_REJECTED), "trace": ["reject_run"]}
 
     return reject_run
@@ -154,10 +157,7 @@ def _persist_run_node(recorder):
 
     def persist_run(state: GraphState, config) -> dict:
         thread_id = config["configurable"]["thread_id"]
-        coding_run_id = recorder.start(
-            thread_id=thread_id,
-            repository_session_id=state.get("repository_session_id"),
-        )
+        coding_run_id = recorder.start(thread_id=thread_id, repository_session_id=state.get("repository_session_id"))
         recorder.advance(coding_run_id, CodingRunStatus.planning)
         emit(RunStarted(coding_run_id=coding_run_id))
         emit(Stage(stage="planning"))
@@ -193,7 +193,13 @@ def _default_workspace_factory(checkout_root):
     return LocalGitWorkspace(checkout_root)
 
 
-def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, reviewer, run_recorder=None, workspace_factory=None, checkpointer=None):
+def _default_publisher_factory(_repository_id):
+    return NullPatchPublisher()
+
+
+def build_graph(
+    *, classifier_llm, retriever, llm, planner_llm, generator, reviewer, run_recorder=None, workspace_factory=None, publisher_factory=None, checkpointer=None
+):
     """Compile the unified intent-routed graph.
 
     ``checkpointer`` is the durable graph-state store. Production passes the
@@ -204,6 +210,7 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, revie
     """
     recorder = run_recorder or NullRunRecorder()
     workspaces = workspace_factory or _default_workspace_factory
+    publishers = publisher_factory or _default_publisher_factory
     graph = StateGraph(GraphState)
     graph.add_node("classify", _classify_node(classifier_llm))
     graph.add_node("persist_run", _persist_run_node(recorder))
@@ -215,6 +222,7 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, revie
     graph.add_node("build_patch", build_build_patch_node(workspaces, recorder))
     graph.add_node("review_patch", build_review_patch_node(reviewer, recorder))
     graph.add_node("await_decision", build_await_decision_node())
+    graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
     graph.add_node("revise_tests", build_revise_tests_node(generator))
     graph.add_node("reject_run", _reject_run_node())
@@ -232,11 +240,10 @@ def build_graph(*, classifier_llm, retriever, llm, planner_llm, generator, revie
     graph.add_conditional_edges("generate_tests", _route_if_failed, {"failed": "fail_run", "ok": "build_patch"})
     graph.add_conditional_edges("build_patch", _route_if_failed, {"failed": "fail_run", "ok": "review_patch"})
     graph.add_conditional_edges(
-        "review_patch",
-        _route_after_review,
-        {"failed": "fail_run", "accepted": "await_decision", "revise": "revise_tests", "reject": "reject_run"},
+        "review_patch", _route_after_review, {"failed": "fail_run", "accepted": "await_decision", "revise": "revise_tests", "reject": "reject_run"}
     )
-    graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": END, "reject": "discard_patch"})
+    graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
+    graph.add_conditional_edges("approve_patch", _route_if_failed, {"failed": "fail_run", "ok": END})
     graph.add_edge("discard_patch", END)
     graph.add_conditional_edges("revise_tests", _route_if_failed, {"failed": "fail_run", "ok": "build_patch"})
     graph.add_edge("reject_run", "fail_run")

@@ -67,7 +67,7 @@ def test_validate_remote_access_uses_authenticated_ls_remote(monkeypatch) -> Non
     assert calls == [
         (
             ("git", "ls-remote", "https://github.com/openai/openai-python.git"),
-            {"cwd": Path.cwd(), "token": "replacement-token"},
+            {"cwd": Path.cwd(), "token": "replacement-token"}
         )
     ]
 
@@ -92,6 +92,14 @@ def test_push_rejects_the_remote_default_branch(monkeypatch) -> None:
     monkeypatch.setattr(git, "_run", lambda *args, **kwargs: GitResult(stdout="trunk", stderr=""))
 
     with pytest.raises(GitError, match="default branch"):
+        git.push_current_branch("secret-token")
+
+
+def test_push_rejects_when_the_current_branch_cannot_be_determined(monkeypatch) -> None:
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
+    monkeypatch.setattr(git, "_run", lambda *args, **kwargs: GitResult(stdout="", stderr=""))
+
+    with pytest.raises(GitError, match="Current branch"):
         git.push_current_branch("secret-token")
 
 
@@ -129,10 +137,7 @@ def test_clone_accepts_equivalent_existing_origin(monkeypatch, tmp_path: Path) -
     assert git.clone("secret-token") is None
     assert calls == [
         (("git", "remote", "get-url", "origin"), {"cwd": git.repo_path}),
-        (
-            ("git", "ls-remote", "https://github.com/openai/openai-python.git"),
-            {"cwd": Path.cwd(), "token": "secret-token"},
-        ),
+        (("git", "ls-remote", "https://github.com/openai/openai-python.git"), {"cwd": Path.cwd(), "token": "secret-token"}),
     ]
 
 

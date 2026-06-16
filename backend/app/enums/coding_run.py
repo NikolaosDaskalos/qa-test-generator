@@ -17,6 +17,7 @@ class CodingRunStatus(str, Enum):
     reviewing = "reviewing"
     awaiting_approval = "awaiting_approval"
     changes_requested = "changes_requested"
+    approved = "approved"
     succeeded = "succeeded"
     rejected = "rejected"
     failed = "failed"
@@ -29,3 +30,5 @@ class CodingRunStage(str, Enum):
     retrieving = "retrieving"
     generating = "generating"
     reviewing = "reviewing"
+    git_commit = "git_commit"
+    git_push = "git_push"

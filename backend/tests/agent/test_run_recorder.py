@@ -58,6 +58,22 @@ def test_recorder_starts_advances_and_fails_through_the_store() -> None:
         assert failed.failure_reason == "Out of scope"
 
 
+def test_recorder_persists_git_push_failures() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        recorder = CodingRunRecorder(store)
+        run_id = recorder.start(thread_id="t-push-fail", repository_session_id=session_id)
+
+        recorder.fail(run_id, failed_stage="git_push", reason="Could not push the approved Test Patch branch.")
+
+        failed = store.get_by_id(run_id)
+        assert failed.status == CodingRunStatus.failed
+        assert failed.failed_stage == CodingRunStage.git_push
+        assert failed.failure_reason == "Could not push the approved Test Patch branch."
+
+
 def test_recorder_completes_a_run_with_the_serialized_patch() -> None:
     engine = _engine()
     with Session(engine) as db:
@@ -111,6 +127,23 @@ def test_recorder_rejects_a_reviewed_run_through_the_store() -> None:
         assert rejected.status == CodingRunStatus.rejected
         # The persisted review record survives the rejection for later inspection.
         assert rejected.review_findings == [{"category": "conventions", "detail": "matches existing tests"}]
+
+
+def test_recorder_approves_a_reviewed_run_through_the_store() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        recorder = CodingRunRecorder(store)
+        run_id = recorder.start(thread_id="t-approve", repository_session_id=session_id)
+        recorder.record_review(run_id, accepted=True, findings=[ReviewFinding(category="conventions", detail="matches existing tests")])
+
+        recorder.approve(run_id)
+
+        approved = store.get_by_id(run_id)
+        assert approved.status == CodingRunStatus.approved
+        # The persisted review record survives the approval for later inspection.
+        assert approved.review_findings == [{"category": "conventions", "detail": "matches existing tests"}]
 
 
 def test_recorder_records_a_rejected_review_as_changes_requested() -> None:

@@ -117,17 +117,9 @@ class RepositorySessionService:
             answer = final.get("answer", "")
             citations = final.get("citations", [])
             _user_message, assistant_message = self.session_store.append_exchange(
-                repository_session.id,
-                user_message=question,
-                assistant_message=answer,
-                assistant_citations=[citation.model_dump() for citation in citations],
+                repository_session.id, user_message=question, assistant_message=answer, assistant_citations=[citation.model_dump() for citation in citations]
             )
-            yield Result(
-                repository_session_id=repository_session.id,
-                assistant_message_id=assistant_message.id,
-                answer=answer,
-                citations=citations,
-            )
+            yield Result(repository_session_id=repository_session.id, assistant_message_id=assistant_message.id, answer=answer, citations=citations)
 
     def _resume_decision(
         self, *, repository_session_id: uuid.UUID, user: User, decision: HumanDecisionRequest, graph: Any
@@ -166,11 +158,11 @@ class RepositorySessionService:
     def _test_generation_terminal(final: dict[str, Any]) -> AgentStreamEvent | None:
         """Pick the terminal Test-Generation event from final graph state, if any.
 
-        A reviewing-stage failure and a human rejection take precedence over the
-        accepted review still sitting in state; otherwise the accepted review, then
-        the generated patch, is the outcome.
+        A reviewing-stage failure, human rejection, and Approval take precedence
+        over the accepted review still sitting in state; otherwise the accepted
+        review, then the generated patch, is the outcome.
         """
-        for key in ("failure", "rejection_result", "review_result", "patch_result"):
+        for key in ("failure", "rejection_result", "approval_result", "review_result", "patch_result"):
             event = final.get(key)
             if event is not None:
                 return event

@@ -12,7 +12,7 @@ from app.models.coding_run import CodingRun
 from app.models.repository import Repository
 from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
-from app.schemas.agent_stream import Citation, PatchResult, Result, ReviewResult, RunFailure, RunRejected, Stage, Token
+from app.schemas.agent_stream import Citation, PatchResult, Result, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
 from app.schemas.generation import ExternalReference, GeneratedFile
 from app.schemas.review import ReviewFinding
 from app.schemas.session import HumanDecisionRequest
@@ -65,7 +65,13 @@ def _user():
 
 def _wiring(user, *, indexed_commit_sha=None):
     repository = Repository(
-        id=uuid.uuid4(), user_id=user.id, name="r", repository_url="https://github.com/o/r.git", owner="o", local_path="/checkout", indexed_commit_sha=indexed_commit_sha
+        id=uuid.uuid4(),
+        user_id=user.id,
+        name="r",
+        repository_url="https://github.com/o/r.git",
+        owner="o",
+        local_path="/checkout",
+        indexed_commit_sha=indexed_commit_sha,
     )
     repository_session = RepositorySession(id=uuid.uuid4(), owner_id=user.id, repository_id=repository.id)
     session_store = FakeSessionStore(repository_session)
@@ -220,7 +226,9 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
     graph = FakeGraph(items, final, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
-    events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision))
+    events = list(
+        service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision)
+    )
 
     # The rejection is the terminal event, preferred over the accepted review still in state.
     terminal = events[-1]
@@ -232,6 +240,27 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
     assert resume_input.resume == {"approved": False, "feedback": ""}
     assert config["configurable"]["thread_id"] == "t-paused"
     # Resuming a decision never persists a session answer exchange.
+    assert session_store.appended == []
+
+
+def test_stream_session_emits_run_approved_terminal_for_an_approved_decision():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t-paused", status=CodingRunStatus.awaiting_approval)
+    service.coding_run_store = FakeCodingRunStore(run)
+    approval = RunApproved(coding_run_id=run.id, branch="qa-tests/abc123", diff="diff --git a/tests/test_x.py b/tests/test_x.py")
+    review = ReviewResult(coding_run_id=run.id, accepted=True, findings=[], diff=approval.diff)
+    graph = FakeGraph([], {"intent": "test_generation", "review_result": review, "approval_result": approval}, next_nodes=("await_decision",))
+    decision = HumanDecisionRequest(coding_run_id=run.id, approved=True)
+
+    events = list(
+        service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision)
+    )
+
+    terminal = events[-1]
+    assert isinstance(terminal, RunApproved)
+    assert terminal.coding_run_id == run.id
+    assert terminal.branch == "qa-tests/abc123"
     assert session_store.appended == []
 
 

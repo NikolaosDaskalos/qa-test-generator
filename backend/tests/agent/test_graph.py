@@ -16,8 +16,9 @@ from app.agent.repository_question import INSUFFICIENT_EVIDENCE_ANSWER
 from app.agent.test_generation import build_review_patch_node
 from app.agent.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStatus
+from app.errors.git_errors import GitError
 from app.models.source_document import SourceDocument
-from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunRejected, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunRejected, RunStarted, Stage
 from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 from app.schemas.research_intent import ResearchIntent
 from app.schemas.review import PatchReview, ReviewFinding
@@ -131,6 +132,9 @@ class RecordingRecorder:
     def reject(self, coding_run_id):
         self.events.append(("reject", coding_run_id))
 
+    def approve(self, coding_run_id):
+        self.events.append(("approve", coding_run_id))
+
 
 class FakeGenerator:
     """A ``TestGenerator`` returning a fixed proposal and recording its inputs.
@@ -151,14 +155,7 @@ class FakeGenerator:
 
     def revise(self, *, task, source_evidence, test_evidence, prior_files, diff, findings):
         self.revise_calls.append(
-            {
-                "task": task,
-                "source_evidence": source_evidence,
-                "test_evidence": test_evidence,
-                "prior_files": prior_files,
-                "diff": diff,
-                "findings": findings,
-            }
+            {"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence, "prior_files": prior_files, "diff": diff, "findings": findings}
         )
         return self.revision if self.revision is not None else self.proposal
 
@@ -186,9 +183,7 @@ class FakeReviewer:
         self.calls = []
 
     def review(self, *, task, source_evidence, test_evidence, generated_files, diff):
-        self.calls.append(
-            {"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence, "generated_files": generated_files, "diff": diff}
-        )
+        self.calls.append({"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence, "generated_files": generated_files, "diff": diff})
         index = min(len(self.calls) - 1, len(self._reviews) - 1)
         return self._reviews[index]
 
@@ -227,9 +222,37 @@ class FakeWorkspace:
         return self._diff
 
 
+class FakePublisher:
+    """A ``PatchPublisher`` that records the commit/push and can fail either step.
+
+    ``fail_on`` raises a ``GitError`` (whose text embeds a stand-in credential, so
+    sanitization can be asserted) on the named step — ``"commit"`` or ``"push"``.
+    """
+
+    def __init__(self, *, fail_on: str | None = None) -> None:
+        self.committed = None
+        self.pushed = False
+        self._fail_on = fail_on
+
+    def commit(self, message):
+        if self._fail_on == "commit":
+            raise GitError("git commit failed for secret-token")
+        self.committed = message
+
+    def push(self):
+        if self._fail_on == "push":
+            raise GitError("git push rejected for secret-token")
+        self.pushed = True
+
+
 def _workspace_factory(workspace=None):
     workspace = workspace or FakeWorkspace()
     return lambda _checkout_root: workspace
+
+
+def _publisher_factory(publisher=None):
+    publisher = publisher or FakePublisher()
+    return lambda _repository_id: publisher
 
 
 def _source(repository_id: uuid.UUID, source: str, content: str = "evidence") -> SourceDocument:
@@ -257,7 +280,7 @@ def _init_repo_with_test_root(tmp_path: Path) -> tuple[Path, str]:
     return repo, _git(repo, "rev-parse", "HEAD")
 
 
-def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, recorder=None, generator=None, workspace=None, reviewer=None):
+def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, recorder=None, generator=None, workspace=None, reviewer=None, publisher=None):
     return build_graph(
         classifier_llm=classifier_llm,
         retriever=retriever if retriever is not None else FakeRetriever(),
@@ -267,6 +290,7 @@ def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, record
         reviewer=reviewer if reviewer is not None else FakeReviewer(),
         run_recorder=recorder,
         workspace_factory=_workspace_factory(workspace),
+        publisher_factory=_publisher_factory(publisher),
     )
 
 
@@ -287,10 +311,7 @@ def test_graph_routes_test_generation_intent_to_the_test_branch() -> None:
     """A test-generation classification enters the planning branch, not retrieval-first."""
     graph = _build(FakeClassifierLLM("test_generation"))
 
-    final = graph.invoke(
-        {"question": "now write tests for the auth module", "repository_id": uuid.uuid4()},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "now write tests for the auth module", "repository_id": uuid.uuid4()}, config=_config())
 
     assert final["intent"] == "test_generation"
     assert final["trace"][0] == "classify"
@@ -302,10 +323,7 @@ def test_graph_routes_repository_question_intent_to_the_retrieval_branch() -> No
     """A repository-question classification skips planning and retrieves first."""
     graph = _build(FakeClassifierLLM("repository_question"))
 
-    final = graph.invoke(
-        {"question": "how does the auth module work?", "repository_id": uuid.uuid4()},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "how does the auth module work?", "repository_id": uuid.uuid4()}, config=_config())
 
     assert final["intent"] == "repository_question"
     assert final["trace"][:2] == ["classify", "retrieve"]
@@ -315,10 +333,7 @@ def test_uncertain_classification_falls_back_to_the_repository_question_branch()
     """When the classifier cannot commit, the graph takes the read-only branch."""
     graph = _build(UncertainClassifierLLM())
 
-    final = graph.invoke(
-        {"question": "do something ambiguous", "repository_id": uuid.uuid4()},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "do something ambiguous", "repository_id": uuid.uuid4()}, config=_config())
 
     assert final["intent"] == "repository_question"
     assert final["trace"][:2] == ["classify", "retrieve"]
@@ -339,10 +354,7 @@ def test_repository_question_branch_answers_from_retrieved_evidence() -> None:
     )
     graph = _build(FakeClassifierLLM("repository_question"), retriever=retriever, llm=FakeGeneratorLLM(("the ", "answer")))
 
-    final = graph.invoke(
-        {"question": "how is auth tested?", "repository_id": repository_id},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "how is auth tested?", "repository_id": repository_id}, config=_config())
 
     assert retriever.calls[-1][0] == "how is auth tested?"
     assert retriever.calls[-1][1]["repository_id"] == repository_id
@@ -356,10 +368,7 @@ def test_repository_question_branch_reports_insufficient_evidence_without_callin
     llm = FakeGeneratorLLM(("unused",))
     graph = _build(FakeClassifierLLM("repository_question"), retriever=FakeRetriever([]), llm=llm)
 
-    final = graph.invoke(
-        {"question": "anything", "repository_id": repository_id},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "anything", "repository_id": repository_id}, config=_config())
 
     assert final["answer"] == INSUFFICIENT_EVIDENCE_ANSWER
     assert final["citations"] == []
@@ -380,10 +389,7 @@ def test_planner_emits_research_intents_tagged_source_and_test() -> None:
     )
     graph = _build(FakeClassifierLLM("test_generation"), planner_llm=FakePlannerLLM(planner_output))
 
-    final = graph.invoke(
-        {"question": "add tests for the auth module", "repository_id": uuid.uuid4()},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "add tests for the auth module", "repository_id": uuid.uuid4()}, config=_config())
 
     assert final.get("failure") is None
     intents = final["research_intents"]
@@ -396,10 +402,7 @@ def test_out_of_scope_task_is_rejected_at_the_planning_stage() -> None:
     planner_output = PlannerOutput(in_scope=False, reason="This asks to refactor production code, not to add or improve tests.")
     graph = _build(FakeClassifierLLM("test_generation"), planner_llm=FakePlannerLLM(planner_output))
 
-    final = graph.invoke(
-        {"question": "rename the auth module everywhere", "repository_id": uuid.uuid4()},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "rename the auth module everywhere", "repository_id": uuid.uuid4()}, config=_config())
 
     failure = final["failure"]
     assert failure.failed_stage == "planning"
@@ -414,24 +417,14 @@ def test_test_generation_retrieve_partitions_source_and_test_evidence() -> None:
     """Planner intents are executed under the session's Repository and split source vs. test."""
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
-        {
-            "auth implementation": [_source(repository_id, "app/auth.py", "impl")],
-            "auth tests": [_source(repository_id, "tests/test_auth.py", "test")],
-        }
+        {"auth implementation": [_source(repository_id, "app/auth.py", "impl")], "auth tests": [_source(repository_id, "tests/test_auth.py", "test")]}
     )
     planner_output = PlannerOutput(
-        in_scope=True,
-        intents=[
-            ResearchIntent(target="source", description="auth implementation"),
-            ResearchIntent(target="test", description="auth tests"),
-        ],
+        in_scope=True, intents=[ResearchIntent(target="source", description="auth implementation"), ResearchIntent(target="test", description="auth tests")]
     )
     graph = _build(FakeClassifierLLM("test_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output))
 
-    final = graph.invoke(
-        {"question": "add tests for auth", "repository_id": repository_id},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id}, config=_config())
 
     assert [doc.doc_metadata["source"] for doc in final["source_evidence"]] == ["app/auth.py"]
     assert [doc.doc_metadata["source"] for doc in final["test_evidence"]] == ["tests/test_auth.py"]
@@ -443,10 +436,7 @@ def test_test_generation_retrieve_yields_empty_partitions_when_no_evidence() -> 
     planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="nothing here")])
     graph = _build(FakeClassifierLLM("test_generation"), retriever=FakeRetriever([]), planner_llm=FakePlannerLLM(planner_output))
 
-    final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4()},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "add tests", "repository_id": uuid.uuid4()}, config=_config())
 
     assert final["source_evidence"] == []
     assert final["test_evidence"] == []
@@ -456,15 +446,11 @@ def test_test_generation_retrieve_confines_candidate_paths_to_validated_hints(tm
     """Untrusted candidate paths are confined to the checkout; unsafe ones never proceed."""
     repository_id = uuid.uuid4()
     planner_output = PlannerOutput(
-        in_scope=True,
-        intents=[ResearchIntent(target="source", description="auth", candidate_paths=["app/auth.py", "/etc/passwd", "../escape"])],
+        in_scope=True, intents=[ResearchIntent(target="source", description="auth", candidate_paths=["app/auth.py", "/etc/passwd", "../escape"])]
     )
     graph = _build(FakeClassifierLLM("test_generation"), retriever=FakeRetriever([]), planner_llm=FakePlannerLLM(planner_output))
 
-    final = graph.invoke(
-        {"question": "add tests", "repository_id": repository_id, "checkout_root": str(tmp_path)},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "add tests", "repository_id": repository_id, "checkout_root": str(tmp_path)}, config=_config())
 
     assert final["candidate_hints"] == ["app/auth.py"]
 
@@ -481,8 +467,7 @@ def test_test_generation_persists_a_queued_run_and_advances_through_generation()
     graph = _build(FakeClassifierLLM("test_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": repository_id, "repository_session_id": session_id, "checkout_root": "/unused"},
-        config=_config("run-thread"),
+        {"question": "add tests", "repository_id": repository_id, "repository_session_id": session_id, "checkout_root": "/unused"}, config=_config("run-thread")
     )
 
     assert [event[0] for event in recorder.events] == ["start", "advance", "advance", "advance", "complete", "advance", "record_review"]
@@ -502,10 +487,7 @@ def test_test_generation_marks_failure_at_planning_when_out_of_scope() -> None:
     planner_output = PlannerOutput(in_scope=False, reason="Not a test request")
     graph = _build(FakeClassifierLLM("test_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output))
 
-    final = graph.invoke(
-        {"question": "refactor", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4()},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "refactor", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4()}, config=_config())
 
     assert [event[0] for event in recorder.events] == ["start", "advance", "fail"]
     assert recorder.events[1][2] == CodingRunStatus.planning
@@ -517,7 +499,7 @@ def test_test_generation_marks_failure_at_planning_when_out_of_scope() -> None:
 # ── test_generation branch: generation & patch ────────────────────
 
 
-def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None):
+def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None, publisher=None):
     planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
     return _build(
         FakeClassifierLLM("test_generation"),
@@ -526,6 +508,7 @@ def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None
         generator=generator,
         workspace=workspace,
         reviewer=reviewer,
+        publisher=publisher,
     )
 
 
@@ -535,17 +518,9 @@ def test_generator_receives_partitioned_evidence_and_emits_structured_files() ->
     retriever = QueryRetriever({"impl": [_source(repository_id, "app/auth.py", "code")]})
     planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="impl")])
     generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _build(
-        FakeClassifierLLM("test_generation"),
-        retriever=retriever,
-        planner_llm=FakePlannerLLM(planner_output),
-        generator=generator,
-    )
+    graph = _build(FakeClassifierLLM("test_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output), generator=generator)
 
-    final = graph.invoke(
-        {"question": "add tests for auth", "repository_id": repository_id, "checkout_root": "/unused"},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id, "checkout_root": "/unused"}, config=_config())
 
     assert generator.calls[0]["task"] == "add tests for auth"
     assert [doc.doc_metadata["source"] for doc in generator.calls[0]["source_evidence"]] == ["app/auth.py"]
@@ -563,10 +538,7 @@ def test_external_references_are_collected_separately_from_repository_evidence()
     )
     graph = _generation_graph(generator=generator)
 
-    final = graph.invoke(
-        {"question": "add tests", "repository_id": repository_id, "checkout_root": "/unused"},
-        config=_config(),
-    )
+    final = graph.invoke({"question": "add tests", "repository_id": repository_id, "checkout_root": "/unused"}, config=_config())
 
     assert [reference.url for reference in final["external_references"]] == ["https://docs.pytest.org"]
     assert all("docs.pytest.org" not in doc.content for doc in final.get("source_evidence", []))
@@ -584,7 +556,13 @@ def test_build_patch_writes_validated_files_and_emits_a_patch_result(tmp_path) -
     graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -610,8 +588,7 @@ def test_unsafe_proposed_path_is_rejected_before_writing_as_a_generating_failure
     graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)},
-        config=_config(),
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)}, config=_config()
     )
 
     assert final["failure"].failed_stage == "generating"
@@ -628,8 +605,7 @@ def test_new_test_file_without_an_existing_test_root_is_rejected_before_writing(
     graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)},
-        config=_config(),
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)}, config=_config()
     )
 
     assert final["failure"].failed_stage == "generating"
@@ -659,8 +635,7 @@ def test_generation_failure_is_a_generating_run_failure() -> None:
     graph = _generation_graph(generator=RaisingGenerator(), recorder=recorder)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": "/unused"},
-        config=_config(),
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": "/unused"}, config=_config()
     )
 
     assert final["failure"].failed_stage == "generating"
@@ -686,7 +661,13 @@ def test_accepted_review_advances_to_awaiting_approval_and_emits_review_result(t
     graph = _reviewed_graph(reviewer=reviewer, recorder=recorder, diff=diff)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -708,17 +689,10 @@ def test_reviewer_receives_the_task_partitioned_evidence_proposals_and_diff(tmp_
     (tmp_path / "tests").mkdir()
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
-        {
-            "auth implementation": [_source(repository_id, "app/auth.py", "impl")],
-            "auth tests": [_source(repository_id, "tests/test_auth.py", "existing test")],
-        }
+        {"auth implementation": [_source(repository_id, "app/auth.py", "impl")], "auth tests": [_source(repository_id, "tests/test_auth.py", "existing test")]}
     )
     planner_output = PlannerOutput(
-        in_scope=True,
-        intents=[
-            ResearchIntent(target="source", description="auth implementation"),
-            ResearchIntent(target="test", description="auth tests"),
-        ],
+        in_scope=True, intents=[ResearchIntent(target="source", description="auth implementation"), ResearchIntent(target="test", description="auth tests")]
     )
     reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
     files = [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
@@ -734,8 +708,7 @@ def test_reviewer_receives_the_task_partitioned_evidence_proposals_and_diff(tmp_
     )
 
     graph.invoke(
-        {"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
-        config=_config(),
+        {"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"}, config=_config()
     )
 
     call = reviewer.calls[0]
@@ -757,7 +730,13 @@ def test_accepted_review_pauses_for_a_human_decision(tmp_path) -> None:
     config = _config()
 
     result = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=config,
     )
 
@@ -785,7 +764,13 @@ def test_rejecting_a_paused_run_discards_the_patch_and_records_the_rejection(tmp
     graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
     config = _config()
     graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=config,
     )
 
@@ -805,26 +790,137 @@ def test_rejecting_a_paused_run_discards_the_patch_and_records_the_rejection(tmp
     assert final.get("failure") is None
 
 
-def test_approving_a_paused_run_leaves_it_awaiting_approval_without_discarding(tmp_path) -> None:
-    """Resuming with an approval ends the run without discarding the patch (approval handling is a later stage)."""
+def test_approving_a_paused_run_commits_pushes_and_emits_run_approved(tmp_path) -> None:
+    """Resuming with an approval commits and pushes the reviewed patch and ends in a RunApproved."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
     generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+    publisher = FakePublisher()
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
     config = _config()
     graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=config,
     )
 
     final = graph.invoke(Command(resume={"approved": True}), config=config)
 
-    # An approval neither discards the patch nor rejects the run.
-    assert workspace.discarded is None
-    assert ("reject", recorder.run_id) not in recorder.events
+    # The reviewed patch was committed and its branch pushed.
+    assert publisher.committed is not None
+    assert publisher.pushed is True
+    # The terminal outcome identifies the approved run and is not a rejection or failure.
+    approval = final["approval_result"]
+    assert isinstance(approval, RunApproved)
+    assert approval.coding_run_id == recorder.run_id
     assert final.get("rejection_result") is None
+    assert final.get("failure") is None
+
+
+def test_approval_records_the_run_and_restores_the_checkout_to_the_indexed_commit(tmp_path) -> None:
+    """After pushing, approval records the run approved and restores the checkout, removing the local branch."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    publisher = FakePublisher()
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    final = graph.invoke(Command(resume={"approved": True}), config=config)
+
+    # The run is recorded approved, after the accepted review was recorded.
+    assert ("approve", recorder.run_id) in recorder.events
+    assert ("reject", recorder.run_id) not in recorder.events
+    # The local checkout is restored to the indexed commit and the temporary branch removed.
+    assert workspace.discarded == ("abc", "qa-tests/fake")
+    assert final["approval_result"].branch == "qa-tests/fake"
+
+
+def test_approval_commit_failure_is_a_git_commit_stage_failure(tmp_path, caplog) -> None:
+    """A commit that fails records a git_commit-stage failure, never pushes, and does not approve."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    publisher = FakePublisher(fail_on="commit")
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    final = graph.invoke(Command(resume={"approved": True}), config=config)
+
+    failure = final["failure"]
+    assert failure.failed_stage == "git_commit"
+    assert failure.coding_run_id == recorder.run_id
+    # The patch was never pushed and the run was never approved; the failure is sanitized.
+    assert publisher.pushed is False
+    assert ("approve", recorder.run_id) not in recorder.events
+    assert final.get("approval_result") is None
+    assert "secret-token" not in failure.reason
+    assert "secret-token" not in caplog.text
+
+
+def test_approval_push_failure_is_a_git_push_stage_failure(tmp_path, caplog) -> None:
+    """A push that fails after a successful commit records a git_push-stage failure with a sanitized reason."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    publisher = FakePublisher(fail_on="push")
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    final = graph.invoke(Command(resume={"approved": True}), config=config)
+
+    failure = final["failure"]
+    assert failure.failed_stage == "git_push"
+    assert failure.coding_run_id == recorder.run_id
+    # The commit happened but the run was not approved, and the credential is never leaked.
+    assert publisher.committed is not None
+    assert ("approve", recorder.run_id) not in recorder.events
+    assert final.get("approval_result") is None
+    assert "secret-token" not in failure.reason
+    assert "secret-token" not in caplog.text
 
 
 def test_rejected_first_review_records_its_findings_before_revising(tmp_path) -> None:
@@ -836,7 +932,13 @@ def test_rejected_first_review_records_its_findings_before_revising(tmp_path) ->
     graph = _reviewed_graph(reviewer=reviewer, recorder=recorder)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -856,7 +958,13 @@ def test_review_rejects_a_patch_with_changes_unrelated_to_the_task(tmp_path) -> 
     graph = _reviewed_graph(reviewer=reviewer, recorder=recorder)
 
     graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -897,7 +1005,13 @@ def test_reviewer_failure_is_a_reviewing_run_failure(tmp_path) -> None:
     graph = _reviewed_graph(reviewer=RaisingReviewer(), recorder=recorder)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -922,14 +1036,19 @@ def test_first_rejection_triggers_one_revision_that_is_accepted(tmp_path) -> Non
     findings = [ReviewFinding(category="coverage", detail="missing unhappy-path test")]
     reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=findings), PatchReview(accepted=True, findings=[])])
     revised = GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")])
-    generator = FakeGenerator(
-        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
-        revision=revised,
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]), revision=revised)
+    graph = _generation_graph(
+        generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer
     )
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -947,17 +1066,10 @@ def test_revision_receives_the_task_evidence_prior_proposal_diff_and_findings(tm
     (tmp_path / "tests").mkdir()
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
-        {
-            "auth implementation": [_source(repository_id, "app/auth.py", "impl")],
-            "auth tests": [_source(repository_id, "tests/test_auth.py", "existing test")],
-        }
+        {"auth implementation": [_source(repository_id, "app/auth.py", "impl")], "auth tests": [_source(repository_id, "tests/test_auth.py", "existing test")]}
     )
     planner_output = PlannerOutput(
-        in_scope=True,
-        intents=[
-            ResearchIntent(target="source", description="auth implementation"),
-            ResearchIntent(target="test", description="auth tests"),
-        ],
+        in_scope=True, intents=[ResearchIntent(target="source", description="auth implementation"), ResearchIntent(target="test", description="auth tests")]
     )
     findings = [ReviewFinding(category="coverage", detail="missing unhappy-path test")]
     reviewer = FakeReviewer(reviews=[PatchReview(accepted=False, findings=findings), PatchReview(accepted=True, findings=[])])
@@ -977,8 +1089,7 @@ def test_revision_receives_the_task_evidence_prior_proposal_diff_and_findings(tm
     )
 
     graph.invoke(
-        {"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
-        config=_config(),
+        {"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"}, config=_config()
     )
 
     revise = generator.revise_calls[0]
@@ -1005,7 +1116,13 @@ def test_revised_files_are_validated_and_rediffed_through_the_same_path(tmp_path
     graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -1037,7 +1154,13 @@ def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_
     )
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(repo), "indexed_commit_sha": indexed_sha},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(repo),
+            "indexed_commit_sha": indexed_sha,
+        },
         config=_config(),
     )
 
@@ -1057,10 +1180,18 @@ def test_second_review_rejection_terminates_as_a_review_stage_failure(tmp_path) 
         GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
         revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
     )
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer)
+    graph = _generation_graph(
+        generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer
+    )
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -1087,10 +1218,18 @@ def test_revision_generation_failure_is_a_generating_run_failure(tmp_path) -> No
             raise RuntimeError("model unavailable")
 
     generator = RaisingReviser(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer)
+    graph = _generation_graph(
+        generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer
+    )
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -1116,7 +1255,13 @@ def test_revision_validation_failure_is_a_generating_run_failure(tmp_path) -> No
     graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=_config(),
     )
 
@@ -1138,7 +1283,13 @@ def test_revision_stream_distinguishes_revising_and_second_review_stages(tmp_pat
 
     events = _custom_events(
         graph,
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
     )
 
     stages = [event.stage for event in events if isinstance(event, Stage)]
@@ -1170,11 +1321,7 @@ def test_test_generation_stream_emits_ordered_stage_and_run_markers() -> None:
 def test_repository_question_stream_emits_ordered_stage_markers() -> None:
     """Repository-question progress is classifying → retrieving → generating."""
     repository_id = uuid.uuid4()
-    graph = _build(
-        FakeClassifierLLM("repository_question"),
-        retriever=FakeRetriever([_source(repository_id, "app/a.py", "x")]),
-        llm=FakeGeneratorLLM(("a",)),
-    )
+    graph = _build(FakeClassifierLLM("repository_question"), retriever=FakeRetriever([_source(repository_id, "app/a.py", "x")]), llm=FakeGeneratorLLM(("a",)))
 
     events = _custom_events(graph, {"question": "how?", "repository_id": repository_id})
 

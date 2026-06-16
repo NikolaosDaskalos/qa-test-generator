@@ -28,13 +28,7 @@ class RunRecorder(Protocol):
         """Mark a Coding Run failed at ``failed_stage`` with a sanitized ``reason``."""
 
     def complete(
-        self,
-        coding_run_id: uuid.UUID,
-        *,
-        branch: str,
-        diff: str,
-        generated_files: list[GeneratedFile],
-        external_references: list[ExternalReference],
+        self, coding_run_id: uuid.UUID, *, branch: str, diff: str, generated_files: list[GeneratedFile], external_references: list[ExternalReference]
     ) -> None:
         """Persist the generated Test Patch and advance the run to awaiting review."""
 
@@ -43,6 +37,9 @@ class RunRecorder(Protocol):
 
     def reject(self, coding_run_id: uuid.UUID) -> None:
         """Record an owner's rejection of a reviewed run, leaving its review record intact."""
+
+    def approve(self, coding_run_id: uuid.UUID) -> None:
+        """Record an owner's approval of a reviewed run after its branch is pushed."""
 
 
 class CodingRunRecorder:
@@ -66,13 +63,7 @@ class CodingRunRecorder:
             self.store.mark_failed(run, failed_stage=CodingRunStage(failed_stage), failure_reason=reason)
 
     def complete(
-        self,
-        coding_run_id: uuid.UUID,
-        *,
-        branch: str,
-        diff: str,
-        generated_files: list[GeneratedFile],
-        external_references: list[ExternalReference],
+        self, coding_run_id: uuid.UUID, *, branch: str, diff: str, generated_files: list[GeneratedFile], external_references: list[ExternalReference]
     ) -> None:
         run = self.store.get_by_id(coding_run_id)
         if run is not None:
@@ -94,6 +85,11 @@ class CodingRunRecorder:
         if run is not None:
             self.store.reject(run)
 
+    def approve(self, coding_run_id: uuid.UUID) -> None:
+        run = self.store.get_by_id(coding_run_id)
+        if run is not None:
+            self.store.approve(run)
+
 
 class NullRunRecorder:
     """A no-op recorder for graph paths exercised without persistence."""
@@ -108,13 +104,7 @@ class NullRunRecorder:
         return None
 
     def complete(
-        self,
-        coding_run_id: uuid.UUID,
-        *,
-        branch: str,
-        diff: str,
-        generated_files: list[GeneratedFile],
-        external_references: list[ExternalReference],
+        self, coding_run_id: uuid.UUID, *, branch: str, diff: str, generated_files: list[GeneratedFile], external_references: list[ExternalReference]
     ) -> None:
         return None
 
@@ -122,4 +112,7 @@ class NullRunRecorder:
         return None
 
     def reject(self, coding_run_id: uuid.UUID) -> None:
+        return None
+
+    def approve(self, coding_run_id: uuid.UUID) -> None:
         return None

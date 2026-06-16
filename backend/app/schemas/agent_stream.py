@@ -84,7 +84,7 @@ class RunFailure(BaseModel):
 
     type: Literal["run_failure"] = "run_failure"
     coding_run_id: uuid.UUID | None = None
-    failed_stage: Literal["planning", "retrieving", "generating", "reviewing"]
+    failed_stage: Literal["planning", "retrieving", "generating", "reviewing", "git_commit", "git_push"]
     reason: str
 
 
@@ -137,4 +137,22 @@ class RunRejected(BaseModel):
     disclaimer: str = REVIEW_DISCLAIMER
 
 
-AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure | PatchResult | ReviewResult | RunRejected
+class RunApproved(BaseModel):
+    """The terminal event for a reviewed Test Patch the owner approved and pushed.
+
+    Approval is a deliberate outcome: the reviewed patch is committed on its unique
+    non-default ``branch`` and pushed to the remote with the Repository Credential,
+    leaving that remote branch available for manual inspection or pull-request
+    creation. The local checkout is then restored to the indexed commit. This carries
+    the pushed branch and the approved canonical diff; ``disclaimer`` restates that
+    the tests were never executed.
+    """
+
+    type: Literal["run_approved"] = "run_approved"
+    coding_run_id: uuid.UUID
+    branch: str
+    diff: str
+    disclaimer: str = REVIEW_DISCLAIMER
+
+
+AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure | PatchResult | ReviewResult | RunRejected | RunApproved

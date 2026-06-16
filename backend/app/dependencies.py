@@ -13,6 +13,7 @@ from sqlmodel import Session
 
 from app.agent.generator import ReActTestGenerator
 from app.agent.graph import build_graph
+from app.agent.patch_publisher import build_patch_publisher_factory
 from app.agent.reviewer import ReActPatchReviewer
 from app.agent.run_recorder import CodingRunRecorder
 from app.core import security
@@ -143,9 +144,7 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
     return current_user
 
 
-def get_rag_pipeline(
-    current_user: CurrentUser, weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStoreDep
-) -> RAGPipeline:
+def get_rag_pipeline(current_user: CurrentUser, weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStoreDep) -> RAGPipeline:
     """Build the authenticated user's repository-scoped RAG pipeline."""
     return RAGPipeline(current_user.id, weaviate_resources, source_document_store)
 
@@ -153,7 +152,7 @@ def get_rag_pipeline(
 RAGPipelineDep = Annotated[RAGPipeline, Depends(get_rag_pipeline)]
 
 
-def get_session_graph(request: Request, rag_pipeline: RAGPipelineDep, coding_run_store: CodingRunStoreDep):
+def get_session_graph(request: Request, rag_pipeline: RAGPipelineDep, coding_run_store: CodingRunStoreDep, repository_store: RepositoryStoreDep):
     """Compile the unified intent-routed graph for one request.
 
     Classifier and planner reuse the pipeline's chat model via structured output;
@@ -170,6 +169,7 @@ def get_session_graph(request: Request, rag_pipeline: RAGPipelineDep, coding_run
         generator=ReActTestGenerator(rag_pipeline.llm),
         reviewer=ReActPatchReviewer(rag_pipeline.llm),
         run_recorder=CodingRunRecorder(coding_run_store),
+        publisher_factory=build_patch_publisher_factory(repository_store),
         checkpointer=request.app.state.session_checkpointer,
     )
 

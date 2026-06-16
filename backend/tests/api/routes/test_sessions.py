@@ -13,7 +13,7 @@ from app.enums.coding_run import CodingRunStage, CodingRunStatus
 from app.enums.session import SessionMessageRole
 from app.models.coding_run import CodingRun
 from app.models.session import RepositorySession, SessionHistory
-from app.schemas.agent_stream import Citation, Result, RunRejected, Stage, Token
+from app.schemas.agent_stream import Citation, Result, RunApproved, RunRejected, Stage, Token
 
 
 class FakeRepositorySessionService:
@@ -221,10 +221,7 @@ def test_decision_resumes_the_paused_run_through_the_same_stream() -> None:
     user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
     session_id = uuid.uuid4()
     run_id = uuid.uuid4()
-    events = [
-        Stage(stage="reviewing"),
-        RunRejected(coding_run_id=run_id, diff="diff --git a/tests/test_x.py b/tests/test_x.py", findings=[]),
-    ]
+    events = [Stage(stage="reviewing"), RunRejected(coding_run_id=run_id, diff="diff --git a/tests/test_x.py b/tests/test_x.py", findings=[])]
     service = FakeAnsweringService(events)
     app = _question_app(service, user=user)
 
@@ -241,6 +238,26 @@ def test_decision_resumes_the_paused_run_through_the_same_stream() -> None:
     assert call["decision"].coding_run_id == run_id
     assert call["decision"].approved is False
     assert call["question"] is None
+
+
+def test_approved_decision_streams_run_approved_terminal() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    service = FakeAnsweringService(
+        [Stage(stage="reviewing"), RunApproved(coding_run_id=run_id, branch="qa-tests/abc123", diff="diff --git a/tests/test_x.py b/tests/test_x.py")]
+    )
+    app = _question_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.post(f"/sessions/{session_id}/questions", json={"decision": {"coding_run_id": str(run_id), "approved": True}})
+
+    assert response.status_code == 200
+    streamed = _parse_sse(response.text)
+    assert [event["type"] for event in streamed] == ["stage", "run_approved"]
+    assert streamed[-1]["coding_run_id"] == str(run_id)
+    assert streamed[-1]["branch"] == "qa-tests/abc123"
+    assert service.answer_calls[0]["decision"].approved is True
 
 
 def test_decision_conflict_from_the_service_surfaces_as_409() -> None:
@@ -261,10 +278,7 @@ def test_request_must_carry_either_a_question_or_a_decision() -> None:
 
     with TestClient(app) as client:
         empty = client.post(f"/sessions/{uuid.uuid4()}/questions", json={})
-        both = client.post(
-            f"/sessions/{uuid.uuid4()}/questions",
-            json={"question": "q", "decision": {"coding_run_id": str(uuid.uuid4()), "approved": True}},
-        )
+        both = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"question": "q", "decision": {"coding_run_id": str(uuid.uuid4()), "approved": True}})
 
     assert empty.status_code == 422
     assert both.status_code == 422
