@@ -14,6 +14,7 @@ from pathlib import Path
 from langgraph.types import interrupt
 
 from app.agent.paths import confine_candidate_paths
+from app.agent.revision_attempt_budget import RevisionAttemptBudget
 from app.agent.stream import emit
 from app.agent.test_files import RejectedTestFile, discover_test_roots, validate_test_file
 from app.core.config import settings
@@ -30,7 +31,6 @@ REVISION_FAILED = "The test generator could not revise its proposal."
 PATCH_DERIVATION_FAILED = "Could not write the generated tests or derive the patch."
 # User-safe reasons for a reviewing-stage failure; never raw exception text.
 REVIEW_FAILED = "The patch reviewer could not complete its assessment."
-SECOND_REVIEW_REJECTED = "The reviewer rejected the revised tests after one revision attempt."
 # The prompt the human-in-the-loop interrupt surfaces while awaiting the owner's decision.
 AWAITING_DECISION_MESSAGE = "Review the generated Test Patch and approve or reject it."
 # The fixed commit message for an approved Test Patch; the run identity lives on the Coding Run, not the message.
@@ -114,8 +114,8 @@ def build_revise_tests_node(generator):
     own prior complete-file proposal, the canonical diff that was reviewed, and the
     reviewer's findings, and may replace the proposal once. The revised files flow
     back through the same write/validation/review path as initial generation; a
-    generator failure here is a generating-stage Run Failure. ``revision_attempts``
-    is stamped so the post-review router admits no second revision.
+    generator failure here is a generating-stage Run Failure. The Revision Attempt
+    budget is spent so the post-review router admits no second revision.
     """
 
     def revise_tests(state) -> dict:
@@ -134,10 +134,11 @@ def build_revise_tests_node(generator):
         except Exception:
             logger.exception("Test revision failed")
             return {"failure": RunFailure(failed_stage="generating", reason=REVISION_FAILED), "trace": ["revise_tests"]}
+        budget = RevisionAttemptBudget.from_state(state).spend()
         return {
             "generated_files": proposal.generated_files,
             "external_references": proposal.external_references or state.get("external_references") or [],
-            "revision_attempts": 1,
+            **budget.state_update(),
             "trace": ["revise_tests"],
         }
 
@@ -167,7 +168,7 @@ def build_build_patch_node(workspace_factory, recorder):
 
         try:
             workspace = workspace_factory(state.get("checkout_root"))
-            if state.get("revision_attempts"):
+            if RevisionAttemptBudget.from_state(state).is_revision_attempt:
                 workspace.reset_patch_state()
             workspace.write_test_files(validated)
             diff = workspace.diff()
@@ -201,7 +202,7 @@ def build_review_patch_node(reviewer, recorder):
         recorder.advance(coding_run_id, CodingRunStatus.reviewing)
         # A second pass over this node is the review of a Revision Attempt; surface it
         # as a distinct stage marker so the Agent Stream tells the two reviews apart.
-        emit(Stage(stage="re_reviewing" if state.get("revision_attempts") else "reviewing"))
+        emit(Stage(stage="re_reviewing" if RevisionAttemptBudget.from_state(state).is_revision_attempt else "reviewing"))
         diff = state.get("diff") or ""
         generated_files = state.get("generated_files") or []
 

@@ -22,10 +22,10 @@ from pydantic import BaseModel, Field
 from app.agent.patch_publisher import NullPatchPublisher
 from app.agent.planner import build_plan_node
 from app.agent.repository_question import build_generate_node, build_retrieve_node
+from app.agent.revision_attempt_budget import RevisionAttemptBudget
 from app.agent.run_recorder import NullRunRecorder
 from app.agent.stream import emit
 from app.agent.test_generation import (
-    SECOND_REVIEW_REJECTED,
     build_approve_patch_node,
     build_await_decision_node,
     build_build_patch_node,
@@ -78,6 +78,8 @@ class GraphState(TypedDict, total=False):
     diff: str
     patch_result: PatchResult
     review_result: ReviewResult
+    # Serialized Revision Attempt budget count. Its semantics live in
+    # ``RevisionAttemptBudget``.
     revision_attempts: int
     # The owner's human-in-the-loop decision on an accepted patch, supplied by resuming
     # the suspended graph, and the terminal outcome when that decision is a rejection.
@@ -129,7 +131,8 @@ def _route_after_review(state: GraphState) -> Literal["failed", "accepted", "rev
     review = state.get("review_result")
     if review is not None and review.accepted:
         return "accepted"
-    return "reject" if state.get("revision_attempts") else "revise"
+    budget = RevisionAttemptBudget.from_state(state)
+    return "revise" if budget.can_spend else "reject"
 
 
 def _route_after_decision(state: GraphState) -> Literal["approve", "reject"]:
@@ -146,8 +149,8 @@ def _route_after_decision(state: GraphState) -> Literal["approve", "reject"]:
 def _reject_run_node():
     """Build the node that turns a post-revision rejection into a review-stage failure."""
 
-    def reject_run(_state: GraphState) -> dict:
-        return {"failure": RunFailure(failed_stage="reviewing", reason=SECOND_REVIEW_REJECTED), "trace": ["reject_run"]}
+    def reject_run(state: GraphState) -> dict:
+        return {"failure": RevisionAttemptBudget.from_state(state).exhausted_failure(), "trace": ["reject_run"]}
 
     return reject_run
 

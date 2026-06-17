@@ -1,6 +1,6 @@
 # Name the Revision Attempt budget
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 51 (refactor under issue 12 — "Perform one bounded Revision Attempt")
 
@@ -28,20 +28,20 @@ revised pass.
 
 ## Acceptance criteria
 
-- [ ] A single module owns the Revision Attempt count and the
+- [x] A single module owns the Revision Attempt count and the
       "exhausted ⇒ reviewing-stage Run Failure (`SECOND_REVIEW_REJECTED`)" rule;
       the invariant "exactly one Revision Attempt" is expressed once.
-- [ ] The post-review router decides revise-vs-reject by asking the budget, not by
+- [x] The post-review router decides revise-vs-reject by asking the budget, not by
       reading a raw int's truthiness.
-- [ ] The revise, build-patch, and review-patch nodes consult the budget for
+- [x] The revise, build-patch, and review-patch nodes consult the budget for
       "are we on/after the revision attempt" (re-review stage marker, workspace
       reset) rather than re-reading the raw count independently.
-- [ ] `graph.py` no longer imports `SECOND_REVIEW_REJECTED` (or the count
+- [x] `graph.py` no longer imports `SECOND_REVIEW_REJECTED` (or the count
       semantics) back from `test_generation`; the magic string lives with the
       budget.
-- [ ] The budget is unit-tested in isolation without compiling or running the
+- [x] The budget is unit-tested in isolation without compiling or running the
       graph (fresh budget, after-one-spend, exhausted → failure).
-- [ ] Existing graph tests still cover the accepted path, one Revision Attempt,
+- [x] Existing graph tests still cover the accepted path, one Revision Attempt,
       and the second-review failure; the backend suite passes excluding known
       environmental/pre-existing failures.
 
