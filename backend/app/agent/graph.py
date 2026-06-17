@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 from app.services.coding_runs.patch_publisher import NullPatchPublisher
 from app.agent.nodes.planner import build_plan_node
 from app.agent.nodes.repository_question import build_generate_node, build_retrieve_node
-from app.services.coding_runs.revision_budget import RevisionAttemptBudget
 from app.services.coding_runs.recorder import NullRunRecorder
 from app.streaming.agent_stream import emit
 from app.agent.nodes.test_generation import (
@@ -33,6 +32,7 @@ from app.agent.nodes.test_generation import (
     build_gather_evidence_node,
     build_generate_tests_node,
     build_prepare_branch_node,
+    build_review_gate_node,
     build_review_patch_node,
     build_revise_tests_node,
 )
@@ -77,8 +77,8 @@ class GraphState(TypedDict, total=False):
     diff: str
     patch_result: PatchResult
     review_result: ReviewResult
-    # Serialized Revision Attempt budget count. Its semantics live in
-    # ``RevisionAttemptBudget``.
+    # Serialized count of spent Revision Attempts. Its semantics live in
+    # ``RevisionBudget``.
     revision_attempts: int
     # The owner's human-in-the-loop decision on an accepted patch, supplied by resuming
     # the suspended graph, and the terminal outcome when that decision is a rejection.
@@ -113,23 +113,6 @@ def _route_after_plan(state: GraphState) -> Literal["failed", "planned"]:
     return "failed" if state.get("failure") else "planned"
 
 
-def _route_after_review(state: GraphState) -> Literal["failed", "accepted", "revise", "reject"]:
-    """Route a completed Patch Review: accept, attempt one revision, or exhaust it.
-
-    A reviewing-stage Run Failure routes to failure handling; an acceptance ends the
-    run at awaiting approval. A first rejection routes to exactly one Revision
-    Attempt; a rejection after that attempt is a terminal review-stage Run Failure,
-    never an unbounded retry.
-    """
-    if state.get("failure"):
-        return "failed"
-    review = state.get("review_result")
-    if review is not None and review.accepted:
-        return "accepted"
-    budget = RevisionAttemptBudget.from_state(state)
-    return "revise" if budget.can_spend else "reject"
-
-
 def _route_after_decision(state: GraphState) -> Literal["approve", "reject"]:
     """Route the owner's human-in-the-loop decision on an accepted Test Patch.
 
@@ -139,15 +122,6 @@ def _route_after_decision(state: GraphState) -> Literal["approve", "reject"]:
     approves.
     """
     return "approve" if state.get("approved") else "reject"
-
-
-def _reject_run_node():
-    """Build the node that turns a post-revision rejection into a review-stage failure."""
-
-    def reject_run(state: GraphState) -> dict:
-        return {"failure": RevisionAttemptBudget.from_state(state).exhausted_failure(), "trace": ["reject_run"]}
-
-    return reject_run
 
 
 def _persist_run_node(recorder):
@@ -198,7 +172,18 @@ def _default_publisher_factory(_repository_id):
 
 
 def build_graph(
-    *, classifier_llm, retriever, llm, planner_llm, generator, reviewer, run_recorder=None, workspace_factory=None, publisher_factory=None, checkpointer=None
+    *,
+    classifier_llm,
+    retriever,
+    llm,
+    planner_llm,
+    generator,
+    reviewer,
+    run_recorder=None,
+    workspace_factory=None,
+    publisher_factory=None,
+    checkpointer=None,
+    max_revision_attempts=None,
 ):
     """Compile the unified intent-routed graph.
 
@@ -221,11 +206,13 @@ def build_graph(
     graph.add_node("generate_tests", build_generate_tests_node(generator), destinations=("build_patch", "fail_run"))
     graph.add_node("build_patch", build_build_patch_node(workspaces, recorder), destinations=("review_patch", "fail_run"))
     graph.add_node("review_patch", build_review_patch_node(reviewer, recorder))
+    graph.add_node(
+        "review_gate", build_review_gate_node(max_revision_attempts=max_revision_attempts), destinations=("await_decision", "revise_tests", "fail_run")
+    )
     graph.add_node("await_decision", build_await_decision_node())
     graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder), destinations=(END, "fail_run"))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
     graph.add_node("revise_tests", build_revise_tests_node(generator), destinations=("build_patch", "fail_run"))
-    graph.add_node("reject_run", _reject_run_node())
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("retrieve", build_retrieve_node(retriever))
     graph.add_node("generate", build_generate_node(llm))
@@ -236,12 +223,9 @@ def build_graph(
     graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "begin_retrieving"})
     graph.add_edge("begin_retrieving", "gather_evidence")
     graph.add_edge("gather_evidence", "prepare_branch")
-    graph.add_conditional_edges(
-        "review_patch", _route_after_review, {"failed": "fail_run", "accepted": "await_decision", "revise": "revise_tests", "reject": "reject_run"}
-    )
+    graph.add_edge("review_patch", "review_gate")
     graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
     graph.add_edge("discard_patch", END)
-    graph.add_edge("reject_run", "fail_run")
     graph.add_edge("fail_run", END)
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)

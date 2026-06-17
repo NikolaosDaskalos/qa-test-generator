@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 from app.services.coding_runs.evidence_partitioner import EvidencePartitioner, EvidencePartitionRequest
 from app.services.coding_runs.patch_builder import PatchBuilder, PatchBuildRequest
-from app.services.coding_runs.revision_budget import RevisionAttemptBudget
+from app.services.coding_runs.revision_budget import RevisionBudget
 from app.streaming.agent_stream import emit
 from app.services.coding_runs.test_file_validation import verify_test_file_boundary
 from app.enums.coding_run import CodingRunStage
@@ -110,14 +110,15 @@ def build_generate_tests_node(generator):
 
 
 def build_revise_tests_node(generator):
-    """Build the node that performs one bounded Revision Attempt after a rejection.
+    """Build the node that performs one Revision Attempt against a below-threshold review.
 
     The generator is handed the original task, partitioned Repository Evidence, its
     own prior complete-file proposal, the canonical diff that was reviewed, and the
-    reviewer's findings, and may replace the proposal once. The revised files flow
-    back through the same write/validation/review path as initial generation; a
-    generator failure here is a generating-stage Run Failure. The Revision Attempt
-    budget is spent so the post-review router admits no second revision.
+    reviewer's findings, and replaces the proposal. The revised files flow back
+    through the same write/validation/review path as initial generation; a generator
+    failure here is a generating-stage Run Failure. One unit of the Revision Budget is
+    spent so the ``review_gate`` admits only as many revisions as the budget allows
+    before escalating to human review.
     """
 
     def revise_tests(state) -> dict:
@@ -136,7 +137,7 @@ def build_revise_tests_node(generator):
         except Exception:
             logger.exception("Test revision failed")
             return _fail_with(RunFailure(failed_stage=CodingRunStage.generating, reason=REVISION_FAILED), "revise_tests")
-        budget = RevisionAttemptBudget.from_state(state).spend()
+        budget = RevisionBudget.from_state(state).spend()
         return _continue_to(
             "build_patch",
             {
@@ -166,7 +167,7 @@ def build_build_patch_node(workspace_factory, recorder):
             PatchBuildRequest(
                 generated_files=state.get("generated_files") or [],
                 checkout_root=state.get("checkout_root"),
-                is_revision_attempt=RevisionAttemptBudget.from_state(state).is_revision_attempt,
+                is_revision_attempt=RevisionBudget.from_state(state).is_revision_attempt,
                 generation_branch=state.get("generation_branch"),
                 coding_run_id=state.get("coding_run_id"),
                 external_references=state.get("external_references") or [],
@@ -203,7 +204,7 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None)
         recorder.begin_reviewing(coding_run_id)
         # A second pass over this node is the review of a Revision Attempt; surface it
         # as a distinct stage marker so the Agent Stream tells the two reviews apart.
-        emit(Stage(stage="re_reviewing" if RevisionAttemptBudget.from_state(state).is_revision_attempt else "reviewing"))
+        emit(Stage(stage="re_reviewing" if RevisionBudget.from_state(state).is_revision_attempt else "reviewing"))
         diff = state.get("diff") or ""
         generated_files = state.get("generated_files") or []
 
@@ -235,18 +236,46 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None)
 
         recorder.record_review(coding_run_id, accepted=accepted, findings=findings)
         review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, score=score, threshold=pass_threshold, findings=findings, diff=diff)
-        if accepted:
-            emit(review_result)
         return {"review_result": review_result, "trace": ["review_patch"]}
 
     return review_patch
 
 
-def build_await_decision_node():
-    """Build the human-in-the-loop node that suspends an accepted run for the owner's decision.
+def build_review_gate_node(*, max_revision_attempts: int | None = None):
+    """Build the explicit node that owns post-review routing via ``Command(goto=…)``.
 
-    After an accepted Patch Review the graph pauses here via ``interrupt``, surfacing
-    the Coding Run, the assessed canonical diff, and the review findings. The graph is
+    The gate reads the review verdict and the spent Revision Budget and routes:
+    an accepted patch (score at/above threshold) goes to human review; a
+    below-threshold patch with budget remaining goes to one more ``revise_tests``;
+    a below-threshold patch with the budget exhausted **also** goes to human review,
+    carrying the best attempt with its score and findings. Exhausting the budget
+    escalates — it never fails. A reviewing-stage Run Failure recorded upstream is
+    routed to ``fail_run``. The terminal ``ReviewResult`` is emitted here whenever
+    the run escalates to the owner, so an escalated below-threshold patch surfaces
+    its score on the Agent Stream just as an accepted one does.
+    """
+
+    def review_gate(state) -> Command:
+        if state.get("failure") is not None:
+            return Command(goto="fail_run", update={"trace": ["review_gate"]})
+        review: ReviewResult | None = state.get("review_result")
+        if review is not None and not review.accepted and RevisionBudget.from_state(state, limit=max_revision_attempts).can_spend:
+            return Command(goto="revise_tests", update={"trace": ["review_gate"]})
+        if review is not None:
+            emit(review)
+        return Command(goto="await_decision", update={"trace": ["review_gate"]})
+
+    return review_gate
+
+
+def build_await_decision_node():
+    """Build the human-in-the-loop node that suspends a run for the owner's decision.
+
+    The ``review_gate`` routes here both for an accepted Patch Review and for a
+    below-threshold patch whose Revision Budget is exhausted, so the graph pauses via
+    ``interrupt`` surfacing the Coding Run, the assessed canonical diff, the review
+    ``score`` and ``threshold``, whether the backend accepted it, and the findings —
+    enough for the owner to judge an escalated below-threshold patch. The graph is
     resumed with the owner's decision payload (``{"approved": bool, "feedback": str}``),
     which is folded onto state so the post-decision router can approve or reject. No
     work touches the checkout here; discarding is the rejected branch's concern.
@@ -258,6 +287,9 @@ def build_await_decision_node():
             {
                 "coding_run_id": state.get("coding_run_id"),
                 "diff": state.get("diff") or "",
+                "score": review.score if review is not None else None,
+                "threshold": review.threshold if review is not None else None,
+                "accepted": review.accepted if review is not None else None,
                 "findings": [finding.model_dump() for finding in (review.findings if review is not None else [])],
                 "message": AWAITING_DECISION_MESSAGE,
             }

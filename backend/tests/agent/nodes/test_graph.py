@@ -289,7 +289,19 @@ def _init_repo_with_test_root(tmp_path: Path) -> tuple[Path, str]:
     return repo, _git(repo, "rev-parse", "HEAD")
 
 
-def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, recorder=None, generator=None, workspace=None, reviewer=None, publisher=None):
+def _build(
+    classifier_llm,
+    *,
+    retriever=None,
+    llm=None,
+    planner_llm=None,
+    recorder=None,
+    generator=None,
+    workspace=None,
+    reviewer=None,
+    publisher=None,
+    max_revision_attempts=None,
+):
     return build_graph(
         classifier_llm=classifier_llm,
         retriever=retriever if retriever is not None else FakeRetriever(),
@@ -300,6 +312,7 @@ def _build(classifier_llm, *, retriever=None, llm=None, planner_llm=None, record
         run_recorder=recorder,
         workspace_factory=_workspace_factory(workspace),
         publisher_factory=_publisher_factory(publisher),
+        max_revision_attempts=max_revision_attempts,
     )
 
 
@@ -510,7 +523,7 @@ def test_test_generation_marks_failure_at_planning_when_out_of_scope() -> None:
 # ── test_generation branch: generation & patch ────────────────────
 
 
-def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None, publisher=None):
+def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None, publisher=None, max_revision_attempts=None):
     planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
     return _build(
         FakeClassifierLLM("test_generation"),
@@ -520,6 +533,7 @@ def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None
         workspace=workspace,
         reviewer=reviewer,
         publisher=publisher,
+        max_revision_attempts=max_revision_attempts,
     )
 
 
@@ -657,10 +671,12 @@ def test_generation_failure_is_a_generating_run_failure() -> None:
 # ── test_generation branch: patch review ──────────────────────────
 
 
-def _reviewed_graph(*, reviewer, recorder=None, files=None, diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"):
+def _reviewed_graph(*, reviewer, recorder=None, files=None, diff="diff --git a/tests/test_auth.py b/tests/test_auth.py", max_revision_attempts=None):
     files = files if files is not None else [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
     generator = FakeGenerator(GenerationProposal(generated_files=files))
-    return _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=diff), reviewer=reviewer)
+    return _generation_graph(
+        generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=diff), reviewer=reviewer, max_revision_attempts=max_revision_attempts
+    )
 
 
 def test_accepted_review_advances_to_awaiting_approval_and_emits_review_result(tmp_path) -> None:
@@ -756,6 +772,8 @@ def test_accepted_review_pauses_for_a_human_decision(tmp_path) -> None:
     prompt = result["__interrupt__"][0].value
     assert prompt["coding_run_id"] == recorder.run_id
     assert prompt["diff"] == diff
+    assert prompt["score"] == 10
+    assert prompt["accepted"] is True
     assert [finding["category"] for finding in prompt["findings"]] == ["readability"]
     # The accepted review is recorded (awaiting approval); no rejection has happened yet.
     assert ("record_review", recorder.run_id, True, findings) in recorder.events
@@ -1355,20 +1373,26 @@ def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_
     assert not (repo / "tests" / "test_removed.py").exists()
 
 
-def test_second_review_rejection_terminates_as_a_review_stage_failure(tmp_path) -> None:
-    """A rejected second review fails the run at the review stage with a sanitized reason, never an unbounded retry."""
+def test_exhausting_the_budget_escalates_the_below_threshold_patch_to_human_review(tmp_path) -> None:
+    """A persistently below-threshold patch is escalated to human review once the budget is spent, never failed."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=3, findings=[ReviewFinding(category="coverage", detail="still incomplete")]))
+    findings = [ReviewFinding(category="coverage", detail="still incomplete")]
+    reviewer = FakeReviewer(PatchReview(score=3, findings=findings))
     generator = FakeGenerator(
         GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
         revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
     )
     graph = _generation_graph(
-        generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer
+        generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
+        reviewer=reviewer,
+        max_revision_attempts=1,
     )
+    config = _config()
 
-    final = graph.invoke(
+    result = graph.invoke(
         {
             "question": "add tests",
             "repository_id": uuid.uuid4(),
@@ -1376,19 +1400,92 @@ def test_second_review_rejection_terminates_as_a_review_stage_failure(tmp_path) 
             "checkout_root": str(tmp_path),
             "indexed_commit_sha": "abc",
         },
-        config=_config(),
+        config=config,
     )
 
-    # Exactly one revision was attempted, then the run terminated as a review-stage failure.
+    # Exactly one revision was attempted (budget of one), then the run escalated rather than failing.
     assert len(generator.revise_calls) == 1
-    failure = final["failure"]
-    assert failure.failed_stage == "reviewing"
-    assert failure.coding_run_id == recorder.run_id
-    # The reason is user-safe and never leaks raw model output or exception text.
-    assert "reject" in failure.reason.lower()
-    # Both reviews recorded a rejection and the run was failed.
+    assert result.get("failure") is None
+    # The run paused at the human-decision interrupt carrying the below-threshold score and its findings.
+    assert "__interrupt__" in result
+    prompt = result["__interrupt__"][0].value
+    assert prompt["score"] == 3
+    assert prompt["accepted"] is False
+    assert [finding["category"] for finding in prompt["findings"]] == ["coverage"]
+    assert graph.get_state(config).next == ("await_decision",)
+    # Both reviews recorded a rejection; the run was never failed.
     assert [event[2] for event in recorder.events if event[0] == "record_review"] == [False, False]
-    assert recorder.events[-1][0] == "fail"
+    assert all(event[0] != "fail" for event in recorder.events)
+
+
+def test_a_zero_budget_escalates_a_below_threshold_patch_without_revising(tmp_path) -> None:
+    """With the Revision Budget configured to zero, a below-threshold patch escalates immediately, never revising."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    findings = [ReviewFinding(category="coverage", detail="thin")]
+    reviewer = FakeReviewer(PatchReview(score=4, findings=findings))
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(
+        generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
+        reviewer=reviewer,
+        max_revision_attempts=0,
+    )
+    config = _config()
+
+    result = graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    # No revision was attempted and the single below-threshold review escalated straight to the owner.
+    assert generator.revise_calls == []
+    assert result.get("failure") is None
+    assert result["__interrupt__"][0].value["score"] == 4
+    assert graph.get_state(config).next == ("await_decision",)
+
+
+def test_a_budget_above_one_allows_multiple_revisions_before_escalating(tmp_path) -> None:
+    """A Revision Budget greater than one permits several revisions; only once it is spent does the patch escalate."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(score=2, findings=[ReviewFinding(category="coverage", detail="thin")]))
+    generator = FakeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
+    )
+    graph = _generation_graph(
+        generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
+        reviewer=reviewer,
+        max_revision_attempts=2,
+    )
+    config = _config()
+
+    result = graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    # Two revisions were attempted (the budget), then the still-below-threshold patch escalated rather than failing.
+    assert len(generator.revise_calls) == 2
+    assert result.get("failure") is None
+    assert graph.get_state(config).next == ("await_decision",)
+    assert [event[2] for event in recorder.events if event[0] == "record_review"] == [False, False, False]
 
 
 def test_revision_generation_failure_is_a_generating_run_failure(tmp_path) -> None:
@@ -1478,6 +1575,34 @@ def test_revision_stream_distinguishes_revising_and_second_review_stages(tmp_pat
 
     stages = [event.stage for event in events if isinstance(event, Stage)]
     assert stages == ["classifying", "planning", "retrieving", "generating", "reviewing", "revising", "re_reviewing"]
+
+
+def test_escalated_below_threshold_patch_emits_its_review_result_on_the_stream(tmp_path) -> None:
+    """An escalated below-threshold patch surfaces a ReviewResult on the stream, just as an accepted one does."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py"
+    reviewer = FakeReviewer(PatchReview(score=4, findings=[ReviewFinding(category="coverage", detail="thin")]))
+    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder, diff=diff, max_revision_attempts=0)
+
+    events = _custom_events(
+        graph,
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+    )
+
+    reviews = [event for event in events if isinstance(event, ReviewResult)]
+    assert len(reviews) == 1
+    assert reviews[0].accepted is False
+    assert reviews[0].score == 4
+    assert reviews[0].diff == diff
+    # The escalation is not a failure: no RunFailure rides the stream.
+    assert not [event for event in events if isinstance(event, RunFailure)]
 
 
 # ── Agent Stream ordering (custom mode) ───────────────────────────
