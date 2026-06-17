@@ -1,6 +1,6 @@
 # Register a Repository and wait until it is ready
 
-Status: ready
+Status: completed
 Type: AFK
 User stories: frontend bare-minimum copilot
 
@@ -18,11 +18,11 @@ repository indexing and is unrelated to the Agent Stream (which is never polled)
 
 ## Acceptance criteria
 
-- [ ] A creation form submits repository URL, GitHub token, and token expiration and handles the accepted (async) response.
-- [ ] After creation the page polls the repository's status and reflects status transitions live without a manual refresh.
-- [ ] Polling stops when the repository reaches `ready` or `failed`.
-- [ ] A newly ready repository becomes selectable/usable; a failed one shows its failure reason.
-- [ ] Validation and backend errors on creation are surfaced to the user rather than failing silently.
+- [x] A creation form submits repository URL, GitHub token, and token expiration and handles the accepted (async) response.
+- [x] After creation the page polls the repository's status and reflects status transitions live without a manual refresh.
+- [x] Polling stops when the repository reaches `ready` or `failed`.
+- [x] A newly ready repository becomes selectable/usable; a failed one shows its failure reason.
+- [x] Validation and backend errors on creation are surfaced to the user rather than failing silently.
 
 ## Blocked by
 

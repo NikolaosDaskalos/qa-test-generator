@@ -1,10 +1,12 @@
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
-import { useState } from "react"
+import { type FormEvent, useEffect, useState } from "react"
 import type { RepositoryPublic } from "@/client"
 import { RepositoriesService } from "@/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 export const Route = createFileRoute("/_layout/")({
   component: CopilotShell,
@@ -18,13 +20,77 @@ export const Route = createFileRoute("/_layout/")({
 })
 
 function CopilotShell() {
+  const queryClient = useQueryClient()
   const [activeRepository, setActiveRepository] =
     useState<RepositoryPublic | null>(null)
   const repositoriesQuery = useQuery({
     queryKey: ["repositories"],
     queryFn: () => RepositoriesService.readRepositories({}),
   })
+  const repositoryStatusQuery = useQuery({
+    queryKey: ["repository", activeRepository?.id],
+    queryFn: () =>
+      RepositoriesService.readRepository({
+        repositoryId: activeRepository?.id ?? "",
+      }),
+    enabled: !!activeRepository && !isTerminalStatus(activeRepository.status),
+    refetchInterval: (query) => {
+      const repository = query.state.data
+
+      if (
+        !isRepositoryPublic(repository) ||
+        isTerminalStatus(repository.status)
+      ) {
+        return false
+      }
+
+      return 1000
+    },
+  })
+  const createRepositoryMutation = useMutation({
+    mutationFn: RepositoriesService.createRepository,
+    onSuccess: (repository) => {
+      queryClient.setQueryData(
+        ["repositories"],
+        (current: { data: RepositoryPublic[]; count: number } | undefined) => {
+          const currentRepositories = current?.data ?? []
+          const nextRepositories = [
+            repository,
+            ...currentRepositories.filter((item) => item.id !== repository.id),
+          ]
+
+          return {
+            data: nextRepositories,
+            count: current?.count ? current.count + 1 : nextRepositories.length,
+          }
+        },
+      )
+      setActiveRepository(repository)
+    },
+  })
   const repositories = repositoriesQuery.data?.data ?? []
+
+  useEffect(() => {
+    if (!isRepositoryPublic(repositoryStatusQuery.data)) {
+      return
+    }
+
+    const repository = repositoryStatusQuery.data
+    queryClient.setQueryData(
+      ["repositories"],
+      (current: { data: RepositoryPublic[]; count: number } | undefined) => {
+        const currentRepositories = current?.data ?? []
+
+        return {
+          data: currentRepositories.map((item) =>
+            item.id === repository.id ? repository : item,
+          ),
+          count: current?.count ?? currentRepositories.length,
+        }
+      },
+    )
+    setActiveRepository(repository)
+  }, [queryClient, repositoryStatusQuery.data])
 
   return (
     <div className="flex min-h-[calc(100vh-12rem)] flex-col gap-6">
@@ -50,13 +116,15 @@ function CopilotShell() {
             repositories={repositories}
             onSelectRepository={setActiveRepository}
           />
-          <button
-            type="button"
-            className="mt-auto h-9 rounded-md border px-3 text-sm font-medium text-muted-foreground"
-            disabled
-          >
-            New repository
-          </button>
+          <RepositoryCreationForm
+            error={getErrorMessage(createRepositoryMutation.error)}
+            isSubmitting={createRepositoryMutation.isPending}
+            onCreate={(values) =>
+              createRepositoryMutation.mutate({
+                requestBody: values,
+              })
+            }
+          />
         </section>
 
         <section
@@ -80,6 +148,73 @@ function CopilotShell() {
         </section>
       </div>
     </div>
+  )
+}
+
+function RepositoryCreationForm({
+  error,
+  isSubmitting,
+  onCreate,
+}: {
+  error: string | null
+  isSubmitting: boolean
+  onCreate: (values: {
+    repository_url: string
+    token: string
+    token_expiration_days: number
+  }) => void
+}) {
+  const [repositoryUrl, setRepositoryUrl] = useState("")
+  const [token, setToken] = useState("")
+  const [tokenExpirationDays, setTokenExpirationDays] = useState("30")
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    onCreate({
+      repository_url: repositoryUrl,
+      token,
+      token_expiration_days: Number(tokenExpirationDays),
+    })
+  }
+
+  return (
+    <form className="mt-auto flex flex-col gap-3" onSubmit={handleSubmit}>
+      <div className="grid gap-2">
+        <Label htmlFor="repository-url">GitHub repository URL</Label>
+        <Input
+          id="repository-url"
+          type="url"
+          value={repositoryUrl}
+          onChange={(event) => setRepositoryUrl(event.target.value)}
+          required
+        />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="github-token">GitHub token</Label>
+        <Input
+          id="github-token"
+          type="password"
+          value={token}
+          onChange={(event) => setToken(event.target.value)}
+          required
+        />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="token-expiration-days">Token expiration in days</Label>
+        <Input
+          id="token-expiration-days"
+          type="number"
+          min="1"
+          value={tokenExpirationDays}
+          onChange={(event) => setTokenExpirationDays(event.target.value)}
+          required
+        />
+      </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <Button type="submit" disabled={isSubmitting}>
+        {isSubmitting ? "Registering..." : "Register repository"}
+      </Button>
+    </form>
   )
 }
 
@@ -145,4 +280,60 @@ function getChatStatusMessage(repository: RepositoryPublic | null) {
   }
 
   return `Chat is disabled while the repository is ${repository.status}.`
+}
+
+function isTerminalStatus(status: RepositoryPublic["status"]) {
+  return status === "ready" || status === "failed"
+}
+
+function getErrorMessage(error: unknown) {
+  if (!error) {
+    return null
+  }
+
+  if (
+    typeof error === "object" &&
+    "body" in error &&
+    hasValidationDetails(error.body)
+  ) {
+    return error.body.detail.map((detail) => detail.msg).join(" ")
+  }
+
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  return "Repository registration failed."
+}
+
+function hasValidationDetails(
+  body: unknown,
+): body is { detail: Array<{ msg: string }> } {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    "detail" in body &&
+    Array.isArray(body.detail) &&
+    body.detail.every(
+      (detail) =>
+        typeof detail === "object" &&
+        detail !== null &&
+        "msg" in detail &&
+        typeof detail.msg === "string",
+    )
+  )
+}
+
+function isRepositoryPublic(value: unknown): value is RepositoryPublic {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    typeof value.id === "string" &&
+    "name" in value &&
+    typeof value.name === "string" &&
+    "status" in value &&
+    typeof value.status === "string" &&
+    ["pending", "cloning", "indexing", "ready", "failed"].includes(value.status)
+  )
 }

@@ -138,3 +138,253 @@ test("Chat is enabled only for the selected ready repository", async ({
     page.getByRole("textbox", { name: "Ask about the selected repository" }),
   ).toBeEnabled()
 })
+
+test("User can register a repository and see it while indexing starts", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    const request = route.request()
+
+    if (request.method() === "GET") {
+      await route.fulfill({ json: { data: [], count: 0 } })
+      return
+    }
+
+    expect(request.method()).toBe("POST")
+    expect(request.postDataJSON()).toEqual({
+      repository_url: "https://github.com/acme/new-api",
+      token: "github-token",
+      token_expiration_days: 30,
+    })
+    await route.fulfill({
+      status: 202,
+      json: {
+        id: "repo-new",
+        user_id: "user-1",
+        repository_url: "https://github.com/acme/new-api",
+        name: "new-api",
+        provider: "github",
+        owner: "acme",
+        default_branch: null,
+        indexed_commit_sha: null,
+        status: "pending",
+        failed_reason: null,
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+
+  await page.goto("/")
+
+  await page
+    .getByRole("textbox", { name: "GitHub repository URL" })
+    .fill("https://github.com/acme/new-api")
+  await page.getByRole("textbox", { name: "GitHub token" }).fill("github-token")
+  await page
+    .getByRole("spinbutton", { name: "Token expiration in days" })
+    .fill("30")
+  await page.getByRole("button", { name: "Register repository" }).click()
+
+  const repositoryRegion = page.getByRole("region", { name: "Repository" })
+  await expect(
+    repositoryRegion.getByRole("button", { name: /new-api/i }),
+  ).toBeVisible()
+  await expect(repositoryRegion.getByText(/^pending$/)).toBeVisible()
+  await expect(page.getByText("new-api selected")).toBeVisible()
+})
+
+test("New repository status updates live until it is ready", async ({
+  page,
+}) => {
+  let repositoryReadCount = 0
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+
+    if (request.method() === "GET" && url.pathname.endsWith("/repositories/")) {
+      await route.fulfill({ json: { data: [], count: 0 } })
+      return
+    }
+
+    if (request.method() === "POST") {
+      await route.fulfill({
+        status: 202,
+        json: {
+          id: "repo-new",
+          user_id: "user-1",
+          repository_url: "https://github.com/acme/new-api",
+          name: "new-api",
+          provider: "github",
+          owner: "acme",
+          default_branch: null,
+          indexed_commit_sha: null,
+          status: "indexing",
+          failed_reason: null,
+          created_at: "2026-06-17T09:00:00Z",
+          updated_at: "2026-06-17T09:00:00Z",
+        },
+      })
+      return
+    }
+
+    repositoryReadCount += 1
+    await route.fulfill({
+      json: {
+        id: "repo-new",
+        user_id: "user-1",
+        repository_url: "https://github.com/acme/new-api",
+        name: "new-api",
+        provider: "github",
+        owner: "acme",
+        default_branch: "main",
+        indexed_commit_sha: repositoryReadCount > 1 ? "abc123" : null,
+        status: repositoryReadCount > 1 ? "ready" : "indexing",
+        failed_reason: null,
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+
+  await page.goto("/")
+
+  await page
+    .getByRole("textbox", { name: "GitHub repository URL" })
+    .fill("https://github.com/acme/new-api")
+  await page.getByRole("textbox", { name: "GitHub token" }).fill("github-token")
+  await page
+    .getByRole("spinbutton", { name: "Token expiration in days" })
+    .fill("30")
+  await page.getByRole("button", { name: "Register repository" }).click()
+
+  const repositoryRegion = page.getByRole("region", { name: "Repository" })
+  await expect(repositoryRegion.getByText(/^indexing$/)).toBeVisible()
+  await expect(repositoryRegion.getByText(/^ready$/)).toBeVisible({
+    timeout: 5000,
+  })
+  await expect(
+    page.getByRole("textbox", { name: "Ask about the selected repository" }),
+  ).toBeEnabled()
+})
+
+test("Failed repository indexing shows the failure reason and stops polling", async ({
+  page,
+}) => {
+  let repositoryReadCount = 0
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+
+    if (request.method() === "GET" && url.pathname.endsWith("/repositories/")) {
+      await route.fulfill({ json: { data: [], count: 0 } })
+      return
+    }
+
+    if (request.method() === "POST") {
+      await route.fulfill({
+        status: 202,
+        json: {
+          id: "repo-new",
+          user_id: "user-1",
+          repository_url: "https://github.com/acme/new-api",
+          name: "new-api",
+          provider: "github",
+          owner: "acme",
+          default_branch: null,
+          indexed_commit_sha: null,
+          status: "cloning",
+          failed_reason: null,
+          created_at: "2026-06-17T09:00:00Z",
+          updated_at: "2026-06-17T09:00:00Z",
+        },
+      })
+      return
+    }
+
+    repositoryReadCount += 1
+    await route.fulfill({
+      json: {
+        id: "repo-new",
+        user_id: "user-1",
+        repository_url: "https://github.com/acme/new-api",
+        name: "new-api",
+        provider: "github",
+        owner: "acme",
+        default_branch: null,
+        indexed_commit_sha: null,
+        status: "failed",
+        failed_reason: "GitHub token expired",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:01:00Z",
+      },
+    })
+  })
+
+  await page.goto("/")
+
+  await page
+    .getByRole("textbox", { name: "GitHub repository URL" })
+    .fill("https://github.com/acme/new-api")
+  await page.getByRole("textbox", { name: "GitHub token" }).fill("github-token")
+  await page
+    .getByRole("spinbutton", { name: "Token expiration in days" })
+    .fill("30")
+  await page.getByRole("button", { name: "Register repository" }).click()
+
+  await expect(page.getByText(/^failed$/)).toBeVisible()
+  await expect(
+    page
+      .getByRole("region", { name: "Repository" })
+      .getByText("GitHub token expired"),
+  ).toBeVisible()
+  await expect(
+    page.getByText(
+      "Chat is disabled because repository processing failed: GitHub token expired",
+    ),
+  ).toBeVisible()
+
+  await page.waitForTimeout(1500)
+  expect(repositoryReadCount).toBe(1)
+})
+
+test("Repository creation backend errors are shown", async ({ page }) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    const request = route.request()
+
+    if (request.method() === "GET") {
+      await route.fulfill({ json: { data: [], count: 0 } })
+      return
+    }
+
+    await route.fulfill({
+      status: 422,
+      json: {
+        detail: [
+          {
+            loc: ["body", "repository_url"],
+            msg: "Input should be a valid GitHub URL",
+            type: "value_error",
+          },
+        ],
+      },
+    })
+  })
+
+  await page.goto("/")
+
+  await page
+    .getByRole("textbox", { name: "GitHub repository URL" })
+    .fill("https://example.com/acme/new-api")
+  await page.getByRole("textbox", { name: "GitHub token" }).fill("github-token")
+  await page
+    .getByRole("spinbutton", { name: "Token expiration in days" })
+    .fill("30")
+  await page.getByRole("button", { name: "Register repository" }).click()
+
+  await expect(
+    page.getByText("Input should be a valid GitHub URL"),
+  ).toBeVisible()
+})
