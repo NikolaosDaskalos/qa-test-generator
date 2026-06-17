@@ -1,4 +1,10 @@
+import { useQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
+import { useState } from "react"
+import type { RepositoryPublic } from "@/client"
+import { RepositoriesService } from "@/client"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 
 export const Route = createFileRoute("/_layout/")({
   component: CopilotShell,
@@ -12,6 +18,14 @@ export const Route = createFileRoute("/_layout/")({
 })
 
 function CopilotShell() {
+  const [activeRepository, setActiveRepository] =
+    useState<RepositoryPublic | null>(null)
+  const repositoriesQuery = useQuery({
+    queryKey: ["repositories"],
+    queryFn: () => RepositoriesService.readRepositories({}),
+  })
+  const repositories = repositoriesQuery.data?.data ?? []
+
   return (
     <div className="flex min-h-[calc(100vh-12rem)] flex-col gap-6">
       <header className="flex flex-col gap-2">
@@ -26,12 +40,16 @@ function CopilotShell() {
           <div>
             <h2 className="text-base font-semibold">Repository</h2>
             <p className="text-sm text-muted-foreground">
-              No repository selected
+              {activeRepository
+                ? `${activeRepository.name} selected`
+                : "No repository selected"}
             </p>
           </div>
-          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            Repository list
-          </div>
+          <RepositorySelector
+            activeRepository={activeRepository}
+            repositories={repositories}
+            onSelectRepository={setActiveRepository}
+          />
           <button
             type="button"
             className="mt-auto h-9 rounded-md border px-3 text-sm font-medium text-muted-foreground"
@@ -49,15 +67,82 @@ function CopilotShell() {
             <h2 className="text-base font-semibold">Chat</h2>
           </div>
           <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
-            Select a repository to start a Repository Session.
+            {getChatStatusMessage(activeRepository)}
           </div>
           <div className="border-t p-4">
-            <div className="flex min-h-11 items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
-              Ask about the selected repository
-            </div>
+            <textarea
+              aria-label="Ask about the selected repository"
+              className="min-h-20 w-full resize-none rounded-md border bg-background px-3 py-2 text-sm disabled:bg-muted/30 disabled:text-muted-foreground"
+              disabled={activeRepository?.status !== "ready"}
+              placeholder="Ask about the selected repository"
+            />
           </div>
         </section>
       </div>
     </div>
   )
+}
+
+function RepositorySelector({
+  activeRepository,
+  repositories,
+  onSelectRepository,
+}: {
+  activeRepository: RepositoryPublic | null
+  repositories: RepositoryPublic[]
+  onSelectRepository: (repository: RepositoryPublic) => void
+}) {
+  if (repositories.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+        No repositories registered yet.
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {repositories.map((repository) => (
+        <Button
+          key={repository.id}
+          type="button"
+          variant="outline"
+          aria-pressed={activeRepository?.id === repository.id}
+          className="h-auto justify-start p-3 text-left"
+          onClick={() => onSelectRepository(repository)}
+        >
+          <span className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="flex items-center justify-between gap-2">
+              <span className="truncate font-medium">{repository.name}</span>
+              <Badge variant="secondary">{repository.status}</Badge>
+            </span>
+            <span className="truncate text-xs text-muted-foreground">
+              {repository.owner}/{repository.name}
+            </span>
+            {repository.status === "failed" && repository.failed_reason ? (
+              <span className="text-xs text-destructive">
+                {repository.failed_reason}
+              </span>
+            ) : null}
+          </span>
+        </Button>
+      ))}
+    </div>
+  )
+}
+
+function getChatStatusMessage(repository: RepositoryPublic | null) {
+  if (!repository) {
+    return "Select a repository to start a Repository Session."
+  }
+
+  if (repository.status === "ready") {
+    return `Chat is ready for ${repository.name}.`
+  }
+
+  if (repository.status === "failed") {
+    return `Chat is disabled because repository processing failed: ${repository.failed_reason ?? "No failure reason was provided."}`
+  }
+
+  return `Chat is disabled while the repository is ${repository.status}.`
 }

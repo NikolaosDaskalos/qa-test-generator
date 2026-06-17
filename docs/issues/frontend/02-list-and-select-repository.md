@@ -1,6 +1,6 @@
 # List and select a Repository with live status
 
-Status: ready
+Status: completed
 Type: AFK
 User stories: frontend bare-minimum copilot
 
@@ -17,11 +17,11 @@ surfaces its failure reason.
 
 ## Acceptance criteria
 
-- [ ] The repository selector lists the authenticated user's repositories fetched from the backend.
-- [ ] Each repository shows its current status, and a failed repository shows its failure reason.
-- [ ] Selecting a repository sets it as the active repository for the page.
-- [ ] The chat area is enabled only when the active repository's status is `ready`; otherwise it is disabled with an explanation.
-- [ ] An empty repository list renders a sensible empty state rather than an error.
+- [x] The repository selector lists the authenticated user's repositories fetched from the backend.
+- [x] Each repository shows its current status, and a failed repository shows its failure reason.
+- [x] Selecting a repository sets it as the active repository for the page.
+- [x] The chat area is enabled only when the active repository's status is `ready`; otherwise it is disabled with an explanation.
+- [x] An empty repository list renders a sensible empty state rather than an error.
 
 ## Blocked by
 
