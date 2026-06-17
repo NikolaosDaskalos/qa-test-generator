@@ -1,6 +1,6 @@
 # Give the evidence-partition step a deep interface behind a thin node
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 8 (refactor under issue 08 — "Plan Test Generation from Evidence")
 
@@ -26,17 +26,17 @@ order.
 
 ## Acceptance criteria
 
-- [ ] A deep evidence partitioner owns the per-intent retrieve, source/test
+- [x] A deep evidence partitioner owns the per-intent retrieve, source/test
       routing, candidate-path confinement, and hint de-duplication, taking plain
       inputs and returning partitioned evidence + hints.
-- [ ] The `gather_evidence` graph node is a thin adapter: unpack state → call
+- [x] The `gather_evidence` graph node is a thin adapter: unpack state → call
       partitioner → fold partitioned evidence/hints onto state.
-- [ ] The partitioner is unit-tested directly with a fake retriever and plain
+- [x] The partitioner is unit-tested directly with a fake retriever and plain
       Research Intents, without compiling or running the graph (source/test
       routing, hint confinement, de-duplication order).
-- [ ] Behavior is preserved: intents route to the correct partition, hints are
+- [x] Behavior is preserved: intents route to the correct partition, hints are
       confined to the checkout, and de-duplication keeps first-seen order.
-- [ ] The backend suite passes excluding known environmental/pre-existing
+- [x] The backend suite passes excluding known environmental/pre-existing
       failures.
 
 ## Blocked by

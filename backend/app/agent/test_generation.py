@@ -9,16 +9,14 @@ tested), which are kept apart on the shared state.
 """
 
 import logging
-from pathlib import Path
 
 from langgraph.types import interrupt
 
+from app.agent.evidence_partitioner import EvidencePartitioner, EvidencePartitionRequest
 from app.agent.patch_builder import PatchBuilder, PatchBuildRequest
-from app.agent.paths import confine_candidate_paths
 from app.agent.revision_attempt_budget import RevisionAttemptBudget
 from app.agent.stream import emit
 from app.agent.test_files import verify_test_file_boundary
-from app.core.config import settings
 from app.enums.coding_run import CodingRunStatus
 from app.schemas.agent_stream import ReviewResult, RunApproved, RunFailure, RunRejected, Stage
 
@@ -42,23 +40,22 @@ PUSH_FAILED = "Could not push the approved Test Patch branch."
 def build_gather_evidence_node(retriever):
     """Build the generic retrieve node that partitions evidence source vs. test."""
 
+    partitioner = EvidencePartitioner(retriever)
+
     def gather_evidence(state) -> dict:
-        repository_id = state["repository_id"]
-        checkout_root = state.get("checkout_root")
-        source_evidence: list = []
-        test_evidence: list = []
-        hints: list[str] = []
-
-        for intent in state.get("research_intents") or []:
-            if checkout_root and intent.candidate_paths:
-                hints.extend(confine_candidate_paths(Path(checkout_root), intent.candidate_paths))
-            evidence = retriever.retrieve_evidence(
-                intent.description, repository_id=repository_id, k=settings.TOP_K, alpha=settings.HYBRID_SEARCH_ALPHA, parent_limit=settings.FINAL_PARENT_LIMIT
+        partition = partitioner.partition(
+            EvidencePartitionRequest(
+                research_intents=state.get("research_intents") or [],
+                repository_id=state["repository_id"],
+                checkout_root=state.get("checkout_root"),
             )
-            target = source_evidence if intent.target == "source" else test_evidence
-            target.extend(evidence)
-
-        return {"source_evidence": source_evidence, "test_evidence": test_evidence, "candidate_hints": _dedupe(hints), "trace": ["gather_evidence"]}
+        )
+        return {
+            "source_evidence": partition.source_evidence,
+            "test_evidence": partition.test_evidence,
+            "candidate_hints": partition.candidate_hints,
+            "trace": ["gather_evidence"],
+        }
 
     return gather_evidence
 
@@ -312,14 +309,3 @@ def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
         return {"approval_result": approval, "trace": ["approve_patch"]}
 
     return approve_patch
-
-
-def _dedupe(paths: list[str]) -> list[str]:
-    """Drop duplicate validated hints while preserving first-seen order."""
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for path in paths:
-        if path not in seen:
-            seen.add(path)
-            ordered.append(path)
-    return ordered
