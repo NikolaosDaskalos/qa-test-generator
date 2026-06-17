@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from langgraph.types import Command
 
-from app.agent.stream import map_graph_stream
+from app.streaming.agent_stream import map_graph_stream
 from app.enums.repository import RepositoryStatus
 from app.models.coding_run import CodingRun
 from app.models.session import RepositorySession, SessionHistory

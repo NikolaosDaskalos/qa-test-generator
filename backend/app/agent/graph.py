@@ -19,13 +19,13 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
-from app.agent.patch_publisher import NullPatchPublisher
-from app.agent.planner import build_plan_node
-from app.agent.repository_question import build_generate_node, build_retrieve_node
-from app.agent.revision_attempt_budget import RevisionAttemptBudget
-from app.agent.run_recorder import NullRunRecorder
-from app.agent.stream import emit
-from app.agent.test_generation import (
+from app.services.coding_runs.patch_publisher import NullPatchPublisher
+from app.agent.nodes.planner import build_plan_node
+from app.agent.nodes.repository_question import build_generate_node, build_retrieve_node
+from app.services.coding_runs.revision_budget import RevisionAttemptBudget
+from app.services.coding_runs.recorder import NullRunRecorder
+from app.streaming.agent_stream import emit
+from app.agent.nodes.test_generation import (
     build_approve_patch_node,
     build_await_decision_node,
     build_build_patch_node,
@@ -36,7 +36,7 @@ from app.agent.test_generation import (
     build_review_patch_node,
     build_revise_tests_node,
 )
-from app.agent.workspace import LocalGitWorkspace
+from app.services.coding_runs.workspace import LocalGitWorkspace
 from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, RunStarted, Stage
 from app.schemas.research_intent import ResearchIntent
 

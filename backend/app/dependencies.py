@@ -13,11 +13,11 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr, ValidationError
 from sqlmodel import Session
 
-from app.agent.generator import ReActTestGenerator
+from app.agent.agents.generator import ReActTestGenerator
 from app.agent.graph import build_graph
-from app.agent.patch_publisher import build_patch_publisher_factory
-from app.agent.reviewer import ReActPatchReviewer
-from app.agent.run_recorder import CodingRunRecorder
+from app.services.coding_runs.patch_publisher import build_patch_publisher_factory
+from app.agent.agents.reviewer import ReActPatchReviewer
+from app.services.coding_runs.recorder import CodingRunRecorder
 from app.core import security
 from app.core.config import settings
 from app.core.db import engine
