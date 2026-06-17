@@ -1,6 +1,6 @@
 # Tell the owner where the approved branch was pushed
 
-Status: ready
+Status: completed
 Type: AFK
 Revises: [15 - Approve and push the generated branch](15-approve-and-push-generated-branch.md)
 ADR: [0004 - Scored Patch Review escalates to human review](../adr/0004-scored-review-escalates-to-human.md)
@@ -19,10 +19,10 @@ adds the prepared message so any client renders consistent copy.
 
 ## Acceptance criteria
 
-- [ ] `RunApproved` carries a `message` string composed at the approval node, naming the pushed branch.
-- [ ] The message is produced only on a successful push; a commit/push failure remains a `RunFailure` with no approval message.
-- [ ] The existing `branch`, `diff`, and disclaimer fields are unchanged.
-- [ ] Tests assert the approval terminal includes the branch-naming message on a successful push.
+- [x] `RunApproved` carries a `message` string composed at the approval node, naming the pushed branch.
+- [x] The message is produced only on a successful push; a commit/push failure remains a `RunFailure` with no approval message.
+- [x] The existing `branch`, `diff`, and disclaimer fields are unchanged.
+- [x] Tests assert the approval terminal includes the branch-naming message on a successful push.
 
 ## Blocked by
 

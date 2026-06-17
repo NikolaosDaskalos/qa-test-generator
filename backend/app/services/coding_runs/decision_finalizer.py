@@ -28,6 +28,11 @@ COMMIT_FAILED = "Could not commit the approved Test Patch."
 PUSH_FAILED = "Could not push the approved Test Patch branch."
 
 
+def _pushed_message(branch: str) -> str:
+    """Ready-to-show copy naming the pushed branch and directing the owner to open it."""
+    return f"Your tests were pushed to branch '{branch}'. Open it on your repository to review."
+
+
 class DecisionFinalizer:
     """Finalize the owner's approve/reject decision on a reviewed Test Patch."""
 
@@ -56,7 +61,8 @@ class DecisionFinalizer:
             return RunFailure(failed_stage=CodingRunStage.git_push, reason=PUSH_FAILED)
         self._recorder.approve(coding_run_id)
         self._restore_checkout(workspace, indexed_commit_sha, generation_branch)
-        return RunApproved(coding_run_id=coding_run_id, branch=generation_branch or "", diff=diff or "")
+        branch = generation_branch or ""
+        return RunApproved(coding_run_id=coding_run_id, branch=branch, diff=diff or "", message=_pushed_message(branch))
 
     def discard(
         self,

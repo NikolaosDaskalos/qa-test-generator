@@ -138,14 +138,16 @@ class RunApproved(BaseModel):
     non-default ``branch`` and pushed to the remote with the Repository Credential,
     leaving that remote branch available for manual inspection or pull-request
     creation. The local checkout is then restored to the indexed commit. This carries
-    the pushed branch and the approved canonical diff; ``disclaimer`` restates that
-    the tests were never executed.
+    the pushed branch and the approved canonical diff, a ready-to-show ``message``
+    naming the pushed branch, and a ``disclaimer`` restating that the tests were never
+    executed.
     """
 
     type: Literal["run_approved"] = "run_approved"
     coding_run_id: uuid.UUID
     branch: str
     diff: str
+    message: str = ""
     disclaimer: str = REVIEW_DISCLAIMER
 
 

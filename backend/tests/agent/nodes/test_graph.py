@@ -904,6 +904,9 @@ def test_approving_a_paused_run_commits_pushes_and_emits_run_approved(tmp_path) 
     approval = final["approval_result"]
     assert isinstance(approval, RunApproved)
     assert approval.coding_run_id == recorder.run_id
+    # The terminal carries ready-to-show copy naming the pushed branch the owner should open.
+    assert approval.branch and approval.branch in approval.message
+    assert "Open it on your repository" in approval.message
     assert final.get("rejection_result") is None
     assert final.get("failure") is None
 
