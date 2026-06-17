@@ -1,12 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { type FormEvent, useEffect, useState } from "react"
-import type { RepositoryPublic } from "@/client"
-import { RepositoriesService } from "@/client"
+import type { Citation, RepositoryPublic, SessionHistoryPublic } from "@/client"
+import { RepositoriesService, SessionsService } from "@/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { askRepositoryQuestionStream } from "@/lib/agentStream"
+
+type ChatMessage = {
+  id: string
+  role: "user" | "assistant"
+  content: string
+  citations: Citation[]
+}
 
 export const Route = createFileRoute("/_layout/")({
   component: CopilotShell,
@@ -23,6 +31,12 @@ function CopilotShell() {
   const queryClient = useQueryClient()
   const [activeRepository, setActiveRepository] =
     useState<RepositoryPublic | null>(null)
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [question, setQuestion] = useState("")
+  const [stageStatus, setStageStatus] = useState<string | null>(null)
+  const [streamError, setStreamError] = useState<string | null>(null)
+  const [isCreatingSession, setIsCreatingSession] = useState(false)
   const repositoriesQuery = useQuery({
     queryKey: ["repositories"],
     queryFn: () => RepositoriesService.readRepositories({}),
@@ -92,6 +106,32 @@ function CopilotShell() {
     setActiveRepository(repository)
   }, [queryClient, repositoryStatusQuery.data])
 
+  useEffect(() => {
+    if (!activeRepository || activeRepository.status !== "ready") {
+      setActiveSessionId(null)
+      setChatMessages([])
+      return
+    }
+
+    const storedSessionId = localStorage.getItem(
+      getRepositorySessionStorageKey(activeRepository.id),
+    )
+    if (storedSessionId) {
+      setActiveSessionId(storedSessionId)
+      SessionsService.readRepositorySessionHistory({
+        repositorySessionId: storedSessionId,
+      }).then((history) => setChatMessages(toChatMessages(history.data)))
+      return
+    }
+
+    createRepositorySession({
+      repositoryId: activeRepository.id,
+      setActiveSessionId,
+      setChatMessages,
+      setIsCreatingSession,
+    })
+  }, [activeRepository])
+
   return (
     <div className="flex min-h-[calc(100vh-12rem)] flex-col gap-6">
       <header className="flex flex-col gap-2">
@@ -114,7 +154,11 @@ function CopilotShell() {
           <RepositorySelector
             activeRepository={activeRepository}
             repositories={repositories}
-            onSelectRepository={setActiveRepository}
+            onSelectRepository={(repository) => {
+              setActiveRepository(repository)
+              setStageStatus(null)
+              setStreamError(null)
+            }}
           />
           <RepositoryCreationForm
             error={getErrorMessage(createRepositoryMutation.error)}
@@ -131,20 +175,100 @@ function CopilotShell() {
           aria-label="Chat"
           className="flex min-h-[32rem] flex-col rounded-lg border bg-background"
         >
-          <div className="border-b p-4">
+          <div className="flex items-center justify-between gap-3 border-b p-4">
             <h2 className="text-base font-semibold">Chat</h2>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={
+                activeRepository?.status !== "ready" || isCreatingSession
+              }
+              onClick={() => {
+                if (!activeRepository) {
+                  return
+                }
+                setStageStatus(null)
+                setStreamError(null)
+                createRepositorySession({
+                  repositoryId: activeRepository.id,
+                  setActiveSessionId,
+                  setChatMessages,
+                  setIsCreatingSession,
+                })
+              }}
+            >
+              New Session
+            </Button>
           </div>
-          <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
-            {getChatStatusMessage(activeRepository)}
+          <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6 text-sm">
+            {chatMessages.length === 0 ? (
+              <div className="flex flex-1 items-center justify-center text-center text-muted-foreground">
+                {getChatStatusMessage(activeRepository)}
+              </div>
+            ) : (
+              chatMessages.map((message) => (
+                <article
+                  key={message.id}
+                  className={
+                    message.role === "user"
+                      ? "self-end rounded-md bg-primary px-3 py-2 text-primary-foreground"
+                      : "max-w-3xl"
+                  }
+                >
+                  <p className="whitespace-pre-wrap">{message.content}</p>
+                  {message.citations.length > 0 ? (
+                    <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
+                      {message.citations.map((citation) => (
+                        <li key={citation.source}>{citation.source}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </article>
+              ))
+            )}
+            {stageStatus ? (
+              <p className="text-xs text-muted-foreground">{stageStatus}</p>
+            ) : null}
+            {streamError ? (
+              <p className="text-sm text-destructive">{streamError}</p>
+            ) : null}
           </div>
-          <div className="border-t p-4">
+          <form
+            className="flex gap-3 border-t p-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (!activeSessionId || !question.trim()) {
+                return
+              }
+              submitQuestion({
+                repositorySessionId: activeSessionId,
+                question: question.trim(),
+                setChatMessages,
+                setQuestion,
+                setStageStatus,
+                setStreamError,
+              })
+            }}
+          >
             <textarea
               aria-label="Ask about the selected repository"
-              className="min-h-20 w-full resize-none rounded-md border bg-background px-3 py-2 text-sm disabled:bg-muted/30 disabled:text-muted-foreground"
+              className="min-h-20 flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm disabled:bg-muted/30 disabled:text-muted-foreground"
               disabled={activeRepository?.status !== "ready"}
               placeholder="Ask about the selected repository"
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
             />
-          </div>
+            <Button
+              type="submit"
+              disabled={
+                activeRepository?.status !== "ready" ||
+                !activeSessionId ||
+                !question.trim()
+              }
+            >
+              Ask
+            </Button>
+          </form>
         </section>
       </div>
     </div>
@@ -284,6 +408,128 @@ function getChatStatusMessage(repository: RepositoryPublic | null) {
 
 function isTerminalStatus(status: RepositoryPublic["status"]) {
   return status === "ready" || status === "failed"
+}
+
+function getRepositorySessionStorageKey(repositoryId: string) {
+  return `repository-session:${repositoryId}`
+}
+
+function toChatMessages(history: SessionHistoryPublic[]): ChatMessage[] {
+  return history.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    citations: message.citations,
+  }))
+}
+
+async function createRepositorySession({
+  repositoryId,
+  setActiveSessionId,
+  setChatMessages,
+  setIsCreatingSession,
+}: {
+  repositoryId: string
+  setActiveSessionId: React.Dispatch<React.SetStateAction<string | null>>
+  setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
+  setIsCreatingSession: React.Dispatch<React.SetStateAction<boolean>>
+}) {
+  setIsCreatingSession(true)
+  try {
+    const session = await SessionsService.createRepositorySession({
+      requestBody: { repository_id: repositoryId },
+    })
+    const sessionId = session.id
+
+    localStorage.setItem(
+      getRepositorySessionStorageKey(repositoryId),
+      sessionId,
+    )
+    setActiveSessionId(sessionId)
+    setChatMessages([])
+
+    const history = await SessionsService.readRepositorySessionHistory({
+      repositorySessionId: sessionId,
+    })
+    setChatMessages(toChatMessages(history.data))
+  } finally {
+    setIsCreatingSession(false)
+  }
+}
+
+async function submitQuestion({
+  repositorySessionId,
+  question,
+  setChatMessages,
+  setQuestion,
+  setStageStatus,
+  setStreamError,
+}: {
+  repositorySessionId: string
+  question: string
+  setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
+  setQuestion: React.Dispatch<React.SetStateAction<string>>
+  setStageStatus: React.Dispatch<React.SetStateAction<string | null>>
+  setStreamError: React.Dispatch<React.SetStateAction<string | null>>
+}) {
+  const assistantMessageId = crypto.randomUUID()
+
+  setQuestion("")
+  setStreamError(null)
+  setStageStatus(null)
+  setChatMessages((messages) => [
+    ...messages,
+    {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: question,
+      citations: [],
+    },
+    {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "",
+      citations: [],
+    },
+  ])
+
+  for await (const event of askRepositoryQuestionStream({
+    repositorySessionId,
+    question,
+  })) {
+    if (event.type === "stage") {
+      setStageStatus(event.stage)
+    }
+
+    if (event.type === "token") {
+      setChatMessages((messages) =>
+        messages.map((message) =>
+          message.id === assistantMessageId
+            ? { ...message, content: `${message.content}${event.content}` }
+            : message,
+        ),
+      )
+    }
+
+    if (event.type === "result") {
+      setChatMessages((messages) =>
+        messages.map((message) =>
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                content: event.answer,
+                citations: event.citations,
+              }
+            : message,
+        ),
+      )
+    }
+
+    if (event.type === "transport_error") {
+      setStageStatus(null)
+      setStreamError(event.message)
+    }
+  }
 }
 
 function getErrorMessage(error: unknown) {

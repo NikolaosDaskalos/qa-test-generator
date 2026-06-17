@@ -1,6 +1,6 @@
 # Ask a Repository question over a bespoke SSE reader with live tokens and citations
 
-Status: ready
+Status: completed
 Type: AFK
 User stories: frontend bare-minimum copilot
 
@@ -25,12 +25,12 @@ chat. Resumed history renders prior user/assistant messages with their citations
 
 ## Acceptance criteria
 
-- [ ] A bespoke SSE reader posts a question and yields typed Agent Stream frames, reusing the client's base URL and bearer token.
-- [ ] Submitting a question renders a one-line stage status, streams answer tokens live into the assistant message, and on the terminal `result` shows the answer with its file citations as a source list.
-- [ ] The active session id is persisted per repository in browser storage; reloading resumes the last session for the selected repository.
-- [ ] On repository/session selection the chat loads and renders existing session history (messages and citations).
-- [ ] A "New Session" action creates a new session, stores its id, and clears the chat.
-- [ ] The chat input is usable only for a `ready` repository, and an out-of-band transport error frame is surfaced without crashing the page.
+- [x] A bespoke SSE reader posts a question and yields typed Agent Stream frames, reusing the client's base URL and bearer token.
+- [x] Submitting a question renders a one-line stage status, streams answer tokens live into the assistant message, and on the terminal `result` shows the answer with its file citations as a source list.
+- [x] The active session id is persisted per repository in browser storage; reloading resumes the last session for the selected repository.
+- [x] On repository/session selection the chat loads and renders existing session history (messages and citations).
+- [x] A "New Session" action creates a new session, stores its id, and clears the chat.
+- [x] The chat input is usable only for a `ready` repository, and an out-of-band transport error frame is surfaced without crashing the page.
 
 ## Blocked by
 
