@@ -1,6 +1,6 @@
 # Give the patch-build step a deep interface behind a thin node
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 9 (refactor under issue 09 — "Generate the canonical Test Patch")
 
@@ -32,21 +32,21 @@ accepts.
 
 ## Acceptance criteria
 
-- [ ] A deep `PatchBuilder` owns validate → write → diff → persist, taking plain
+- [x] A deep `PatchBuilder` owns validate → write → diff → persist, taking plain
       inputs and returning a Test Patch result or a typed Run Failure (no raw
       state dict, no escaping exception).
-- [ ] The Test-File boundary check is a single shared verifier used by both the
+- [x] The Test-File boundary check is a single shared verifier used by both the
       builder's validation and the review step's independent re-check (no
       duplicated `validate_test_file` loop).
-- [ ] The `build_patch` graph node is a thin adapter: unpack state → call builder
+- [x] The `build_patch` graph node is a thin adapter: unpack state → call builder
       → fold result/failure onto state.
-- [ ] The builder and the boundary verifier are unit-tested directly with plain
+- [x] The builder and the boundary verifier are unit-tested directly with plain
       inputs, without compiling or running the graph — including the failure
       mapping (rejected path, derivation failure) in isolation.
-- [ ] Behavior is preserved: pre-write validation failures, Revision-Attempt
+- [x] Behavior is preserved: pre-write validation failures, Revision-Attempt
       workspace reset, Git-derived diff, Coding Run persistence, and review-time
       boundary rejection all still hold.
-- [ ] The backend suite passes excluding known environmental/pre-existing
+- [x] The backend suite passes excluding known environmental/pre-existing
       failures.
 
 ## Blocked by

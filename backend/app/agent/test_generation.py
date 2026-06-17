@@ -13,14 +13,14 @@ from pathlib import Path
 
 from langgraph.types import interrupt
 
+from app.agent.patch_builder import PatchBuilder, PatchBuildRequest
 from app.agent.paths import confine_candidate_paths
 from app.agent.revision_attempt_budget import RevisionAttemptBudget
 from app.agent.stream import emit
-from app.agent.test_files import RejectedTestFile, discover_test_roots, validate_test_file
+from app.agent.test_files import verify_test_file_boundary
 from app.core.config import settings
 from app.enums.coding_run import CodingRunStatus
-from app.schemas.agent_stream import PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, Stage
-from app.schemas.review import ReviewFinding
+from app.schemas.agent_stream import ReviewResult, RunApproved, RunFailure, RunRejected, Stage
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 BRANCH_PREPARATION_FAILED = "Could not prepare a clean branch to generate tests on."
 GENERATION_FAILED = "The test generator could not produce a valid proposal."
 REVISION_FAILED = "The test generator could not revise its proposal."
-PATCH_DERIVATION_FAILED = "Could not write the generated tests or derive the patch."
 # User-safe reasons for a reviewing-stage failure; never raw exception text.
 REVIEW_FAILED = "The patch reviewer could not complete its assessment."
 # The prompt the human-in-the-loop interrupt surfaces while awaiting the owner's decision.
@@ -154,33 +153,23 @@ def build_build_patch_node(workspace_factory, recorder):
     persists the proposals, External References, and canonical diff.
     """
 
+    builder = PatchBuilder(workspace_factory=workspace_factory, recorder=recorder)
+
     def build_patch(state) -> dict:
-        checkout_root = Path(state["checkout_root"]) if state.get("checkout_root") else None
-        # Discover the Repository's existing test roots once, before any proposal is
-        # written, so new files are admitted only beneath an established root.
-        test_roots = discover_test_roots(checkout_root) if checkout_root else frozenset()
-        try:
-            validated = [
-                file.model_copy(update={"path": validate_test_file(checkout_root, file.path, test_roots)}) for file in state.get("generated_files") or []
-            ]
-        except RejectedTestFile as rejection:
-            return {"failure": RunFailure(failed_stage="generating", reason=rejection.reason), "trace": ["build_patch"]}
-
-        try:
-            workspace = workspace_factory(state.get("checkout_root"))
-            if RevisionAttemptBudget.from_state(state).is_revision_attempt:
-                workspace.reset_patch_state()
-            workspace.write_test_files(validated)
-            diff = workspace.diff()
-        except Exception:
-            logger.exception("Patch derivation failed")
-            return {"failure": RunFailure(failed_stage="generating", reason=PATCH_DERIVATION_FAILED), "trace": ["build_patch"]}
-
-        coding_run_id = state.get("coding_run_id")
-        external_references = state.get("external_references") or []
-        recorder.complete(coding_run_id, branch=state.get("generation_branch"), diff=diff, generated_files=validated, external_references=external_references)
-        patch_result = PatchResult(coding_run_id=coding_run_id, diff=diff, generated_files=validated, external_references=external_references)
-        return {"patch_result": patch_result, "diff": diff, "generated_files": validated, "trace": ["build_patch"]}
+        outcome = builder.build(
+            PatchBuildRequest(
+                generated_files=state.get("generated_files") or [],
+                checkout_root=state.get("checkout_root"),
+                is_revision_attempt=RevisionAttemptBudget.from_state(state).is_revision_attempt,
+                generation_branch=state.get("generation_branch"),
+                coding_run_id=state.get("coding_run_id"),
+                external_references=state.get("external_references") or [],
+            )
+        )
+        if outcome.failure is not None:
+            return {"failure": outcome.failure, "trace": ["build_patch"]}
+        patch_result = outcome.patch_result
+        return {"patch_result": patch_result, "diff": patch_result.diff, "generated_files": patch_result.generated_files, "trace": ["build_patch"]}
 
     return build_patch
 
@@ -225,7 +214,7 @@ def build_review_patch_node(reviewer, recorder):
 
         # The reviewer's acceptance is never the sole gate: the backend independently
         # re-verifies that every proposal stays within the Test File boundary.
-        boundary_finding = _verify_test_file_boundary(state.get("checkout_root"), generated_files)
+        boundary_finding = verify_test_file_boundary(state.get("checkout_root"), generated_files)
         if boundary_finding is not None:
             accepted = False
             findings = [*findings, boundary_finding]
@@ -323,24 +312,6 @@ def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
         return {"approval_result": approval, "trace": ["approve_patch"]}
 
     return approve_patch
-
-
-def _verify_test_file_boundary(checkout_root, generated_files) -> ReviewFinding | None:
-    """Independently re-assert the Test File boundary over the proposed files.
-
-    Returns a ``scope`` finding for the first proposal that escapes Test-File
-    scope, or ``None`` when every proposal is within bounds.
-    """
-    if not checkout_root:
-        return None
-    root = Path(checkout_root)
-    test_roots = discover_test_roots(root)
-    for file in generated_files:
-        try:
-            validate_test_file(root, file.path, test_roots)
-        except RejectedTestFile as rejection:
-            return ReviewFinding(category="scope", detail=rejection.reason)
-    return None
 
 
 def _dedupe(paths: list[str]) -> list[str]:

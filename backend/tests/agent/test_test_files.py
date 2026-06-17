@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from app.agent.test_files import RejectedTestFile, discover_test_roots, validate_test_file
+from app.agent.test_files import RejectedTestFile, discover_test_roots, validate_test_file, verify_test_file_boundary
+from app.schemas.generation import GeneratedFile
 
 
 def test_new_test_file_beneath_an_existing_top_level_root_is_accepted(tmp_path: Path) -> None:
@@ -101,3 +102,24 @@ def test_discover_test_roots_finds_top_level_and_nested_dirs_only(tmp_path: Path
     (tmp_path / "test.py").write_text("not a directory")
 
     assert discover_test_roots(tmp_path) == frozenset({"tests", "src/pkg/test"})
+
+
+def test_boundary_verifier_returns_no_finding_for_valid_test_files(tmp_path: Path) -> None:
+    """The shared verifier accepts proposals that remain inside Test File scope."""
+    (tmp_path / "tests").mkdir()
+
+    finding = verify_test_file_boundary(tmp_path, [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")])
+
+    assert finding is None
+
+
+def test_boundary_verifier_returns_a_scope_finding_for_application_code(tmp_path: Path) -> None:
+    """The shared verifier turns a boundary escape into a review-ready finding."""
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "auth.py").write_text("real code")
+
+    finding = verify_test_file_boundary(tmp_path, [GeneratedFile(path="app/auth.py", content="malicious")])
+
+    assert finding is not None
+    assert finding.category == "scope"
+    assert "application code" in finding.detail

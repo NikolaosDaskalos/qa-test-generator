@@ -16,6 +16,8 @@ import os
 from pathlib import Path, PurePosixPath
 
 from app.agent.paths import confine_candidate_path
+from app.schemas.generation import GeneratedFile
+from app.schemas.review import ReviewFinding
 
 # Directory names that constitute a test root.
 TEST_ROOT_NAMES = {"tests", "test"}
@@ -78,6 +80,28 @@ def validate_test_file(checkout_root: Path, candidate: str, test_roots: frozense
         raise RejectedTestFile(f"New test files are only allowed beneath an existing test root: {safe!r}")
 
     return safe
+
+
+def validate_generated_test_files(checkout_root: Path, generated_files: list[GeneratedFile]) -> list[GeneratedFile]:
+    """Validate generated Test File proposals and return normalized paths.
+
+    The checkout's existing test roots are discovered once before any proposed
+    file is written, so a proposal cannot create a new test root and then use it
+    to admit later files in the same patch.
+    """
+    test_roots = discover_test_roots(checkout_root)
+    return [file.model_copy(update={"path": validate_test_file(checkout_root, file.path, test_roots)}) for file in generated_files]
+
+
+def verify_test_file_boundary(checkout_root: Path | str | None, generated_files: list[GeneratedFile]) -> ReviewFinding | None:
+    """Return a review finding when proposals escape Test File scope."""
+    if not checkout_root:
+        return None
+    try:
+        validate_generated_test_files(Path(checkout_root), generated_files)
+    except RejectedTestFile as rejection:
+        return ReviewFinding(category="scope", detail=rejection.reason)
+    return None
 
 
 def _under_test_root(relative_posix: str, test_roots: frozenset[str]) -> bool:
