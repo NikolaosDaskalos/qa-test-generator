@@ -4,6 +4,7 @@ from sqlmodel import Session, col, func, select
 
 from app.enums.session import SessionMessageRole
 from app.models.session import CitationData, RepositorySession, SessionHistory
+from app.core.config import settings
 
 
 class RepositorySessionStore:
@@ -22,7 +23,7 @@ class RepositorySessionStore:
         return self.session.get(RepositorySession, repository_session_id)
 
     def append_exchange(
-        self, repository_session_id: uuid.UUID, *, user_message: str, assistant_message: str, assistant_citations: list[CitationData] | None = None
+            self, repository_session_id: uuid.UUID, *, user_message: str, assistant_message: str, assistant_citations: list[CitationData] | None = None
     ) -> tuple[SessionHistory, SessionHistory]:
         lock_statement = select(RepositorySession.id).where(RepositorySession.id == repository_session_id).with_for_update()
         self.session.exec(lock_statement).one()
@@ -44,5 +45,8 @@ class RepositorySessionStore:
         return user_history, assistant_history
 
     def get_recent_history(self, repository_session_id: uuid.UUID) -> list[SessionHistory]:
-        statement = select(SessionHistory).where(SessionHistory.session_id == repository_session_id).order_by(col(SessionHistory.position).desc()).limit(6)
+        statement = (select(SessionHistory)
+                     .where(SessionHistory.session_id == repository_session_id)
+                     .order_by(col(SessionHistory.position).desc())
+                     .limit(settings.SESSION_HISTORY_LIMIT))
         return list(reversed(self.session.exec(statement).all()))

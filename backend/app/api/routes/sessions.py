@@ -56,7 +56,7 @@ def ask_repository_question(
         thread_id=str(uuid.uuid4()),
         decision=question_in.decision,
     )
-    return StreamingResponse(_to_sse(events), media_type="text/event-stream")
+    return StreamingResponse(_to_stream(events), media_type="text/event-stream")
 
 
 @router.get("/{repository_session_id}/history", response_model=SessionHistoriesPublic)
@@ -100,7 +100,7 @@ def read_coding_run_patch(
     )
 
 
-def _to_sse(events: Iterable[AgentStreamEvent]) -> Generator[str, None, None]:
+def _to_stream(events: Iterable[AgentStreamEvent]) -> Generator[str, None, None]:
     """Serialize typed Agent Stream events as server-sent event frames.
 
     This is the only module that knows the wire format. The terminal ``Result``

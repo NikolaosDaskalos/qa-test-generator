@@ -40,7 +40,9 @@ def web_search(query: str) -> str:
     if not query or not query.strip():
         logger.warning("Web search rejected because the query is empty")
         return json.dumps({"error": "No query provided"}, ensure_ascii=False)
+
     emit(Stage(stage="researching"))
+
     try:
         logger.info("Web search started query_length=%s", len(query.strip()))
         result: Any = _tavily_search.invoke({"query": query})

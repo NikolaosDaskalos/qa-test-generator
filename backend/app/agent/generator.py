@@ -20,26 +20,11 @@ from pydantic import BaseModel, Field
 
 from app.agent.context_rendering import format_evidence, format_files
 from app.agent.tools import web_search
+from app.core.config import settings
+from app.prompts.prompts import GENERATOR_SYSTEM_PROMPT, REVISION_SYSTEM_PROMPT
 from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 
 logger = logging.getLogger(__name__)
-
-# A single-tool ReAct loop cannot run away, but the recursion cap is the hard
-# ceiling on alternating model/tool steps.
-DEFAULT_RECURSION_LIMIT = 12
-
-GENERATOR_SYSTEM_PROMPT = (
-    "You are a senior test engineer. Add or improve Python tests for the requested task using only the "
-    "provided Repository Evidence to understand the code under test. Use the web_search tool only to confirm "
-    "a test framework's current syntax and best practices — never to learn about the repository's own code. "
-    "Return the complete contents of each test file you propose; never return a diff."
-)
-
-REVISION_SYSTEM_PROMPT = (
-    "You are a senior test engineer revising a rejected Python Test Patch. Use only the provided Repository "
-    "Evidence, prior proposal, canonical diff, and reviewer findings. Address every finding directly and "
-    "return the complete contents of each test file you propose; never return a diff."
-)
 
 
 class _GeneratorResponse(BaseModel):
@@ -55,8 +40,8 @@ class _GeneratorResponse(BaseModel):
 class ReActTestGenerator:
     """Production ``TestGenerator`` with web-backed generation and tool-free revision."""
 
-    def __init__(self, llm, *, recursion_limit: int = DEFAULT_RECURSION_LIMIT, agent=None, revision_agent=None) -> None:
-        self._recursion_limit = recursion_limit
+    def __init__(self, llm, *, recursion_limit: int | None = None, agent=None, revision_agent=None) -> None:
+        self._recursion_limit = recursion_limit if recursion_limit is not None else settings.RECURSION_LIMIT
         self._agent = agent or create_agent(llm, tools=[web_search], system_prompt=GENERATOR_SYSTEM_PROMPT, response_format=_GeneratorResponse)
         self._revision_agent = revision_agent or (
             agent if agent is not None else create_agent(llm, tools=[], system_prompt=REVISION_SYSTEM_PROMPT, response_format=_GeneratorResponse)

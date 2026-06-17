@@ -18,25 +18,13 @@ from langchain_core.messages import HumanMessage
 from app.agent.context_rendering import format_evidence, format_files
 from app.agent.tools import web_search
 from app.schemas.review import PatchReview
+from app.prompts.prompts import REVIEWER_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
 # A single-tool ReAct loop cannot run away, but the recursion cap is the hard
 # ceiling on alternating model/tool steps.
 DEFAULT_RECURSION_LIMIT = 12
-
-REVIEWER_SYSTEM_PROMPT = (
-    "You are a senior test engineer reviewing a proposed Python Test Patch. Assess it statically against the "
-    "Test-Generation Task and the provided Repository Evidence only — never execute the tests, install "
-    "dependencies, or claim anything about runtime behavior. Use the web_search tool only to confirm a test "
-    "framework's current syntax and best practices, never to learn about the repository's own code.\n\n"
-    "Check that: the tests fully exercise the source under test on both happy and unhappy paths; they are "
-    "readable (readability always outranks terseness) and follow the repository's existing test conventions; "
-    "every import is visible in the Repository Evidence; the patch contains no changes unrelated to the task; "
-    "it stays within Test File scope and touches no application code; and it uses current, version-appropriate "
-    "language and framework features, preferring cleaner utilities only when they improve readability.\n\n"
-    "Return a structured decision: accepted true or false, with categorized, human-readable findings."
-)
 
 
 class ReActPatchReviewer:

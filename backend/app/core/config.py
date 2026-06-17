@@ -7,6 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+from charset_normalizer.md import lru_cache
 from cryptography.fernet import Fernet
 from pydantic import AnyUrl, BeforeValidator, EmailStr, Field, HttpUrl, PostgresDsn, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -175,6 +176,9 @@ class Settings(BaseSettings):
 
     # Max connections in the shared PostgresSaver pool backing the session graph checkpointer.
     CHECKPOINTER_POOL_MAX_SIZE: int = Field(default=10, ge=1)
+
+    SESSION_HISTORY_LIMIT: int = 10
+    RECURSION_LIMIT: int = 3
 
     REPO_PATH: Path = Field(default_factory=lambda: PROJECT_PATH / ".tmp/repositories")
 

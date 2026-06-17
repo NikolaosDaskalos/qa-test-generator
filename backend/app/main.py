@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 
-from app.agent.checkpointer import close_checkpointer, open_checkpointer
+from app.core.checkpointer import close_checkpointer, open_checkpointer
 from app.api.main import api_router
 from app.core import vector_db
 from app.core.config import settings

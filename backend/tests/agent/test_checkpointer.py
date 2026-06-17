@@ -1,6 +1,6 @@
 """Tests for the process-wide graph checkpointer pool configuration."""
 
-from app.agent import checkpointer
+from app.core import checkpointer
 
 
 class _Pool:

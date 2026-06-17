@@ -9,7 +9,7 @@ citations on the shared state.
 from app.agent.context_rendering import format_evidence
 from app.agent.stream import emit
 from app.core.config import settings
-from app.prompts.rag_prompts import QA_SYSTEM_PROMPT
+from app.prompts.prompts import QA_SYSTEM_PROMPT
 from app.schemas.agent_stream import Citation, Stage
 
 # pyrefly: ignore [missing-import]
