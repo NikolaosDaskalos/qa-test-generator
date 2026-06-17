@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from app.core.security import encrypt_repository_token
 from app.enums.repository import RepositoryStatus
+from app.errors.git_errors import GitError
 from app.models.repository import Repository
 from app.persistence.repository_store import RepositoryStore
 
@@ -77,6 +78,88 @@ def test_mark_ready_persists_indexed_commit_and_status_together() -> None:
     assert session.added == [repository]
     assert session.commits == 1
     assert session.refreshes == [repository]
+
+
+def test_begin_cloning_moves_status_and_clears_prior_failure() -> None:
+    """Enter the cloning state and drop any stale failure reason."""
+    session = FakeSession()
+    repository_store = RepositoryStore(session)
+    repository = _repository()
+    repository.status = RepositoryStatus.pending
+    repository.failed_reason = "previous failure"
+
+    repository_store.begin_cloning(repository)
+
+    assert repository.status == RepositoryStatus.cloning
+    assert repository.failed_reason is None
+    assert session.added == [repository]
+    assert session.commits == 1
+
+
+def test_record_checkout_persists_local_path_and_default_branch_together() -> None:
+    """Capture the checkout location and branch in one transaction."""
+    session = FakeSession()
+    repository_store = RepositoryStore(session)
+    repository = _repository()
+    repository.status = RepositoryStatus.cloning
+
+    repository_store.record_checkout(repository, local_path="/tmp/checkout", default_branch="main")
+
+    assert repository.local_path == "/tmp/checkout"
+    assert repository.default_branch == "main"
+    assert repository.status == RepositoryStatus.cloning
+    assert session.added == [repository]
+    assert session.commits == 1
+
+
+def test_begin_indexing_moves_status_to_indexing() -> None:
+    """Enter the indexing state after a successful checkout."""
+    session = FakeSession()
+    repository_store = RepositoryStore(session)
+    repository = _repository()
+    repository.status = RepositoryStatus.cloning
+
+    repository_store.begin_indexing(repository)
+
+    assert repository.status == RepositoryStatus.indexing
+    assert session.added == [repository]
+    assert session.commits == 1
+
+
+def test_fail_redacts_credential_and_persists_failed_status() -> None:
+    """Stamp a failure whose domain message cannot expose the credential."""
+    session = FakeSession()
+    repository_store = RepositoryStore(session)
+    repository = _repository()
+    repository.status = RepositoryStatus.cloning
+    credential = "secret-token"
+
+    reason = repository_store.fail(repository, GitError(f"Authentication failed for {credential}"), credential=credential)
+
+    assert reason == "Authentication failed for [REDACTED]"
+    assert repository.status == RepositoryStatus.failed
+    assert repository.failed_reason == "Authentication failed for [REDACTED]"
+    assert credential not in repository.failed_reason
+    assert session.added == [repository]
+    assert session.commits == 1
+
+
+def test_fail_uses_fallback_for_non_domain_errors_and_caps_length() -> None:
+    """Hide non-domain internals behind the fallback and bound the reason length."""
+    session = FakeSession()
+    repository_store = RepositoryStore(session)
+    repository = _repository()
+
+    reason = repository_store.fail(
+        repository, RuntimeError("psycopg leaked internal detail"), credential=None, fallback="Repository vector deletion failed"
+    )
+
+    assert reason == "Repository vector deletion failed"
+
+    long_message = "x" * 1100
+    capped = repository_store.fail(repository, GitError(long_message), credential=None)
+
+    assert len(capped) == 1000
 
 
 def test_delete_and_rollback_delegate_to_session() -> None:

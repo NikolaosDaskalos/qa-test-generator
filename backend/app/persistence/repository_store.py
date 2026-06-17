@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlmodel import Session, func, select
 
 from app.enums.repository import RepositoryStatus
+from app.errors.git_errors import GitError
 from app.models.repository import Repository
 
 
@@ -48,12 +49,37 @@ class RepositoryStore:
         repository.token_expiration_date = token_expiration_date
         return self.save(repository)
 
+    def begin_cloning(self, repository: Repository) -> Repository:
+        """Enter the cloning state, discarding any stale failure reason."""
+        repository.status = RepositoryStatus.cloning
+        repository.failed_reason = None
+        return self.save(repository)
+
+    def begin_indexing(self, repository: Repository) -> Repository:
+        """Enter the indexing state once the checkout is recorded."""
+        repository.status = RepositoryStatus.indexing
+        return self.save(repository)
+
+    def record_checkout(self, repository: Repository, *, local_path: str, default_branch: str) -> Repository:
+        """Persist where the Git checkout landed and the branch it tracks."""
+        repository.local_path = local_path
+        repository.default_branch = default_branch
+        return self.save(repository)
+
     def mark_ready(self, repository: Repository, *, indexed_commit_sha: str) -> Repository:
         """Publish successfully indexed Repository Evidence."""
         repository.indexed_commit_sha = indexed_commit_sha
         repository.status = RepositoryStatus.ready
         repository.failed_reason = None
         return self.save(repository)
+
+    def fail(self, repository: Repository, exc: Exception, *, credential: str | None, fallback: str = "Repository processing failed") -> str:
+        """Stamp a credential-sanitized failure reason alongside the failed status."""
+        reason = _sanitized_failure(exc, credential, fallback=fallback)
+        repository.status = RepositoryStatus.failed
+        repository.failed_reason = reason
+        self.save(repository)
+        return reason
 
     def delete(self, repository: Repository) -> None:
         self.session.delete(repository)
@@ -62,7 +88,13 @@ class RepositoryStore:
     def rollback(self) -> None:
         self.session.rollback()
 
-    def update_status(self, repository: Repository, status: RepositoryStatus, *, failed_reason: str | None = None) -> Repository:
-        repository.status = status
-        repository.failed_reason = failed_reason
-        return self.save(repository)
+
+def _sanitized_failure(exc: Exception, credential: str | None, *, fallback: str = "Repository processing failed") -> str:
+    """Return a bounded failure message that cannot expose credentials."""
+    if isinstance(exc, (GitError, ValueError)):
+        reason = str(exc)
+    else:
+        reason = fallback
+    if credential:
+        reason = reason.replace(credential, "[REDACTED]")
+    return reason[:1000]

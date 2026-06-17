@@ -121,25 +121,24 @@ class RepositoryService:
             git = self.git_commands_factory(parsed_url, user_id)
             git.delete_checkout()
         except Exception as exc:
-            reason = _sanitized_failure(exc, encrypted_token, fallback="Repository checkout deletion failed")
-            self.repository_store.update_status(repository, RepositoryStatus.failed, failed_reason=reason)
+            reason = self.repository_store.fail(repository, exc, credential=encrypted_token, fallback="Repository checkout deletion failed")
             logger.error("Repository checkout deletion failed repository_id=%s: %s", repository_id, reason)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
         try:
             self.ingestor.delete_repository(repository_id, user_id=user_id)
         except Exception as exc:
-            reason = _sanitized_failure(exc, encrypted_token, fallback="Repository vector deletion failed")
-            self.repository_store.update_status(repository, RepositoryStatus.failed, failed_reason=reason)
+            reason = self.repository_store.fail(repository, exc, credential=encrypted_token, fallback="Repository vector deletion failed")
             logger.error("Repository vector deletion failed repository_id=%s: %s", repository_id, reason)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
         try:
             self.repository_store.delete(repository)
         except Exception as exc:
-            reason = _sanitized_failure(exc, encrypted_token, fallback="Repository database deletion failed")
             self.repository_store.rollback()
             repository = self.repository_store.get_by_id(repository_id)
             if repository:
-                self.repository_store.update_status(repository, RepositoryStatus.failed, failed_reason=reason)
+                reason = self.repository_store.fail(repository, exc, credential=encrypted_token, fallback="Repository database deletion failed")
+            else:
+                reason = "Repository database deletion failed"
             logger.error("Repository database deletion failed repository_id=%s: %s", repository_id, reason)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
         logger.info("Repository deletion completed repository_id=%s user_id=%s", repository_id, user_id)
@@ -156,25 +155,25 @@ class RepositoryService:
 
         try:
             logger.info("Repository processing started repository_id=%s user_id=%s", repository.id, repository.user_id)
-            self.repository_store.update_status(repository, RepositoryStatus.cloning)
+            self.repository_store.begin_cloning(repository)
             logger.info("Repository status changed repository_id=%s status=%s", repository.id, RepositoryStatus.cloning.value)
 
             parsed_url = parse_repository_url(repository.repository_url)
             git = self.git_commands_factory(parsed_url, repository.user_id)
             git.clone(token)
-            repository.local_path = str(git.repo_path)
-            repository.default_branch = git.get_default_branch()
-            git.checkout(repository.default_branch)
+            default_branch = git.get_default_branch()
+            git.checkout(default_branch)
             checkout_commit_sha = git.get_current_commit_sha()
+            self.repository_store.record_checkout(repository, local_path=str(git.repo_path), default_branch=default_branch)
 
-            self.repository_store.update_status(repository, RepositoryStatus.indexing)
+            self.repository_store.begin_indexing(repository)
             logger.info(
                 "Repository status changed repository_id=%s status=%s default_branch=%s",
                 repository.id,
                 RepositoryStatus.indexing.value,
-                repository.default_branch,
+                default_branch,
             )
-            chunk_count = self.ingestor.ingest(git.repo_path, repository.id, repository.default_branch, checkout_commit_sha, repository.user_id)
+            chunk_count = self.ingestor.ingest(git.repo_path, repository.id, default_branch, checkout_commit_sha, repository.user_id)
             if chunk_count == 0:
                 raise ValueError("Repository contains no usable Python files")
             self.repository_store.mark_ready(repository, indexed_commit_sha=checkout_commit_sha)
@@ -183,8 +182,10 @@ class RepositoryService:
             self.repository_store.rollback()
             repository = self.repository_store.get_by_id(repository_id)
             if repository:
-                self.repository_store.update_status(repository, RepositoryStatus.failed, failed_reason=_sanitized_failure(exc, token))
-            logger.error("Git repository processing failed for repository_id=%s: %s", repository_id, _sanitized_failure(exc, token))
+                reason = self.repository_store.fail(repository, exc, credential=token)
+                logger.error("Git repository processing failed for repository_id=%s: %s", repository_id, reason)
+            else:
+                logger.error("Git repository processing failed for repository_id=%s; record no longer exists", repository_id)
 
     def _get_accessible(self, repository_id: uuid.UUID, user: User) -> Repository:
         repository = self.repository_store.get_by_id(repository_id)
@@ -229,14 +230,3 @@ def _provider_for(parsed_url: ParsedRepositoryUrl) -> RepositoryProvider:
     if parsed_url.host != "github.com":
         raise ValueError("Repository provider is not supported")
     return RepositoryProvider.github
-
-
-def _sanitized_failure(exc: Exception, token: str | None, *, fallback: str = "Repository processing failed") -> str:
-    """Return a bounded failure message that cannot expose credentials."""
-    if isinstance(exc, (GitError, ValueError)):
-        reason = str(exc)
-    else:
-        reason = fallback
-    if token:
-        reason = reason.replace(token, "[REDACTED]")
-    return reason[:1000]

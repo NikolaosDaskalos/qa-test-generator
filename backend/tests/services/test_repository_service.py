@@ -68,11 +68,31 @@ class FakeRepositoryStore:
     def rollback(self):
         self.rolled_back = True
 
-    def update_status(self, repository, status, *, failed_reason=None):
-        repository.status = status
-        repository.failed_reason = failed_reason
-        self.statuses.append(status)
+    def begin_cloning(self, repository):
+        repository.status = RepositoryStatus.cloning
+        repository.failed_reason = None
+        self.statuses.append(RepositoryStatus.cloning)
         return repository
+
+    def record_checkout(self, repository, *, local_path, default_branch):
+        repository.local_path = local_path
+        repository.default_branch = default_branch
+        return repository
+
+    def begin_indexing(self, repository):
+        repository.status = RepositoryStatus.indexing
+        self.statuses.append(RepositoryStatus.indexing)
+        return repository
+
+    def fail(self, repository, exc, *, credential, fallback="Repository processing failed"):
+        reason = str(exc) if isinstance(exc, (GitError, ValueError)) else fallback
+        if credential:
+            reason = reason.replace(credential, "[REDACTED]")
+        reason = reason[:1000]
+        repository.status = RepositoryStatus.failed
+        repository.failed_reason = reason
+        self.statuses.append(RepositoryStatus.failed)
+        return reason
 
     def mark_ready(self, repository, *, indexed_commit_sha):
         repository.indexed_commit_sha = indexed_commit_sha
@@ -534,9 +554,9 @@ def test_database_cleanup_failure_rolls_back_reloads_and_persists_failure() -> N
             self.transaction_calls.append("rollback")
             super().rollback()
 
-        def update_status(self, repository_to_update, status, *, failed_reason=None):
+        def fail(self, repository_to_update, exc, *, credential, fallback="Repository processing failed"):
             self.transaction_calls.append("persist_failed")
-            return super().update_status(repository_to_update, status, failed_reason=failed_reason)
+            return super().fail(repository_to_update, exc, credential=credential, fallback=fallback)
 
     store = FailingDeleteStore(repository)
 
