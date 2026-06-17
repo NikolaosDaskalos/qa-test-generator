@@ -1,6 +1,6 @@
 # Score a Test Patch out of ten
 
-Status: ready
+Status: completed
 Type: AFK
 Revises: [11 - Review a Test Patch before Approval](11-review-test-patch.md)
 ADR: [0004 - Scored Patch Review escalates to human review](../adr/0004-scored-review-escalates-to-human.md)
@@ -27,13 +27,13 @@ wire) leaves the `AgentStreamEvent` union while remaining an internal state type
 
 ## Acceptance criteria
 
-- [ ] The reviewer's structured output is a `score` (0–10) and categorized findings; it no longer returns an `accepted` boolean.
-- [ ] A new `REVIEW_PASS_THRESHOLD` setting (default 7) governs the pass decision; `accepted` is derived as `score >= threshold` in the backend, not by the model.
-- [ ] The Test File boundary check still forces rejection of any escaping patch even when the score is at or above threshold.
-- [ ] `ReviewResult` carries `score` and `threshold`; the derived `accepted` is still present so existing routing is unaffected by this slice.
-- [ ] `PatchResult` is removed from the `AgentStreamEvent` union and retained as an internal state type; nothing on the wire changes shape except `ReviewResult`'s new fields.
-- [ ] The user-visible "tests were not executed / runtime correctness not verified" disclaimer is unchanged.
-- [ ] Reviewer and graph tests cover scores below, at, and above threshold, a boundary escape overriding a high score, and the new `ReviewResult` fields.
+- [x] The reviewer's structured output is a `score` (0–10) and categorized findings; it no longer returns an `accepted` boolean.
+- [x] A new `REVIEW_PASS_THRESHOLD` setting (default 7) governs the pass decision; `accepted` is derived as `score >= threshold` in the backend, not by the model.
+- [x] The Test File boundary check still forces rejection of any escaping patch even when the score is at or above threshold.
+- [x] `ReviewResult` carries `score` and `threshold`; the derived `accepted` is still present so existing routing is unaffected by this slice.
+- [x] `PatchResult` is removed from the `AgentStreamEvent` union and retained as an internal state type; nothing on the wire changes shape except `ReviewResult`'s new fields.
+- [x] The user-visible "tests were not executed / runtime correctness not verified" disclaimer is unchanged.
+- [x] Reviewer and graph tests cover scores below, at, and above threshold, a boundary escape overriding a high score, and the new `ReviewResult` fields.
 
 ## Blocked by
 

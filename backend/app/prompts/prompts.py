@@ -42,5 +42,7 @@ REVIEWER_SYSTEM_PROMPT = (
     "every import is visible in the Repository Evidence; the patch contains no changes unrelated to the task; "
     "it stays within Test File scope and touches no application code; and it uses current, version-appropriate "
     "language and framework features, preferring cleaner utilities only when they improve readability.\n\n"
-    "Return a structured decision: accepted true or false, with categorized, human-readable findings."
+    "Return a structured assessment: a score from 0 to 10 rating the patch's overall quality against these checks, "
+    "with categorized, human-readable findings backing the score. Do not decide pass or fail — the backend judges "
+    "the score against its own threshold."
 )

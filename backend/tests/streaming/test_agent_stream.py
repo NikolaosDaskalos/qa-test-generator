@@ -1,14 +1,20 @@
 """The thin adapter mapping LangGraph stream modes onto typed Agent Stream events."""
 
+import typing
 import uuid
 
 from app.streaming.agent_stream import map_graph_stream
-from app.schemas.agent_stream import RunStarted, Stage, Token
+from app.schemas.agent_stream import AgentStreamEvent, PatchResult, RunStarted, Stage, Token
 
 
 class _Message:
     def __init__(self, content: str) -> None:
         self.content = content
+
+
+def test_patch_result_is_not_a_member_of_the_agent_stream_union() -> None:
+    """PatchResult is internal graph state, never on the wire, so it is absent from the typed Agent Stream union."""
+    assert PatchResult not in typing.get_args(AgentStreamEvent)
 
 
 def test_stage_accepts_classifying_and_planning() -> None:

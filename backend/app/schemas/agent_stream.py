@@ -77,11 +77,13 @@ class RunFailure(BaseModel):
 
 
 class PatchResult(BaseModel):
-    """The terminal event for a Test-Generation Task that produced a Test Patch.
+    """The internal state record for a Test-Generation Task that produced a Test Patch.
 
     Carries the canonical unified diff derived by Git, the complete generated file
     proposals, and the External References consulted while writing them. The
-    persisted Coding Run backing the run is always identified.
+    persisted Coding Run backing the run is always identified. This is built into
+    graph state but never emitted on the Agent Stream, so it is not a member of the
+    ``AgentStreamEvent`` union.
     """
 
     type: Literal["patch_result"] = "patch_result"
@@ -94,15 +96,19 @@ class PatchResult(BaseModel):
 class ReviewResult(BaseModel):
     """The terminal event for a Test-Generation Task that completed Patch Review.
 
-    A review is a deliberate accept/reject decision, not an error: ``accepted``
-    carries the verdict, ``findings`` the human-readable observations behind it,
-    and ``diff`` the assessed canonical Test Patch. ``disclaimer`` states that the
-    tests were not executed and runtime correctness was not verified.
+    A review is a scored, deliberate decision, not an error: ``score`` (0–10) is the
+    reviewer's quality rating and ``threshold`` the pass bar the backend judged it
+    against, so a client can show "8/10 — passed". ``accepted`` carries the backend's
+    derived verdict, ``findings`` the human-readable observations behind it, and
+    ``diff`` the assessed canonical Test Patch. ``disclaimer`` states that the tests
+    were not executed and runtime correctness was not verified.
     """
 
     type: Literal["review_result"] = "review_result"
     coding_run_id: uuid.UUID
     accepted: bool
+    score: int
+    threshold: int
     findings: list[ReviewFinding]
     diff: str
     disclaimer: str = REVIEW_DISCLAIMER
@@ -143,4 +149,4 @@ class RunApproved(BaseModel):
     disclaimer: str = REVIEW_DISCLAIMER
 
 
-AgentStreamEvent = Stage | Token | Result | RunStarted | RunFailure | PatchResult | ReviewResult | RunRejected | RunApproved
+AgentStreamEvent = Stage | Token | Result | RunStarted | RunFailure | ReviewResult | RunRejected | RunApproved

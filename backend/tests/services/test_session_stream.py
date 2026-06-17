@@ -12,8 +12,7 @@ from app.models.coding_run import CodingRun
 from app.models.repository import Repository
 from app.models.session import RepositorySession, SessionHistory
 from app.models.user import User
-from app.schemas.agent_stream import Citation, PatchResult, Result, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
-from app.schemas.generation import ExternalReference, GeneratedFile
+from app.schemas.agent_stream import Citation, Result, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
 from app.schemas.review import ReviewFinding
 from app.schemas.session import HumanDecisionRequest
 from app.services.session_service import RepositorySessionService
@@ -132,29 +131,6 @@ def test_stream_session_emits_run_failure_terminal_for_rejected_task():
     assert session_store.appended == []
 
 
-def test_stream_session_emits_patch_result_terminal_for_a_generated_patch():
-    user = _user()
-    service, session_store, repository_session = _wiring(user)
-    run_id = uuid.uuid4()
-    patch = PatchResult(
-        coding_run_id=run_id,
-        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
-        generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")],
-        external_references=[ExternalReference(url="https://docs.pytest.org", title="pytest")],
-    )
-    items = [("custom", Stage(stage="generating")), ("custom", patch)]
-    final = {"intent": "test_generation"}
-    graph = FakeGraph(items, final)
-
-    events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-3"))
-
-    terminal = events[-1]
-    assert isinstance(terminal, PatchResult)
-    assert terminal.coding_run_id == run_id
-    assert [file.path for file in terminal.generated_files] == ["tests/test_x.py"]
-    # A generated patch is reported, not persisted as a session answer exchange.
-    assert session_store.appended == []
-
 
 def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
     user = _user()
@@ -163,6 +139,8 @@ def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
     review = ReviewResult(
         coding_run_id=run_id,
         accepted=True,
+        score=8,
+        threshold=7,
         findings=[ReviewFinding(category="coverage", detail="covers happy and unhappy paths")],
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
     )
@@ -221,7 +199,7 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
         findings=[ReviewFinding(category="readability", detail="clear and idiomatic")],
     )
-    review = ReviewResult(coding_run_id=run.id, accepted=True, findings=rejection.findings, diff=rejection.diff)
+    review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=rejection.findings, diff=rejection.diff)
     items = [("custom", Stage(stage="reviewing")), ("custom", rejection)]
     final = {"intent": "test_generation", "review_result": review, "rejection_result": rejection}
     graph = FakeGraph(items, final, next_nodes=("await_decision",))
@@ -254,7 +232,7 @@ def test_stream_session_relays_resume_terminal_without_scanning_stale_final_stat
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
         findings=[ReviewFinding(category="readability", detail="clear and idiomatic")],
     )
-    stale_review = ReviewResult(coding_run_id=run.id, accepted=True, findings=rejection.findings, diff=rejection.diff)
+    stale_review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=rejection.findings, diff=rejection.diff)
     items = [("custom", rejection)]
     graph = FakeGraph(items, {"intent": "test_generation", "review_result": stale_review}, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
@@ -273,7 +251,7 @@ def test_stream_session_emits_run_approved_terminal_for_an_approved_decision():
     run = CodingRun(repository_session_id=repository_session.id, thread_id="t-paused", status=CodingRunStatus.awaiting_approval)
     service.coding_run_store = FakeCodingRunStore(run)
     approval = RunApproved(coding_run_id=run.id, branch="qa-tests/abc123", diff="diff --git a/tests/test_x.py b/tests/test_x.py")
-    review = ReviewResult(coding_run_id=run.id, accepted=True, findings=[], diff=approval.diff)
+    review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=[], diff=approval.diff)
     graph = FakeGraph([("custom", approval)], {"intent": "test_generation", "review_result": review}, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=True)
 
@@ -296,6 +274,8 @@ def test_stream_session_rejects_a_decision_when_the_checkpoint_is_not_paused_at_
     stale_review = ReviewResult(
         coding_run_id=run.id,
         accepted=True,
+        score=8,
+        threshold=7,
         findings=[ReviewFinding(category="coverage", detail="covers the behavior")],
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
     )

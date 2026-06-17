@@ -29,31 +29,40 @@ def _source(source: str, content: str) -> SourceDocument:
     return SourceDocument(content=content, doc_metadata={"source": source})
 
 
-def test_reviewer_returns_the_structured_decision() -> None:
-    """The agent's structured response becomes the PatchReview decision and findings."""
+def test_patch_review_carries_a_bounded_score_and_findings_not_an_accepted_flag() -> None:
+    """The reviewer scores a patch 0–10 with findings; the backend owns the pass decision, so there is no accepted flag."""
+    review = PatchReview(score=8, findings=[ReviewFinding(category="coverage", detail="covers happy and unhappy paths")])
+
+    assert review.score == 8
+    assert [finding.category for finding in review.findings] == ["coverage"]
+    assert "accepted" not in PatchReview.model_fields
+
+
+def test_reviewer_returns_the_structured_score_and_findings() -> None:
+    """The agent's structured response becomes the PatchReview score and findings."""
     findings = [ReviewFinding(category="coverage", detail="missing an unhappy-path test")]
-    agent = FakeAgent({"messages": [], "structured_response": PatchReview(accepted=False, findings=findings)})
+    agent = FakeAgent({"messages": [], "structured_response": PatchReview(score=5, findings=findings)})
     reviewer = ReActPatchReviewer(llm=object(), agent=agent, recursion_limit=7)
 
     review = reviewer.review(task="add tests", source_evidence=[], test_evidence=[], generated_files=[], diff="d")
 
-    assert review.accepted is False
+    assert review.score == 5
     assert [finding.category for finding in review.findings] == ["coverage"]
 
 
-def test_reviewer_defaults_to_rejection_when_no_structured_decision_is_returned() -> None:
-    """A missing structured response is treated conservatively as a rejection, never a silent accept."""
+def test_reviewer_defaults_to_a_zero_score_when_no_structured_decision_is_returned() -> None:
+    """A missing structured response is scored conservatively at zero, never a silent passing score."""
     agent = FakeAgent({"messages": [], "structured_response": None})
     reviewer = ReActPatchReviewer(llm=object(), agent=agent)
 
     review = reviewer.review(task="add tests", source_evidence=[], test_evidence=[], generated_files=[], diff="d")
 
-    assert review.accepted is False
+    assert review.score == 0
 
 
 def test_reviewer_prompt_includes_the_task_proposals_and_diff() -> None:
     """The review prompt carries the task, the evidence, the proposed files, and the canonical diff."""
-    agent = FakeAgent({"messages": [], "structured_response": PatchReview(accepted=True, findings=[])})
+    agent = FakeAgent({"messages": [], "structured_response": PatchReview(score=9, findings=[])})
     reviewer = ReActPatchReviewer(llm=object(), agent=agent)
 
     reviewer.review(
@@ -75,7 +84,7 @@ def test_reviewer_prompt_includes_the_task_proposals_and_diff() -> None:
 
 def test_reviewer_caps_the_web_search_loop_with_a_recursion_limit() -> None:
     """The agent is invoked under the configured recursion limit, bounding the tool loop."""
-    agent = FakeAgent({"messages": [], "structured_response": PatchReview(accepted=True, findings=[])})
+    agent = FakeAgent({"messages": [], "structured_response": PatchReview(score=9, findings=[])})
     reviewer = ReActPatchReviewer(llm=object(), agent=agent, recursion_limit=5)
 
     reviewer.review(task="add tests", source_evidence=[], test_evidence=[], generated_files=[], diff="d")

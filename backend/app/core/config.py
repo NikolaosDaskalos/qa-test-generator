@@ -180,6 +180,10 @@ class Settings(BaseSettings):
     SESSION_HISTORY_LIMIT: int = 10
     RECURSION_LIMIT: int = 3
 
+    # The Patch Review pass bar: a patch is accepted when its reviewer score (0–10)
+    # meets this threshold. The backend owns this decision; the reviewer only scores.
+    REVIEW_PASS_THRESHOLD: int = Field(default=7, ge=0, le=10)
+
     REPO_PATH: Path = Field(default_factory=lambda: PROJECT_PATH / ".tmp/repositories")
 
     def model_post_init(self, __context) -> None:

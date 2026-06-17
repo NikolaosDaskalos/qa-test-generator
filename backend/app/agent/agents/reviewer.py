@@ -6,8 +6,9 @@ Patch Review is evidence-based static assessment: it grounds claims about the co
 under test only in the provided Repository Evidence, and uses ``web_search`` solely
 to confirm a test framework's current syntax and best practices so it can judge
 whether the proposed tests are idiomatic and version-appropriate. It returns a
-structured accept/reject decision with categorized, human-readable findings. The
-loop is bounded by single-tool binding and a graph recursion cap.
+structured quality score out of ten with categorized, human-readable findings;
+the backend, not the reviewer, decides whether that score passes. The loop is
+bounded by single-tool binding and a graph recursion cap.
 """
 
 import logging
@@ -38,7 +39,7 @@ class ReActPatchReviewer:
         prompt = _build_prompt(task, source_evidence, test_evidence, generated_files, diff)
         result = self._agent.invoke({"messages": [HumanMessage(content=prompt)]}, config={"recursion_limit": self._recursion_limit})
         review = result.get("structured_response")
-        return review if review is not None else PatchReview(accepted=False, findings=[])
+        return review if review is not None else PatchReview(score=0, findings=[])
 
     def __call__(self, *, task: str, source_evidence: list, test_evidence: list, generated_files: list, diff: str) -> PatchReview:
         return self.review(task=task, source_evidence=source_evidence, test_evidence=test_evidence, generated_files=generated_files, diff=diff)

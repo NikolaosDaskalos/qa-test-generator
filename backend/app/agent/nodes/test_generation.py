@@ -13,6 +13,7 @@ import logging
 from langgraph.graph import END
 from langgraph.types import Command, interrupt
 
+from app.core.config import settings
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 from app.services.coding_runs.evidence_partitioner import EvidencePartitioner, EvidencePartitionRequest
 from app.services.coding_runs.patch_builder import PatchBuilder, PatchBuildRequest
@@ -181,17 +182,21 @@ def build_build_patch_node(workspace_factory, recorder):
     return build_patch
 
 
-def build_review_patch_node(reviewer, recorder):
+def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None):
     """Build the node that statically reviews a generated Test Patch before approval.
 
     Review is evidence-based static assessment only: the reviewer never executes
     the generated tests, installs dependencies, or implies runtime correctness. The
-    backend independently re-verifies the Test File boundary, so a patch that
-    escapes Test-File scope is rejected even when the reviewer accepts it. The
-    decision is persisted (accepted → awaiting approval, rejected → changes
-    requested) and surfaced as a ``ReviewResult`` carrying the findings and the
-    assessed diff.
+    reviewer returns a quality ``score`` (0–10); the backend — not the model — owns
+    the pass decision, accepting the patch when ``score >= threshold`` (the
+    configurable ``REVIEW_PASS_THRESHOLD``). The backend independently re-verifies
+    the Test File boundary, so a patch that escapes Test-File scope is rejected even
+    when its score passes. The decision is persisted (accepted → awaiting approval,
+    rejected → changes requested) and surfaced as a ``ReviewResult`` carrying the
+    score, the threshold it was judged against, the findings, and the assessed diff.
     """
+
+    pass_threshold = settings.REVIEW_PASS_THRESHOLD if threshold is None else threshold
 
     def review_patch(state) -> dict:
         coding_run_id = state.get("coding_run_id")
@@ -216,18 +221,20 @@ def build_review_patch_node(reviewer, recorder):
         except Exception:
             logger.exception("Patch review failed")
             return {"failure": RunFailure(failed_stage=CodingRunStage.reviewing, reason=REVIEW_FAILED), "trace": ["review_patch"]}
-        accepted = bool(review.accepted)
+        # The reviewer only scores; the backend owns the pass bar.
+        score = review.score
         findings = list(review.findings)
+        accepted = score >= pass_threshold
 
-        # The reviewer's acceptance is never the sole gate: the backend independently
-        # re-verifies that every proposal stays within the Test File boundary.
+        # The score is never the sole gate: the backend independently re-verifies that
+        # every proposal stays within the Test File boundary, overriding a passing score.
         boundary_finding = verify_test_file_boundary(state.get("checkout_root"), generated_files)
         if boundary_finding is not None:
             accepted = False
             findings = [*findings, boundary_finding]
 
         recorder.record_review(coding_run_id, accepted=accepted, findings=findings)
-        review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, findings=findings, diff=diff)
+        review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, score=score, threshold=pass_threshold, findings=findings, diff=diff)
         if accepted:
             emit(review_result)
         return {"review_result": review_result, "trace": ["review_patch"]}
