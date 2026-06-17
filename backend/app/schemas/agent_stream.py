@@ -45,19 +45,6 @@ class Token(BaseModel):
     content: str
 
 
-class Answer(BaseModel):
-    """The complete generated answer with its de-duplicated file citations.
-
-    An internal hop only: the chain builder emits one at the end of a turn and
-    the session service consumes it to persist the exchange and build the
-    terminal ``Result``, so it is never serialized to the wire.
-    """
-
-    type: Literal["answer"] = "answer"
-    text: str
-    citations: list[Citation]
-
-
 class Result(BaseModel):
     """The terminal domain event reflecting the persisted exchange."""
 
@@ -156,4 +143,4 @@ class RunApproved(BaseModel):
     disclaimer: str = REVIEW_DISCLAIMER
 
 
-AgentStreamEvent = Stage | Token | Answer | Result | RunStarted | RunFailure | PatchResult | ReviewResult | RunRejected | RunApproved
+AgentStreamEvent = Stage | Token | Result | RunStarted | RunFailure | PatchResult | ReviewResult | RunRejected | RunApproved
