@@ -775,13 +775,225 @@ test("User can request test generation and see the reviewed Test Patch", async (
     page.getByText("Covers the successful login path."),
   ).toBeVisible()
   await expect(page.getByText("Uses existing test fixtures.")).toBeVisible()
-  await expect(page.getByText("diff --git a/tests/test_login.py")).toBeVisible()
   await expect(
-    page.getByText(
-      "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
-    ),
+    page.getByText("diff --git a/tests/test_login.py").last(),
+  ).toBeVisible()
+  await expect(
+    page
+      .getByText(
+        "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+      )
+      .last(),
   ).toBeVisible()
   await expect(page.getByText("Awaiting the owner's decision.")).toBeVisible()
+})
+
+test("User can approve a reviewed Test Patch and see the pushed branch", async ({
+  page,
+}) => {
+  let streamCount = 0
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New Repository Session",
+        owner_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      streamCount += 1
+
+      if (streamCount === 1) {
+        await route.fulfill({
+          contentType: "text/event-stream",
+          body: [
+            'data: {"type":"run_started","coding_run_id":"run-approve"}\n\n',
+            'data: {"type":"review_result","coding_run_id":"run-approve","accepted":true,"score":8,"threshold":7,"findings":[{"category":"coverage","detail":"Covers the successful login path."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+          ].join(""),
+        })
+        return
+      }
+
+      expect(route.request().postDataJSON()).toEqual({
+        coding_run_id: "run-approve",
+        approved: true,
+        feedback: "",
+      })
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"stage","stage":"git_push"}\n\n',
+          'data: {"type":"run_approved","coding_run_id":"run-approve","branch":"qa-tests/run-approve","diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests for login")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(page.getByRole("button", { name: "Approve" })).toBeVisible()
+  await page.getByRole("button", { name: "Approve" }).click()
+
+  await expect(page.getByText("git_push")).toBeVisible()
+  await expect(page.getByText("Approved and pushed")).toBeVisible()
+  await expect(page.getByText("Branch qa-tests/run-approve")).toBeVisible()
+  await expect(
+    page.getByText("diff --git a/tests/test_login.py").last(),
+  ).toBeVisible()
+  await expect(
+    page
+      .getByText(
+        "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+      )
+      .last(),
+  ).toBeVisible()
+  await expect(page.getByRole("button", { name: "Approve" })).not.toBeVisible()
+  await expect(page.getByRole("button", { name: "Reject" })).not.toBeVisible()
+})
+
+test("User can reject a reviewed Test Patch with optional feedback", async ({
+  page,
+}) => {
+  let streamCount = 0
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New Repository Session",
+        owner_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      streamCount += 1
+
+      if (streamCount === 1) {
+        await route.fulfill({
+          contentType: "text/event-stream",
+          body: [
+            'data: {"type":"run_started","coding_run_id":"run-reject"}\n\n',
+            'data: {"type":"review_result","coding_run_id":"run-reject","accepted":true,"score":8,"threshold":7,"findings":[{"category":"coverage","detail":"Covers the successful login path."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+          ].join(""),
+        })
+        return
+      }
+
+      expect(route.request().postDataJSON()).toEqual({
+        coding_run_id: "run-reject",
+        approved: false,
+        feedback: "Please cover the locked account path too.",
+      })
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"run_rejected","coding_run_id":"run-reject","findings":[{"category":"coverage","detail":"Missing locked account coverage."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests for login")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await page
+    .getByRole("textbox", { name: "Reject feedback" })
+    .fill("Please cover the locked account path too.")
+  await page.getByRole("button", { name: "Reject" }).click()
+
+  await expect(page.getByText("Rejected and discarded")).toBeVisible()
+  await expect(page.getByText("Missing locked account coverage.")).toBeVisible()
+  await expect(
+    page.getByText("diff --git a/tests/test_login.py").last(),
+  ).toBeVisible()
+  await expect(
+    page
+      .getByText(
+        "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+      )
+      .last(),
+  ).toBeVisible()
+  await expect(page.getByRole("button", { name: "Approve" })).not.toBeVisible()
+  await expect(page.getByRole("button", { name: "Reject" })).not.toBeVisible()
 })
 
 test("Failed test generation renders the failed stage and sanitized reason", async ({

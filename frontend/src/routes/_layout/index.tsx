@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { type FormEvent, useEffect, useState } from "react"
 import type {
   Citation,
+  HumanDecisionRequest,
   RepositoryPublic,
   ReviewFinding,
   SessionHistoryPublic,
@@ -12,7 +13,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { askRepositoryQuestionStream } from "@/lib/agentStream"
+import {
+  askRepositoryQuestionStream,
+  decideReviewedPatchStream,
+} from "@/lib/agentStream"
 
 type ChatMessage = {
   id: string
@@ -21,6 +25,7 @@ type ChatMessage = {
   citations: Citation[]
   codingRunId?: string
   review?: ReviewResultView
+  decision?: RunDecisionView
   failure?: RunFailureView
 }
 
@@ -37,6 +42,20 @@ type RunFailureView = {
   failedStage: string
   reason: string
 }
+
+type RunDecisionView =
+  | {
+      status: "approved"
+      branch: string
+      diff: string
+      disclaimer: string
+    }
+  | {
+      status: "rejected"
+      findings: ReviewFinding[]
+      diff: string
+      disclaimer: string
+    }
 
 export const Route = createFileRoute("/_layout/")({
   component: CopilotShell,
@@ -59,6 +78,9 @@ function CopilotShell() {
   const [stageStatus, setStageStatus] = useState<string[]>([])
   const [streamError, setStreamError] = useState<string | null>(null)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
+  const [pendingDecisionRunId, setPendingDecisionRunId] = useState<
+    string | null
+  >(null)
   const repositoriesQuery = useQuery({
     queryKey: ["repositories"],
     queryFn: () => RepositoriesService.readRepositories({}),
@@ -244,7 +266,27 @@ function CopilotShell() {
                     </p>
                   ) : null}
                   {message.review ? (
-                    <ReviewResultSummary review={message.review} />
+                    <ReviewResultSummary
+                      isPending={pendingDecisionRunId === message.codingRunId}
+                      message={message}
+                      review={message.review}
+                      onDecision={(decision) => {
+                        if (!activeSessionId) {
+                          return
+                        }
+                        submitDecision({
+                          repositorySessionId: activeSessionId,
+                          decision,
+                          setChatMessages,
+                          setPendingDecisionRunId,
+                          setStageStatus,
+                          setStreamError,
+                        })
+                      }}
+                    />
+                  ) : null}
+                  {message.decision ? (
+                    <RunDecisionSummary decision={message.decision} />
                   ) : null}
                   {message.failure ? (
                     <RunFailureSummary failure={message.failure} />
@@ -427,7 +469,23 @@ function RepositorySelector({
   )
 }
 
-function ReviewResultSummary({ review }: { review: ReviewResultView }) {
+function ReviewResultSummary({
+  isPending,
+  message,
+  onDecision,
+  review,
+}: {
+  isPending: boolean
+  message: ChatMessage
+  onDecision: (decision: HumanDecisionRequest) => void
+  review: ReviewResultView
+}) {
+  const [feedback, setFeedback] = useState("")
+  const canDecide =
+    review.accepted &&
+    !message.decision &&
+    typeof message.codingRunId === "string"
+
   return (
     <div className="mt-3 grid gap-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -452,9 +510,91 @@ function ReviewResultSummary({ review }: { review: ReviewResultView }) {
         {review.diff}
       </pre>
       <p className="text-xs text-muted-foreground">{review.disclaimer}</p>
-      {review.accepted ? (
-        <p className="text-sm font-medium">Awaiting the owner's decision.</p>
+      {canDecide ? (
+        <div className="grid gap-2">
+          <p className="text-sm font-medium">Awaiting the owner's decision.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={isPending}
+              onClick={() =>
+                onDecision({
+                  coding_run_id: message.codingRunId ?? "",
+                  approved: true,
+                  feedback: "",
+                })
+              }
+            >
+              Approve
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isPending}
+              onClick={() =>
+                onDecision({
+                  coding_run_id: message.codingRunId ?? "",
+                  approved: false,
+                  feedback,
+                })
+              }
+            >
+              Reject
+            </Button>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor={`reject-feedback-${message.id}`}>
+              Reject feedback
+            </Label>
+            <textarea
+              id={`reject-feedback-${message.id}`}
+              aria-label="Reject feedback"
+              className="min-h-16 resize-none rounded-md border bg-background px-3 py-2 text-sm disabled:bg-muted/30 disabled:text-muted-foreground"
+              disabled={isPending}
+              value={feedback}
+              onChange={(event) => setFeedback(event.target.value)}
+            />
+          </div>
+        </div>
       ) : null}
+    </div>
+  )
+}
+
+function RunDecisionSummary({ decision }: { decision: RunDecisionView }) {
+  return (
+    <div className="mt-3 grid gap-3">
+      {decision.status === "approved" ? (
+        <>
+          <p className="text-sm font-medium">Approved and pushed</p>
+          <p className="text-sm text-muted-foreground">
+            Branch {decision.branch}
+          </p>
+          <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3 text-xs">
+            {decision.diff}
+          </pre>
+        </>
+      ) : (
+        <>
+          <p className="text-sm font-medium">Rejected and discarded</p>
+          {decision.findings.length > 0 ? (
+            <ul className="space-y-1 text-sm">
+              {decision.findings.map((finding) => (
+                <li key={`${finding.category}:${finding.detail}`}>
+                  <span className="font-medium">{finding.category}: </span>
+                  {finding.detail}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3 text-xs">
+            {decision.diff}
+          </pre>
+        </>
+      )}
+      <p className="text-xs text-muted-foreground">{decision.disclaimer}</p>
     </div>
   )
 }
@@ -660,6 +800,82 @@ async function submitQuestion({
   }
 }
 
+async function submitDecision({
+  repositorySessionId,
+  decision,
+  setChatMessages,
+  setPendingDecisionRunId,
+  setStageStatus,
+  setStreamError,
+}: {
+  repositorySessionId: string
+  decision: HumanDecisionRequest
+  setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
+  setPendingDecisionRunId: React.Dispatch<React.SetStateAction<string | null>>
+  setStageStatus: React.Dispatch<React.SetStateAction<string[]>>
+  setStreamError: React.Dispatch<React.SetStateAction<string | null>>
+}) {
+  setStreamError(null)
+  setStageStatus([])
+  setPendingDecisionRunId(decision.coding_run_id)
+
+  try {
+    for await (const event of decideReviewedPatchStream({
+      repositorySessionId,
+      decision,
+    })) {
+      if (event.type === "stage") {
+        setStageStatus((stages) =>
+          stages.includes(event.stage) ? stages : [...stages, event.stage],
+        )
+      }
+
+      if (event.type === "run_approved" && isRunApprovedEvent(event)) {
+        setChatMessages((messages) =>
+          messages.map((message) =>
+            message.codingRunId === event.coding_run_id
+              ? {
+                  ...message,
+                  decision: {
+                    status: "approved",
+                    branch: event.branch,
+                    diff: event.diff,
+                    disclaimer: event.disclaimer,
+                  },
+                }
+              : message,
+          ),
+        )
+      }
+
+      if (event.type === "run_rejected" && isRunRejectedEvent(event)) {
+        setChatMessages((messages) =>
+          messages.map((message) =>
+            message.codingRunId === event.coding_run_id
+              ? {
+                  ...message,
+                  decision: {
+                    status: "rejected",
+                    findings: event.findings,
+                    diff: event.diff,
+                    disclaimer: event.disclaimer,
+                  },
+                }
+              : message,
+          ),
+        )
+      }
+
+      if (event.type === "transport_error") {
+        setStageStatus([])
+        setStreamError(event.message)
+      }
+    }
+  } finally {
+    setPendingDecisionRunId(null)
+  }
+}
+
 function isReviewResultEvent(event: { [key: string]: unknown }): event is {
   coding_run_id: string
   accepted: boolean
@@ -674,6 +890,35 @@ function isReviewResultEvent(event: { [key: string]: unknown }): event is {
     typeof event.accepted === "boolean" &&
     typeof event.score === "number" &&
     typeof event.threshold === "number" &&
+    Array.isArray(event.findings) &&
+    event.findings.every(isReviewFinding) &&
+    typeof event.diff === "string" &&
+    typeof event.disclaimer === "string"
+  )
+}
+
+function isRunApprovedEvent(event: { [key: string]: unknown }): event is {
+  coding_run_id: string
+  branch: string
+  diff: string
+  disclaimer: string
+} {
+  return (
+    typeof event.coding_run_id === "string" &&
+    typeof event.branch === "string" &&
+    typeof event.diff === "string" &&
+    typeof event.disclaimer === "string"
+  )
+}
+
+function isRunRejectedEvent(event: { [key: string]: unknown }): event is {
+  coding_run_id: string
+  findings: ReviewFinding[]
+  diff: string
+  disclaimer: string
+} {
+  return (
+    typeof event.coding_run_id === "string" &&
     Array.isArray(event.findings) &&
     event.findings.every(isReviewFinding) &&
     typeof event.diff === "string" &&

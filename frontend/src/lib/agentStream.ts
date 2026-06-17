@@ -1,4 +1,4 @@
-import type { Citation } from "@/client"
+import type { Citation, HumanDecisionRequest } from "@/client"
 import { OpenAPI } from "@/client"
 
 export type AgentStreamEvent =
@@ -20,6 +20,32 @@ export async function* askRepositoryQuestionStream({
   repositorySessionId: string
   question: string
 }): AsyncGenerator<AgentStreamEvent> {
+  yield* streamRepositorySessionTurn({
+    repositorySessionId,
+    requestBody: { question },
+  })
+}
+
+export async function* decideReviewedPatchStream({
+  repositorySessionId,
+  decision,
+}: {
+  repositorySessionId: string
+  decision: HumanDecisionRequest
+}): AsyncGenerator<AgentStreamEvent> {
+  yield* streamRepositorySessionTurn({
+    repositorySessionId,
+    requestBody: decision,
+  })
+}
+
+async function* streamRepositorySessionTurn({
+  repositorySessionId,
+  requestBody,
+}: {
+  repositorySessionId: string
+  requestBody: { question: string } | HumanDecisionRequest
+}): AsyncGenerator<AgentStreamEvent> {
   try {
     const token = await resolveToken()
     const response = await fetch(
@@ -30,7 +56,7 @@ export async function* askRepositoryQuestionStream({
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify(requestBody),
       },
     )
 
