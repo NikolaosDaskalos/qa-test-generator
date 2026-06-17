@@ -1,6 +1,6 @@
 # Extract the Repository Session execution-context assembly
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: (refactor — narrows the session-stream input assembly behind US 06 answering / test-generation streaming)
 
@@ -35,17 +35,17 @@ answer exchange is still persisted with structural citations before the terminal
 
 ## Acceptance criteria
 
-- [ ] A `RepositorySessionExecution` context module owns checkout-field
+- [x] A `RepositorySessionExecution` context module owns checkout-field
       resolution, history-window → LangChain message projection, and graph-input
       assembly, taking plain inputs.
-- [ ] `stream_session` keeps the ownership check and stream driving and obtains
+- [x] `stream_session` keeps the ownership check and stream driving and obtains
       its graph input from the context; the method no longer inlines history
       conversion / checkout resolution / input-dict construction.
-- [ ] Answer-terminal persistence and ADR-0001 structural citations are unchanged.
-- [ ] The context is unit-tested directly without compiling or running the graph:
+- [x] Answer-terminal persistence and ADR-0001 structural citations are unchanged.
+- [x] The context is unit-tested directly without compiling or running the graph:
       checkout-field resolution including the missing-Repository `None` case, the
       role → message projection, and the graph-input keys.
-- [ ] Behavior is preserved: existing session-stream tests pass unchanged; the
+- [x] Behavior is preserved: existing session-stream tests pass unchanged; the
       backend suite passes excluding known environmental/pre-existing failures.
 
 ## Blocked by
