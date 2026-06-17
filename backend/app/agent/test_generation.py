@@ -12,13 +12,14 @@ import logging
 
 from langgraph.types import interrupt
 
+from app.agent.decision_finalizer import DecisionFinalizer
 from app.agent.evidence_partitioner import EvidencePartitioner, EvidencePartitionRequest
 from app.agent.patch_builder import PatchBuilder, PatchBuildRequest
 from app.agent.revision_attempt_budget import RevisionAttemptBudget
 from app.agent.stream import emit
 from app.agent.test_files import verify_test_file_boundary
 from app.enums.coding_run import CodingRunStage
-from app.schemas.agent_stream import ReviewResult, RunApproved, RunFailure, RunRejected, Stage
+from app.schemas.agent_stream import ReviewResult, RunFailure, Stage
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +31,6 @@ REVISION_FAILED = "The test generator could not revise its proposal."
 REVIEW_FAILED = "The patch reviewer could not complete its assessment."
 # The prompt the human-in-the-loop interrupt surfaces while awaiting the owner's decision.
 AWAITING_DECISION_MESSAGE = "Review the generated Test Patch and approve or reject it."
-# The fixed commit message for an approved Test Patch; the run identity lives on the Coding Run, not the message.
-APPROVAL_COMMIT_MESSAGE = "Add generated tests"
-# User-safe reasons for an approval-stage Git failure; never raw exception text or the credential.
-COMMIT_FAILED = "Could not commit the approved Test Patch."
-PUSH_FAILED = "Could not push the approved Test Patch branch."
 
 
 def build_gather_evidence_node(retriever):
@@ -253,23 +249,27 @@ def build_await_decision_node():
 
 
 def build_discard_patch_node(workspace_factory, recorder):
-    """Build the node that discards a rejected Test Patch and records the rejection.
+    """Build the thin adapter that discards a rejected Test Patch and records the rejection.
 
-    The owner rejected the reviewed patch: the backend restores the shared checkout to
-    the Repository's indexed commit and removes the temporary generation branch using
-    local Git only — never a commit, push, or remote branch — then persists the run as
-    rejected while preserving its review record. The terminal ``RunRejected`` carries
-    the assessed diff and findings so the client can show what was discarded.
+    The node unpacks state, delegates the discard-then-reject orchestration to the
+    deep ``DecisionFinalizer`` (restore the checkout, remove the temporary branch with
+    local Git only, persist the rejection while preserving the review record), emits
+    the returned terminal ``RunRejected``, and folds it onto state. The finalizer holds
+    no wire knowledge; emission stays at the node.
     """
 
+    finalizer = DecisionFinalizer(recorder=recorder)
+
     def discard_patch(state) -> dict:
-        coding_run_id = state.get("coding_run_id")
         review: ReviewResult | None = state.get("review_result")
-        workspace = workspace_factory(state.get("checkout_root"))
-        workspace.discard_generation(state.get("indexed_commit_sha"), state.get("generation_branch"))
-        recorder.reject(coding_run_id)
-        findings = list(review.findings) if review is not None else []
-        rejection = RunRejected(coding_run_id=coding_run_id, diff=state.get("diff") or "", findings=findings)
+        rejection = finalizer.discard(
+            workspace=workspace_factory(state.get("checkout_root")),
+            coding_run_id=state.get("coding_run_id"),
+            generation_branch=state.get("generation_branch"),
+            diff=state.get("diff") or "",
+            indexed_commit_sha=state.get("indexed_commit_sha"),
+            findings=list(review.findings) if review is not None else [],
+        )
         emit(rejection)
         return {"rejection_result": rejection, "trace": ["discard_patch"]}
 
@@ -277,35 +277,29 @@ def build_discard_patch_node(workspace_factory, recorder):
 
 
 def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
-    """Build the node that commits, pushes, and finalizes an owner-approved Test Patch.
+    """Build the thin adapter that finalizes an owner-approved Test Patch.
 
-    The owner approved the reviewed patch: the backend commits exactly the reviewed
-    Test Patch on its unique non-default branch and pushes that branch to the remote
-    with the Repository Credential. After a successful push the run is recorded
-    approved and the shared checkout is restored to the Repository's indexed commit
-    with the temporary local branch removed (local Git only — the pushed remote branch
-    is left available for inspection). The terminal ``RunApproved`` carries the pushed
-    branch and the approved diff.
+    The node unpacks state, builds the publisher and workspace, delegates the
+    commit → push → record-approved → restore-checkout orchestration to the deep
+    ``DecisionFinalizer``, then emits the returned terminal and folds it onto state. A
+    ``git_commit`` / ``git_push`` Run Failure short-circuits the run; a ``RunApproved``
+    ends it. Emission stays at the node; the finalizer holds no wire knowledge.
     """
 
+    finalizer = DecisionFinalizer(recorder=recorder)
+
     def approve_patch(state) -> dict:
-        coding_run_id = state.get("coding_run_id")
-        publisher = publisher_factory(state["repository_id"])
-        try:
-            publisher.commit(APPROVAL_COMMIT_MESSAGE)
-        except Exception:
-            logger.error("Approved patch commit failed: %s", COMMIT_FAILED)
-            return {"failure": RunFailure(failed_stage=CodingRunStage.git_commit, reason=COMMIT_FAILED), "trace": ["approve_patch"]}
-        try:
-            publisher.push()
-        except Exception:
-            logger.error("Approved patch push failed: %s", PUSH_FAILED)
-            return {"failure": RunFailure(failed_stage=CodingRunStage.git_push, reason=PUSH_FAILED), "trace": ["approve_patch"]}
-        recorder.approve(coding_run_id)
-        workspace = workspace_factory(state.get("checkout_root"))
-        workspace.discard_generation(state.get("indexed_commit_sha"), state.get("generation_branch"))
-        approval = RunApproved(coding_run_id=coding_run_id, branch=state.get("generation_branch") or "", diff=state.get("diff") or "")
-        emit(approval)
-        return {"approval_result": approval, "trace": ["approve_patch"]}
+        outcome = finalizer.approve(
+            publisher=publisher_factory(state["repository_id"]),
+            workspace=workspace_factory(state.get("checkout_root")),
+            coding_run_id=state.get("coding_run_id"),
+            generation_branch=state.get("generation_branch"),
+            diff=state.get("diff") or "",
+            indexed_commit_sha=state.get("indexed_commit_sha"),
+        )
+        emit(outcome)
+        if isinstance(outcome, RunFailure):
+            return {"failure": outcome, "trace": ["approve_patch"]}
+        return {"approval_result": outcome, "trace": ["approve_patch"]}
 
     return approve_patch

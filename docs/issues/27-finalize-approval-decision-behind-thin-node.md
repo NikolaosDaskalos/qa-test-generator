@@ -1,6 +1,6 @@
 # Give the approval decision a deep finalizer behind thin nodes
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 14-15 (refactor — Approval decision finalization)
 
@@ -42,20 +42,20 @@ reaches the Agent Stream.
 
 ## Acceptance criteria
 
-- [ ] A deep `DecisionFinalizer` owns commit → push → record-approved → cleanup
+- [x] A deep `DecisionFinalizer` owns commit → push → record-approved → cleanup
       (approve) and discard → record-rejected (reject), taking plain inputs and
       returning a typed `RunApproved` / `RunRejected` / `RunFailure` outcome (no
       raw state dict, no escaping exception).
-- [ ] The shared checkout-restore / branch-cleanup step is written once inside the
+- [x] The shared checkout-restore / branch-cleanup step is written once inside the
       finalizer, not duplicated across the two paths.
-- [ ] The `approve_patch` and `discard_patch` graph nodes are thin adapters:
+- [x] The `approve_patch` and `discard_patch` graph nodes are thin adapters:
       unpack state → call finalizer → emit the returned terminal → fold onto state
       (emission stays at the node per issue 22).
-- [ ] The finalizer is unit-tested directly with fake publisher / workspace /
+- [x] The finalizer is unit-tested directly with fake publisher / workspace /
       recorder, without resuming or running the graph: commit-then-push-then-
       approve-then-cleanup order, the discard-then-reject path, a commit failure
       short-circuiting before push, and a push failure after a successful commit.
-- [ ] Behavior is preserved: existing graph and HITL-resume tests pass unchanged;
+- [x] Behavior is preserved: existing graph and HITL-resume tests pass unchanged;
       the backend suite passes excluding known environmental/pre-existing failures.
 
 ## Blocked by
