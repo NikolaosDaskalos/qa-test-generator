@@ -1,6 +1,6 @@
 # Collapse the bypassed RAG answer facade
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: (refactor — supports the grounded-answer path behind US 06 "Stream grounded answers with citations")
 
@@ -32,21 +32,21 @@ wiring seam and the components the graph actually needs.
 
 ## Acceptance criteria
 
-- [ ] `app/rag/chain_builder.py` and its tests are deleted; no remaining import of
+- [x] `app/rag/chain_builder.py` and its tests are deleted; no remaining import of
       `ChainBuilder` anywhere in `app/` or `tests/`.
-- [ ] The dead `RAGPipeline` methods (`answer_stream`, `set_system_prompt`,
+- [x] The dead `RAGPipeline` methods (`answer_stream`, `set_system_prompt`,
       `ingest`, `get_stats`) and the `chain_builder` attribute are removed; the
       bypassed facade no longer exists (or `RAGPipeline` is removed entirely if it
       retains no live responsibility).
-- [ ] The session-graph wiring composes the chat model, `DocumentRetriever`, and
+- [x] The session-graph wiring composes the chat model, `DocumentRetriever`, and
       `DocumentIngestor` directly at the dependency seam without reaching past a
       facade for `.llm` / `.document_retriever`.
-- [ ] Citation logic lives in exactly one module (`repository_question.py`); no
+- [x] Citation logic lives in exactly one module (`repository_question.py`); no
       duplicate citation helper remains.
-- [ ] The grounded-answer path (retrieve → generate → cited answer) behaves
+- [x] The grounded-answer path (retrieve → generate → cited answer) behaves
       unchanged — verified by the existing `repository_question` / agent-stream
       tests still passing.
-- [ ] The backend test suite passes (excluding the known environmental/pre-existing
+- [x] The backend test suite passes (excluding the known environmental/pre-existing
       failures), with no test left guarding deleted code.
 
 ## Blocked by

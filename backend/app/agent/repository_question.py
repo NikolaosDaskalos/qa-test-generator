@@ -1,7 +1,6 @@
 """The ``repository_question`` branch nodes: retrieval-grounded answering.
 
-These re-home the former ``ChainBuilder`` answer flow as native graph nodes. The
-``retrieve`` node scopes Repository Evidence to the session's Repository; the
+The ``retrieve`` node scopes Repository Evidence to the session's Repository; the
 ``generate`` node streams the grounded answer (its token chunks ride LangGraph's
 ``messages`` stream mode) and records the answer text plus de-duplicated file
 citations on the shared state.

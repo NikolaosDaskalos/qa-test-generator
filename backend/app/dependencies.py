@@ -8,7 +8,9 @@ import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
-from pydantic import ValidationError
+from langchain_cohere import CohereRerank
+from langchain_openai import ChatOpenAI
+from pydantic import SecretStr, ValidationError
 from sqlmodel import Session
 
 from app.agent.generator import ReActTestGenerator
@@ -26,7 +28,7 @@ from app.persistence.repository_store import RepositoryStore
 from app.persistence.session_store import RepositorySessionStore
 from app.persistence.source_document_store import SourceDocumentStore
 from app.rag.ingestor import DocumentIngestor
-from app.rag.rag_pipeline import RAGPipeline
+from app.rag.retriever import DocumentRetriever
 from app.schemas.authentication import TokenPayload
 from app.services.repository_service import RepositoryService
 from app.services.session_service import RepositorySessionService
@@ -144,30 +146,59 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
     return current_user
 
 
-def get_rag_pipeline(current_user: CurrentUser, weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStoreDep) -> RAGPipeline:
-    """Build the authenticated user's repository-scoped RAG pipeline."""
-    return RAGPipeline(current_user.id, weaviate_resources, source_document_store)
+def get_openai_llm() -> ChatOpenAI:
+    """Build the configured streaming chat model."""
+    return ChatOpenAI(
+        model=settings.LLM_MODEL,
+        temperature=settings.TEMPERATURE,
+        max_tokens=settings.MAX_TOKENS,
+        streaming=True,
+        api_key=settings.OPENAI_API_KEY,
+    )
 
 
-RAGPipelineDep = Annotated[RAGPipeline, Depends(get_rag_pipeline)]
+ChatOpenAIDep = Annotated[ChatOpenAI, Depends(get_openai_llm)]
 
 
-def get_session_graph(request: Request, rag_pipeline: RAGPipelineDep, coding_run_store: CodingRunStoreDep, repository_store: RepositoryStoreDep):
+def get_document_retriever(
+    current_user: CurrentUser,
+    weaviate_resources: WeaviateResourcesDep,
+    source_document_store: SourceDocumentStoreDep,
+) -> DocumentRetriever:
+    """Build the authenticated user's repository-scoped retriever."""
+    reranker = CohereRerank(
+        model=settings.COHERE_RERANK_MODEL,
+        cohere_api_key=SecretStr(settings.COHERE_API_KEY),
+        top_n=settings.TOP_K,
+    )
+    return DocumentRetriever(weaviate_resources, str(current_user.id), source_document_store, reranker)
+
+
+DocumentRetrieverDep = Annotated[DocumentRetriever, Depends(get_document_retriever)]
+
+
+def get_session_graph(
+    request: Request,
+    chat_model: ChatOpenAIDep,
+    document_retriever: DocumentRetrieverDep,
+    coding_run_store: CodingRunStoreDep,
+    repository_store: RepositoryStoreDep,
+):
     """Compile the unified intent-routed graph for one request.
 
-    Classifier and planner reuse the pipeline's chat model via structured output;
-    retrieval and generation reuse the pipeline's repository-scoped components; the
-    Coding Run recorder persists the test-generation lifecycle. The durable
+    Classifier and planner reuse the chat model via structured output; retrieval
+    and generation reuse the repository-scoped components; the Coding Run recorder
+    persists the test-generation lifecycle. The durable
     ``PostgresSaver`` checkpointer is the process-wide singleton opened in the
     application lifespan; only the (in-memory) graph wiring is rebuilt per request.
     """
     return build_graph(
-        classifier_llm=rag_pipeline.llm,
-        retriever=rag_pipeline.document_retriever,
-        llm=rag_pipeline.llm,
-        planner_llm=rag_pipeline.llm,
-        generator=ReActTestGenerator(rag_pipeline.llm),
-        reviewer=ReActPatchReviewer(rag_pipeline.llm),
+        classifier_llm=chat_model,
+        retriever=document_retriever,
+        llm=chat_model,
+        planner_llm=chat_model,
+        generator=ReActTestGenerator(chat_model),
+        reviewer=ReActPatchReviewer(chat_model),
         run_recorder=CodingRunRecorder(coding_run_store),
         publisher_factory=build_patch_publisher_factory(repository_store),
         checkpointer=request.app.state.session_checkpointer,
