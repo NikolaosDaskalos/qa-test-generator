@@ -1,6 +1,6 @@
 # Concentrate Repository processing state behind named transitions
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 01-02 (refactor — prerequisite for the Repository Synchronization work in issue 03 / US 10-17)
 
@@ -39,21 +39,21 @@ indexed commit atomically on mark-ready, and an empty index still fails the run.
 
 ## Acceptance criteria
 
-- [ ] `RepositoryStore` exposes named processing transitions (begin-cloning,
+- [x] `RepositoryStore` exposes named processing transitions (begin-cloning,
       record-checkout writing `local_path`/`default_branch`, begin-indexing,
       mark-ready publishing the indexed commit, fail with credential-sanitized
       reason); `process_repository` calls them instead of naming raw statuses or
       mutating checkout fields on the model.
-- [ ] Credential-sanitized failure redaction lives in the fail transition; both
+- [x] Credential-sanitized failure redaction lives in the fail transition; both
       `process_repository` and `delete_repository` use it (the standalone
       `_sanitized_failure` free function is gone or reduced to the transition's
       internal helper).
-- [ ] The clone/checkout/ingest orchestration stays in the service (not pulled
+- [x] The clone/checkout/ingest orchestration stays in the service (not pulled
       into the store), so incremental Synchronization can reuse the transitions.
-- [ ] The transitions are unit-tested directly against a store/fake (each status
+- [x] The transitions are unit-tested directly against a store/fake (each status
       move, checkout-field write, atomic indexed-commit publication, sanitized
       failure redaction) without running a real clone or ingest.
-- [ ] Behavior is preserved: the pending→cloning→indexing→ready/failed sequence,
+- [x] Behavior is preserved: the pending→cloning→indexing→ready/failed sequence,
       checkout-field capture, atomic indexed-commit publication, and empty-index
       failure all still hold; the backend suite passes excluding known
       environmental/pre-existing failures.
