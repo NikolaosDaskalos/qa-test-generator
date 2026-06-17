@@ -25,4 +25,5 @@ The indexed commit must describe a fully applied snapshot: it advances only afte
 ## Blocked by
 
 - [02 - Index Repository files as commit-scoped Code Chunks](02-index-repository-code-chunks.md)
+- [30 - Concentrate Repository processing state behind named transitions](30-concentrate-repository-processing-state.md) — this work widens the same processing method, so the state moves should be concentrated first and this issue rebased onto the named transitions.
 
