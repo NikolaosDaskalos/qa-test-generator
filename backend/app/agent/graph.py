@@ -113,10 +113,6 @@ def _route_after_plan(state: GraphState) -> Literal["failed", "planned"]:
     return "failed" if state.get("failure") else "planned"
 
 
-def _route_if_failed(state: GraphState) -> Literal["failed", "ok"]:
-    return "failed" if state.get("failure") else "ok"
-
-
 def _route_after_review(state: GraphState) -> Literal["failed", "accepted", "revise", "reject"]:
     """Route a completed Patch Review: accept, attempt one revision, or exhaust it.
 
@@ -221,14 +217,14 @@ def build_graph(
     graph.add_node("plan", build_plan_node(planner_llm))
     graph.add_node("begin_retrieving", _begin_retrieving_node(recorder))
     graph.add_node("gather_evidence", build_gather_evidence_node(retriever))
-    graph.add_node("prepare_branch", build_prepare_branch_node(workspaces, recorder))
-    graph.add_node("generate_tests", build_generate_tests_node(generator))
-    graph.add_node("build_patch", build_build_patch_node(workspaces, recorder))
+    graph.add_node("prepare_branch", build_prepare_branch_node(workspaces, recorder), destinations=("generate_tests", "fail_run"))
+    graph.add_node("generate_tests", build_generate_tests_node(generator), destinations=("build_patch", "fail_run"))
+    graph.add_node("build_patch", build_build_patch_node(workspaces, recorder), destinations=("review_patch", "fail_run"))
     graph.add_node("review_patch", build_review_patch_node(reviewer, recorder))
     graph.add_node("await_decision", build_await_decision_node())
-    graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder))
+    graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder), destinations=(END, "fail_run"))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
-    graph.add_node("revise_tests", build_revise_tests_node(generator))
+    graph.add_node("revise_tests", build_revise_tests_node(generator), destinations=("build_patch", "fail_run"))
     graph.add_node("reject_run", _reject_run_node())
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("retrieve", build_retrieve_node(retriever))
@@ -240,16 +236,11 @@ def build_graph(
     graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "begin_retrieving"})
     graph.add_edge("begin_retrieving", "gather_evidence")
     graph.add_edge("gather_evidence", "prepare_branch")
-    graph.add_conditional_edges("prepare_branch", _route_if_failed, {"failed": "fail_run", "ok": "generate_tests"})
-    graph.add_conditional_edges("generate_tests", _route_if_failed, {"failed": "fail_run", "ok": "build_patch"})
-    graph.add_conditional_edges("build_patch", _route_if_failed, {"failed": "fail_run", "ok": "review_patch"})
     graph.add_conditional_edges(
         "review_patch", _route_after_review, {"failed": "fail_run", "accepted": "await_decision", "revise": "revise_tests", "reject": "reject_run"}
     )
     graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
-    graph.add_conditional_edges("approve_patch", _route_if_failed, {"failed": "fail_run", "ok": END})
     graph.add_edge("discard_patch", END)
-    graph.add_conditional_edges("revise_tests", _route_if_failed, {"failed": "fail_run", "ok": "build_patch"})
     graph.add_edge("reject_run", "fail_run")
     graph.add_edge("fail_run", END)
     graph.add_edge("retrieve", "generate")

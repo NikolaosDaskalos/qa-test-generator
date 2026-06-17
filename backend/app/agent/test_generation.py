@@ -10,7 +10,8 @@ tested), which are kept apart on the shared state.
 
 import logging
 
-from langgraph.types import interrupt
+from langgraph.graph import END
+from langgraph.types import Command, interrupt
 
 from app.agent.decision_finalizer import DecisionFinalizer
 from app.agent.evidence_partitioner import EvidencePartitioner, EvidencePartitionRequest
@@ -33,6 +34,14 @@ REVIEW_FAILED = "The patch reviewer could not complete its assessment."
 AWAITING_DECISION_MESSAGE = "Review the generated Test Patch and approve or reject it."
 
 
+def _continue_to(node: str, update: dict) -> Command:
+    return Command(update=update, goto=node)
+
+
+def _fail_with(failure: RunFailure, trace: str) -> Command:
+    return Command(update={"failure": failure, "trace": [trace]}, goto="fail_run")
+
+
 def build_gather_evidence_node(retriever):
     """Build the generic retrieve node that partitions evidence source vs. test."""
 
@@ -41,9 +50,7 @@ def build_gather_evidence_node(retriever):
     def gather_evidence(state) -> dict:
         partition = partitioner.partition(
             EvidencePartitionRequest(
-                research_intents=state.get("research_intents") or [],
-                repository_id=state["repository_id"],
-                checkout_root=state.get("checkout_root"),
+                research_intents=state.get("research_intents") or [], repository_id=state["repository_id"], checkout_root=state.get("checkout_root")
             )
         )
         return {
@@ -71,8 +78,8 @@ def build_prepare_branch_node(workspace_factory, recorder):
             branch = workspace.prepare_branch(state.get("indexed_commit_sha"))
         except Exception:
             logger.exception("Generation branch preparation failed")
-            return {"failure": RunFailure(failed_stage=CodingRunStage.generating, reason=BRANCH_PREPARATION_FAILED), "trace": ["prepare_branch"]}
-        return {"generation_branch": branch, "trace": ["prepare_branch"]}
+            return _fail_with(RunFailure(failed_stage=CodingRunStage.generating, reason=BRANCH_PREPARATION_FAILED), "prepare_branch")
+        return _continue_to("generate_tests", {"generation_branch": branch, "trace": ["prepare_branch"]})
 
     return prepare_branch
 
@@ -93,8 +100,10 @@ def build_generate_tests_node(generator):
             )
         except Exception:
             logger.exception("Test generation failed")
-            return {"failure": RunFailure(failed_stage=CodingRunStage.generating, reason=GENERATION_FAILED), "trace": ["generate_tests"]}
-        return {"generated_files": proposal.generated_files, "external_references": proposal.external_references, "trace": ["generate_tests"]}
+            return _fail_with(RunFailure(failed_stage=CodingRunStage.generating, reason=GENERATION_FAILED), "generate_tests")
+        return _continue_to(
+            "build_patch", {"generated_files": proposal.generated_files, "external_references": proposal.external_references, "trace": ["generate_tests"]}
+        )
 
     return generate_tests
 
@@ -125,14 +134,17 @@ def build_revise_tests_node(generator):
             )
         except Exception:
             logger.exception("Test revision failed")
-            return {"failure": RunFailure(failed_stage=CodingRunStage.generating, reason=REVISION_FAILED), "trace": ["revise_tests"]}
+            return _fail_with(RunFailure(failed_stage=CodingRunStage.generating, reason=REVISION_FAILED), "revise_tests")
         budget = RevisionAttemptBudget.from_state(state).spend()
-        return {
-            "generated_files": proposal.generated_files,
-            "external_references": proposal.external_references or state.get("external_references") or [],
-            **budget.state_update(),
-            "trace": ["revise_tests"],
-        }
+        return _continue_to(
+            "build_patch",
+            {
+                "generated_files": proposal.generated_files,
+                "external_references": proposal.external_references or state.get("external_references") or [],
+                **budget.state_update(),
+                "trace": ["revise_tests"],
+            },
+        )
 
     return revise_tests
 
@@ -160,9 +172,11 @@ def build_build_patch_node(workspace_factory, recorder):
             )
         )
         if outcome.failure is not None:
-            return {"failure": outcome.failure, "trace": ["build_patch"]}
+            return _fail_with(outcome.failure, "build_patch")
         patch_result = outcome.patch_result
-        return {"patch_result": patch_result, "diff": patch_result.diff, "generated_files": patch_result.generated_files, "trace": ["build_patch"]}
+        return _continue_to(
+            "review_patch", {"patch_result": patch_result, "diff": patch_result.diff, "generated_files": patch_result.generated_files, "trace": ["build_patch"]}
+        )
 
     return build_patch
 
@@ -299,7 +313,7 @@ def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
         )
         emit(outcome)
         if isinstance(outcome, RunFailure):
-            return {"failure": outcome, "trace": ["approve_patch"]}
-        return {"approval_result": outcome, "trace": ["approve_patch"]}
+            return _fail_with(outcome, "approve_patch")
+        return Command(update={"approval_result": outcome, "trace": ["approve_patch"]}, goto=END)
 
     return approve_patch
