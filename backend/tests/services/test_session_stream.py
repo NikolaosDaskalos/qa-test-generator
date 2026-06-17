@@ -117,8 +117,9 @@ def test_stream_session_emits_run_failure_terminal_for_rejected_task():
     user = _user()
     service, session_store, repository_session = _wiring(user)
     run_id = uuid.uuid4()
-    items = [("custom", Stage(stage="classifying")), ("custom", Stage(stage="planning"))]
-    final = {"intent": "test_generation", "failure": RunFailure(coding_run_id=run_id, failed_stage="planning", reason="Out of scope")}
+    failure = RunFailure(coding_run_id=run_id, failed_stage="planning", reason="Out of scope")
+    items = [("custom", Stage(stage="classifying")), ("custom", Stage(stage="planning")), ("custom", failure)]
+    final = {"intent": "test_generation"}
     graph = FakeGraph(items, final)
 
     events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="refactor", graph=graph, thread_id="t-2"))
@@ -141,8 +142,8 @@ def test_stream_session_emits_patch_result_terminal_for_a_generated_patch():
         generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")],
         external_references=[ExternalReference(url="https://docs.pytest.org", title="pytest")],
     )
-    items = [("custom", Stage(stage="generating"))]
-    final = {"intent": "test_generation", "patch_result": patch}
+    items = [("custom", Stage(stage="generating")), ("custom", patch)]
+    final = {"intent": "test_generation"}
     graph = FakeGraph(items, final)
 
     events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-3"))
@@ -165,8 +166,8 @@ def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
         findings=[ReviewFinding(category="coverage", detail="covers happy and unhappy paths")],
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
     )
-    items = [("custom", Stage(stage="reviewing"))]
-    final = {"intent": "test_generation", "review_result": review}
+    items = [("custom", Stage(stage="reviewing")), ("custom", review)]
+    final = {"intent": "test_generation"}
     graph = FakeGraph(items, final)
 
     events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-rev"))
@@ -221,7 +222,7 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
         findings=[ReviewFinding(category="readability", detail="clear and idiomatic")],
     )
     review = ReviewResult(coding_run_id=run.id, accepted=True, findings=rejection.findings, diff=rejection.diff)
-    items = [("custom", Stage(stage="reviewing"))]
+    items = [("custom", Stage(stage="reviewing")), ("custom", rejection)]
     final = {"intent": "test_generation", "review_result": review, "rejection_result": rejection}
     graph = FakeGraph(items, final, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
@@ -243,6 +244,29 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
     assert session_store.appended == []
 
 
+def test_stream_session_relays_resume_terminal_without_scanning_stale_final_state():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t-paused", status=CodingRunStatus.awaiting_approval)
+    service.coding_run_store = FakeCodingRunStore(run)
+    rejection = RunRejected(
+        coding_run_id=run.id,
+        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+        findings=[ReviewFinding(category="readability", detail="clear and idiomatic")],
+    )
+    stale_review = ReviewResult(coding_run_id=run.id, accepted=True, findings=rejection.findings, diff=rejection.diff)
+    items = [("custom", rejection)]
+    graph = FakeGraph(items, {"intent": "test_generation", "review_result": stale_review}, next_nodes=("await_decision",))
+    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+
+    events = list(
+        service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision)
+    )
+
+    assert events == [rejection]
+    assert session_store.appended == []
+
+
 def test_stream_session_emits_run_approved_terminal_for_an_approved_decision():
     user = _user()
     service, session_store, repository_session = _wiring(user)
@@ -250,7 +274,7 @@ def test_stream_session_emits_run_approved_terminal_for_an_approved_decision():
     service.coding_run_store = FakeCodingRunStore(run)
     approval = RunApproved(coding_run_id=run.id, branch="qa-tests/abc123", diff="diff --git a/tests/test_x.py b/tests/test_x.py")
     review = ReviewResult(coding_run_id=run.id, accepted=True, findings=[], diff=approval.diff)
-    graph = FakeGraph([], {"intent": "test_generation", "review_result": review, "approval_result": approval}, next_nodes=("await_decision",))
+    graph = FakeGraph([("custom", approval)], {"intent": "test_generation", "review_result": review}, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=True)
 
     events = list(

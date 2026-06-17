@@ -231,6 +231,8 @@ def build_review_patch_node(reviewer, recorder):
 
         recorder.record_review(coding_run_id, accepted=accepted, findings=findings)
         review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, findings=findings, diff=diff)
+        if accepted:
+            emit(review_result)
         return {"review_result": review_result, "trace": ["review_patch"]}
 
     return review_patch
@@ -281,6 +283,7 @@ def build_discard_patch_node(workspace_factory, recorder):
         recorder.reject(coding_run_id)
         findings = list(review.findings) if review is not None else []
         rejection = RunRejected(coding_run_id=coding_run_id, diff=state.get("diff") or "", findings=findings)
+        emit(rejection)
         return {"rejection_result": rejection, "trace": ["discard_patch"]}
 
     return discard_patch
@@ -315,6 +318,7 @@ def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
         workspace = workspace_factory(state.get("checkout_root"))
         workspace.discard_generation(state.get("indexed_commit_sha"), state.get("generation_branch"))
         approval = RunApproved(coding_run_id=coding_run_id, branch=state.get("generation_branch") or "", diff=state.get("diff") or "")
+        emit(approval)
         return {"approval_result": approval, "trace": ["approve_patch"]}
 
     return approve_patch

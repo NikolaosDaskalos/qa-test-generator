@@ -18,7 +18,7 @@ from app.agent.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStatus
 from app.errors.git_errors import GitError
 from app.models.source_document import SourceDocument
-from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunRejected, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, RunStarted, Stage
 from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 from app.schemas.research_intent import ResearchIntent
 from app.schemas.review import PatchReview, ReviewFinding
@@ -753,6 +753,32 @@ def test_accepted_review_pauses_for_a_human_decision(tmp_path) -> None:
     assert graph.get_state(config).next == ("await_decision",)
 
 
+def test_accepted_review_stream_emits_its_review_result(tmp_path) -> None:
+    """An accepted Patch Review owns the terminal event emitted before the HITL pause."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
+    diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ..."
+    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder, diff=diff)
+
+    events = _custom_events(
+        graph,
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+    )
+
+    reviews = [event for event in events if isinstance(event, ReviewResult)]
+    assert len(reviews) == 1
+    assert reviews[0].coding_run_id == recorder.run_id
+    assert reviews[0].accepted is True
+    assert reviews[0].diff == diff
+
+
 def test_rejecting_a_paused_run_discards_the_patch_and_records_the_rejection(tmp_path) -> None:
     """Resuming a paused run with a rejection restores the checkout, removes the branch, and records the rejection."""
     (tmp_path / "tests").mkdir()
@@ -790,6 +816,35 @@ def test_rejecting_a_paused_run_discards_the_patch_and_records_the_rejection(tmp
     assert final.get("failure") is None
 
 
+def test_rejecting_a_paused_run_stream_emits_run_rejected(tmp_path) -> None:
+    """The discard node owns the rejection terminal event on the resume stream."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    findings = [ReviewFinding(category="readability", detail="clear and idiomatic")]
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=findings))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ...")
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    events = [chunk for _mode, chunk in graph.stream(Command(resume={"approved": False}), config=config, stream_mode=["custom"])]
+
+    rejections = [event for event in events if isinstance(event, RunRejected)]
+    assert len(rejections) == 1
+    assert rejections[0].coding_run_id == recorder.run_id
+    assert [finding.category for finding in rejections[0].findings] == ["readability"]
+
+
 def test_approving_a_paused_run_commits_pushes_and_emits_run_approved(tmp_path) -> None:
     """Resuming with an approval commits and pushes the reviewed patch and ends in a RunApproved."""
     (tmp_path / "tests").mkdir()
@@ -822,6 +877,35 @@ def test_approving_a_paused_run_commits_pushes_and_emits_run_approved(tmp_path) 
     assert approval.coding_run_id == recorder.run_id
     assert final.get("rejection_result") is None
     assert final.get("failure") is None
+
+
+def test_approving_a_paused_run_stream_emits_run_approved(tmp_path) -> None:
+    """The approval node owns the approval terminal event on the resume stream."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(accepted=True, findings=[]))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    publisher = FakePublisher()
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    events = [chunk for _mode, chunk in graph.stream(Command(resume={"approved": True}), config=config, stream_mode=["custom"])]
+
+    approvals = [event for event in events if isinstance(event, RunApproved)]
+    assert len(approvals) == 1
+    assert approvals[0].coding_run_id == recorder.run_id
+    assert approvals[0].branch == "qa-tests/fake"
 
 
 def test_approval_records_the_run_and_restores_the_checkout_to_the_indexed_commit(tmp_path) -> None:
@@ -1024,6 +1108,29 @@ def test_reviewer_failure_is_a_reviewing_run_failure(tmp_path) -> None:
     assert fail[2] == "reviewing"
     # A reviewer crash is sanitized, never leaking raw exception text.
     assert "unavailable" not in final["failure"].reason
+
+
+def test_reviewer_failure_stream_emits_run_failure(tmp_path) -> None:
+    """The failure node owns the reviewing-stage RunFailure terminal event."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    graph = _reviewed_graph(reviewer=RaisingReviewer(), recorder=recorder)
+
+    events = _custom_events(
+        graph,
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+    )
+
+    failures = [event for event in events if isinstance(event, RunFailure)]
+    assert len(failures) == 1
+    assert failures[0].coding_run_id == recorder.run_id
+    assert failures[0].failed_stage == "reviewing"
 
 
 # ── test_generation branch: bounded revision ──────────────────────

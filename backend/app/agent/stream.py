@@ -3,8 +3,13 @@
 Graph nodes emit ordered stage and run markers on the ``custom`` stream while a
 generating node's token chunks ride the ``messages`` stream. ``emit`` is the only
 way nodes publish a custom marker; ``map_graph_stream`` is the only adapter that
-folds both modes back onto the typed ``AgentStreamEvent`` union. Terminal domain
-events (``Result``, ``RunFailure``) are decided by the caller from final state.
+folds both modes back onto the typed ``AgentStreamEvent`` union.
+
+Test-generation terminal domain events are emitted by the graph node that
+produces them and are forwarded like any other custom marker. This supersedes
+ADR-0002's earlier "caller decides from final state" stream contract. Repository
+question ``Result`` events remain assembled by the session service after
+persistence because they need the stored assistant message id.
 """
 
 from collections.abc import Iterable, Iterator

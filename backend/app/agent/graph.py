@@ -184,7 +184,9 @@ def _fail_run_node(recorder):
         failure: RunFailure = state["failure"]
         coding_run_id = state.get("coding_run_id")
         recorder.fail(coding_run_id, failed_stage=failure.failed_stage, reason=failure.reason)
-        return {"failure": failure.model_copy(update={"coding_run_id": coding_run_id}), "trace": ["fail_run"]}
+        stamped_failure = failure.model_copy(update={"coding_run_id": coding_run_id})
+        emit(stamped_failure)
+        return {"failure": stamped_failure, "trace": ["fail_run"]}
 
     return fail_run
 

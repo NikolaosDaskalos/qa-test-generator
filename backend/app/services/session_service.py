@@ -68,9 +68,11 @@ class RepositorySessionService:
         """Drive the unified intent-routed graph for one owned session.
 
         Ownership is enforced before streaming. In-flight stage/token/run markers
-        pass straight through; the terminal event is decided from the graph's
-        final state — a repository answer is persisted and reported as ``Result``,
-        while a rejected Test-Generation Task surfaces its ``RunFailure``.
+        pass straight through. Test-generation terminal events are emitted by
+        their producing graph node and relayed from the stream, superseding the
+        older "caller decides from final state" contract. Repository answers
+        still use final state so the exchange can be persisted before reporting
+        the terminal ``Result`` with its stored assistant message id.
 
         When a human-in-the-loop ``decision`` is supplied the same entry point
         resumes the suspended Coding Run that produced the patch instead of
@@ -109,10 +111,6 @@ class RepositorySessionService:
         yield from map_graph_stream(graph.stream(graph_input, config=config, stream_mode=["custom", "messages"]))
 
         final = graph.get_state(config).values
-        terminal = self._test_generation_terminal(final)
-        if terminal is not None:
-            yield terminal
-            return
         if final.get("intent") == "repository_question":
             answer = final.get("answer", "")
             citations = final.get("citations", [])
@@ -138,12 +136,10 @@ class RepositorySessionService:
         return self._resume_stream(run, decision, graph)
 
     def _resume_stream(self, run: CodingRun, decision: HumanDecisionRequest, graph: Any) -> Generator[AgentStreamEvent, None, None]:
+        """Resume a paused Coding Run and relay node-emitted terminal events."""
         config = {"configurable": {"thread_id": run.thread_id}}
         command = Command(resume={"approved": decision.approved, "feedback": decision.feedback})
         yield from map_graph_stream(graph.stream(command, config=config, stream_mode=["custom", "messages"]))
-        terminal = self._test_generation_terminal(graph.get_state(config).values)
-        if terminal is not None:
-            yield terminal
 
     @staticmethod
     def _assert_checkpoint_awaits_decision(run: CodingRun, graph: Any) -> None:
@@ -153,20 +149,6 @@ class RepositorySessionService:
         pending_nodes = tuple(getattr(state, "next", ()) or ())
         if "await_decision" not in pending_nodes:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Coding Run is not awaiting a decision")
-
-    @staticmethod
-    def _test_generation_terminal(final: dict[str, Any]) -> AgentStreamEvent | None:
-        """Pick the terminal Test-Generation event from final graph state, if any.
-
-        A reviewing-stage failure, human rejection, and Approval take precedence
-        over the accepted review still sitting in state; otherwise the accepted
-        review, then the generated patch, is the outcome.
-        """
-        for key in ("failure", "rejection_result", "approval_result", "review_result", "patch_result"):
-            event = final.get(key)
-            if event is not None:
-                return event
-        return None
 
     @staticmethod
     def _to_messages(history: list[dict[str, Any]]) -> list[BaseMessage]:

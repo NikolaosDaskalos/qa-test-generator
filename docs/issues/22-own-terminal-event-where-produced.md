@@ -1,6 +1,6 @@
 # Own the terminal event where it is produced
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: (refactor — supports the test-generation terminal events behind US 09 / 11–14: PatchResult, ReviewResult, approval/rejection, RunFailure)
 
@@ -43,22 +43,22 @@ is out of scope — this slice is the test-generation terminal tuple.
 
 ## Acceptance criteria
 
-- [ ] Each test-generation terminal node (reviewing-stage failure, rejection,
+- [x] Each test-generation terminal node (reviewing-stage failure, rejection,
       approval, accepted review, generated patch) emits its own typed terminal
       event onto the stream instead of only stamping a state key.
-- [ ] The session service no longer scans the
+- [x] The session service no longer scans the
       `("failure", "rejection_result", "approval_result", "review_result", "patch_result")`
       precedence tuple; the `_test_generation_terminal` key-sniffing helper is
       removed.
-- [ ] Terminal precedence is preserved through execution order on both the
+- [x] Terminal precedence is preserved through execution order on both the
       initial stream and the HITL resume path — a reviewing-stage failure,
       rejection, and approval still take precedence over an accepted review that
       remains in accumulated state.
-- [ ] The `stream.py` contract docstring and the service docstrings are updated to
+- [x] The `stream.py` contract docstring and the service docstrings are updated to
       state that terminals are emitted by their producing node, with a note that
       this supersedes the prior "caller decides from final state" contract.
-- [ ] The `repository_question` → `Result` path is unchanged.
-- [ ] Tests assert terminal selection at the node/stream surface (not by poking
+- [x] The `repository_question` → `Result` path is unchanged.
+- [x] Tests assert terminal selection at the node/stream surface (not by poking
       final-state keys); the backend suite passes excluding known
       environmental/pre-existing failures.
 
