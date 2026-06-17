@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { type FormEvent, useEffect, useState } from "react"
-import type { Citation, RepositoryPublic, SessionHistoryPublic } from "@/client"
+import type {
+  Citation,
+  RepositoryPublic,
+  ReviewFinding,
+  SessionHistoryPublic,
+} from "@/client"
 import { RepositoriesService, SessionsService } from "@/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,6 +19,23 @@ type ChatMessage = {
   role: "user" | "assistant"
   content: string
   citations: Citation[]
+  codingRunId?: string
+  review?: ReviewResultView
+  failure?: RunFailureView
+}
+
+type ReviewResultView = {
+  accepted: boolean
+  score: number
+  threshold: number
+  findings: ReviewFinding[]
+  diff: string
+  disclaimer: string
+}
+
+type RunFailureView = {
+  failedStage: string
+  reason: string
 }
 
 export const Route = createFileRoute("/_layout/")({
@@ -34,7 +56,7 @@ function CopilotShell() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [question, setQuestion] = useState("")
-  const [stageStatus, setStageStatus] = useState<string | null>(null)
+  const [stageStatus, setStageStatus] = useState<string[]>([])
   const [streamError, setStreamError] = useState<string | null>(null)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
   const repositoriesQuery = useQuery({
@@ -156,7 +178,7 @@ function CopilotShell() {
             repositories={repositories}
             onSelectRepository={(repository) => {
               setActiveRepository(repository)
-              setStageStatus(null)
+              setStageStatus([])
               setStreamError(null)
             }}
           />
@@ -187,7 +209,7 @@ function CopilotShell() {
                 if (!activeRepository) {
                   return
                 }
-                setStageStatus(null)
+                setStageStatus([])
                 setStreamError(null)
                 createRepositorySession({
                   repositoryId: activeRepository.id,
@@ -216,6 +238,17 @@ function CopilotShell() {
                   }
                 >
                   <p className="whitespace-pre-wrap">{message.content}</p>
+                  {message.codingRunId ? (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Coding Run {message.codingRunId}
+                    </p>
+                  ) : null}
+                  {message.review ? (
+                    <ReviewResultSummary review={message.review} />
+                  ) : null}
+                  {message.failure ? (
+                    <RunFailureSummary failure={message.failure} />
+                  ) : null}
                   {message.citations.length > 0 ? (
                     <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
                       {message.citations.map((citation) => (
@@ -226,8 +259,12 @@ function CopilotShell() {
                 </article>
               ))
             )}
-            {stageStatus ? (
-              <p className="text-xs text-muted-foreground">{stageStatus}</p>
+            {stageStatus.length > 0 ? (
+              <ol className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                {stageStatus.map((stage) => (
+                  <li key={stage}>{stage}</li>
+                ))}
+              </ol>
             ) : null}
             {streamError ? (
               <p className="text-sm text-destructive">{streamError}</p>
@@ -390,6 +427,47 @@ function RepositorySelector({
   )
 }
 
+function ReviewResultSummary({ review }: { review: ReviewResultView }) {
+  return (
+    <div className="mt-3 grid gap-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Badge variant={review.accepted ? "default" : "secondary"}>
+          {review.accepted ? "Accepted" : "Rejected"}
+        </Badge>
+        <span className="text-muted-foreground">
+          Score {review.score}/10; threshold {review.threshold}
+        </span>
+      </div>
+      {review.findings.length > 0 ? (
+        <ul className="space-y-1 text-sm">
+          {review.findings.map((finding) => (
+            <li key={`${finding.category}:${finding.detail}`}>
+              <span className="font-medium">{finding.category}: </span>
+              {finding.detail}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3 text-xs">
+        {review.diff}
+      </pre>
+      <p className="text-xs text-muted-foreground">{review.disclaimer}</p>
+      {review.accepted ? (
+        <p className="text-sm font-medium">Awaiting the owner's decision.</p>
+      ) : null}
+    </div>
+  )
+}
+
+function RunFailureSummary({ failure }: { failure: RunFailureView }) {
+  return (
+    <div className="mt-3 grid gap-1 text-sm">
+      <p className="font-medium">Run failed during {failure.failedStage}.</p>
+      <p>{failure.reason}</p>
+    </div>
+  )
+}
+
 function getChatStatusMessage(repository: RepositoryPublic | null) {
   if (!repository) {
     return "Select a repository to start a Repository Session."
@@ -469,14 +547,14 @@ async function submitQuestion({
   question: string
   setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
   setQuestion: React.Dispatch<React.SetStateAction<string>>
-  setStageStatus: React.Dispatch<React.SetStateAction<string | null>>
+  setStageStatus: React.Dispatch<React.SetStateAction<string[]>>
   setStreamError: React.Dispatch<React.SetStateAction<string | null>>
 }) {
   const assistantMessageId = crypto.randomUUID()
 
   setQuestion("")
   setStreamError(null)
-  setStageStatus(null)
+  setStageStatus([])
   setChatMessages((messages) => [
     ...messages,
     {
@@ -498,7 +576,9 @@ async function submitQuestion({
     question,
   })) {
     if (event.type === "stage") {
-      setStageStatus(event.stage)
+      setStageStatus((stages) =>
+        stages.includes(event.stage) ? stages : [...stages, event.stage],
+      )
     }
 
     if (event.type === "token") {
@@ -525,11 +605,105 @@ async function submitQuestion({
       )
     }
 
+    if (event.type === "run_started") {
+      setChatMessages((messages) =>
+        messages.map((message) =>
+          message.id === assistantMessageId
+            ? { ...message, codingRunId: event.coding_run_id }
+            : message,
+        ),
+      )
+    }
+
+    if (event.type === "review_result" && isReviewResultEvent(event)) {
+      setChatMessages((messages) =>
+        messages.map((message) =>
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                codingRunId: event.coding_run_id,
+                review: {
+                  accepted: event.accepted,
+                  score: event.score,
+                  threshold: event.threshold,
+                  findings: event.findings,
+                  diff: event.diff,
+                  disclaimer: event.disclaimer,
+                },
+              }
+            : message,
+        ),
+      )
+    }
+
+    if (event.type === "run_failure" && isRunFailureEvent(event)) {
+      setChatMessages((messages) =>
+        messages.map((message) =>
+          message.id === assistantMessageId
+            ? {
+                ...message,
+                codingRunId: event.coding_run_id ?? undefined,
+                failure: {
+                  failedStage: event.failed_stage,
+                  reason: event.reason,
+                },
+              }
+            : message,
+        ),
+      )
+    }
+
     if (event.type === "transport_error") {
-      setStageStatus(null)
+      setStageStatus([])
       setStreamError(event.message)
     }
   }
+}
+
+function isReviewResultEvent(event: { [key: string]: unknown }): event is {
+  coding_run_id: string
+  accepted: boolean
+  score: number
+  threshold: number
+  findings: ReviewFinding[]
+  diff: string
+  disclaimer: string
+} {
+  return (
+    typeof event.coding_run_id === "string" &&
+    typeof event.accepted === "boolean" &&
+    typeof event.score === "number" &&
+    typeof event.threshold === "number" &&
+    Array.isArray(event.findings) &&
+    event.findings.every(isReviewFinding) &&
+    typeof event.diff === "string" &&
+    typeof event.disclaimer === "string"
+  )
+}
+
+function isRunFailureEvent(event: { [key: string]: unknown }): event is {
+  coding_run_id: string | null
+  failed_stage: string
+  reason: string
+} {
+  return (
+    (typeof event.coding_run_id === "string" ||
+      event.coding_run_id === null ||
+      event.coding_run_id === undefined) &&
+    typeof event.failed_stage === "string" &&
+    typeof event.reason === "string"
+  )
+}
+
+function isReviewFinding(value: unknown): value is ReviewFinding {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "category" in value &&
+    typeof value.category === "string" &&
+    "detail" in value &&
+    typeof value.detail === "string"
+  )
 }
 
 function getErrorMessage(error: unknown) {
