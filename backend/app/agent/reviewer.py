@@ -15,6 +15,7 @@ import logging
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 
+from app.agent.context_rendering import format_evidence, format_files
 from app.agent.tools import web_search
 from app.schemas.review import PatchReview
 
@@ -59,18 +60,10 @@ def _build_prompt(task: str, source_evidence: list, test_evidence: list, generat
     """Assemble the review prompt from the task, partitioned evidence, and the proposed patch."""
     sections = [f"Task:\n{task}"]
     if source_evidence:
-        sections.append("Source code under test:\n" + _format_evidence(source_evidence))
+        sections.append("Source code under test:\n" + format_evidence(source_evidence))
     if test_evidence:
-        sections.append("Existing tests:\n" + _format_evidence(test_evidence))
+        sections.append("Existing tests:\n" + format_evidence(test_evidence))
     if generated_files:
-        sections.append("Proposed test files:\n" + _format_files(generated_files))
+        sections.append("Proposed test files:\n" + format_files(generated_files))
     sections.append(f"Canonical diff:\n{diff}")
     return "\n\n".join(sections)
-
-
-def _format_evidence(evidence: list) -> str:
-    return "\n\n---\n\n".join(f"[Source: {document.doc_metadata.get('source', '?')}]\n{document.content}" for document in evidence)
-
-
-def _format_files(generated_files: list) -> str:
-    return "\n\n---\n\n".join(f"[File: {file.path}]\n{file.content}" for file in generated_files)

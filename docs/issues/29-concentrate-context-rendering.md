@@ -1,6 +1,6 @@
 # Concentrate the evidence and file-block context renderers
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: (refactor — shared context rendering behind US 06 answering, 08-12 generation/revision/review)
 
@@ -34,18 +34,18 @@ same `---` separators), and the answer path still emits the same citations.
 
 ## Acceptance criteria
 
-- [ ] A shared context-rendering module owns the source-labeled evidence renderer
+- [x] A shared context-rendering module owns the source-labeled evidence renderer
       and the file-block renderer.
-- [ ] The generator, reviser, reviewer, and answer adapters call the shared
+- [x] The generator, reviser, reviewer, and answer adapters call the shared
       renderers; no private copy of the evidence or file-block formatter remains in
       any of them.
-- [ ] Per-adapter prompt assembly (section choice, order, headers, diff/findings
+- [x] Per-adapter prompt assembly (section choice, order, headers, diff/findings
       placement) is unchanged.
-- [ ] The answer path's citation extraction (`Citation` projection) is untouched;
+- [x] The answer path's citation extraction (`Citation` projection) is untouched;
       only its `_format_docs` prompt renderer is replaced.
-- [ ] The shared renderers are unit-tested directly (source-label format, file
+- [x] The shared renderers are unit-tested directly (source-label format, file
       block format, separator/order), without invoking a model loop.
-- [ ] Rendered prompt output is byte-identical to today; the backend suite passes
+- [x] Rendered prompt output is byte-identical to today; the backend suite passes
       excluding known environmental/pre-existing failures.
 
 ## Blocked by

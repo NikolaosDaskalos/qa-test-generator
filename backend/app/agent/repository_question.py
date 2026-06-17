@@ -6,6 +6,7 @@ The ``retrieve`` node scopes Repository Evidence to the session's Repository; th
 citations on the shared state.
 """
 
+from app.agent.context_rendering import format_evidence
 from app.agent.stream import emit
 from app.core.config import settings
 from app.prompts.rag_prompts import QA_SYSTEM_PROMPT
@@ -45,7 +46,7 @@ def build_generate_node(llm):
         if not evidence:
             return {"answer": INSUFFICIENT_EVIDENCE_ANSWER, "citations": [], "trace": ["generate"]}
 
-        context = _format_docs(evidence)
+        context = format_evidence(evidence)
         messages = [
             SystemMessage(content=f"{QA_SYSTEM_PROMPT}\n\nContext:\n{context}"),
             HumanMessage(content=state["question"]),
@@ -59,11 +60,6 @@ def build_generate_node(llm):
         return {"answer": collected, "citations": _to_citations(_extract_sources(evidence)), "trace": ["generate"]}
 
     return generate
-
-
-def _format_docs(docs) -> str:
-    """Format retrieved documents as source-labeled prompt context."""
-    return "\n\n---\n\n".join(f"[Source: {document.doc_metadata.get('source', '?')}]\n{document.content}" for document in docs)
 
 
 def _extract_sources(docs) -> list[str]:

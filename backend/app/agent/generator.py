@@ -18,6 +18,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
+from app.agent.context_rendering import format_evidence, format_files
 from app.agent.tools import web_search
 from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 
@@ -91,9 +92,9 @@ def _build_prompt(task: str, source_evidence: list, test_evidence: list) -> str:
     """Assemble the generation prompt from the task and partitioned Repository Evidence."""
     sections = [f"Task:\n{task}"]
     if source_evidence:
-        sections.append("Source code under test:\n" + _format_evidence(source_evidence))
+        sections.append("Source code under test:\n" + format_evidence(source_evidence))
     if test_evidence:
-        sections.append("Existing tests:\n" + _format_evidence(test_evidence))
+        sections.append("Existing tests:\n" + format_evidence(test_evidence))
     return "\n\n".join(sections)
 
 
@@ -112,21 +113,13 @@ def _build_revision_prompt(task: str, source_evidence: list, test_evidence: list
     if findings:
         sections.append("Reviewer findings to address:\n" + _format_findings(findings))
     if prior_files:
-        sections.append("Your rejected proposal:\n" + _format_files(prior_files))
+        sections.append("Your rejected proposal:\n" + format_files(prior_files))
     sections.append(f"Canonical diff that was reviewed:\n{diff}")
     return "\n\n".join(sections)
 
 
 def _format_findings(findings: list) -> str:
     return "\n".join(f"- [{finding.category}] {finding.detail}" for finding in findings)
-
-
-def _format_files(files: list) -> str:
-    return "\n\n---\n\n".join(f"[File: {file.path}]\n{file.content}" for file in files)
-
-
-def _format_evidence(evidence: list) -> str:
-    return "\n\n---\n\n".join(f"[Source: {document.doc_metadata.get('source', '?')}]\n{document.content}" for document in evidence)
 
 
 def _references_from_messages(messages: list) -> list[ExternalReference]:
