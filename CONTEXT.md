@@ -61,12 +61,12 @@ A validated set of complete Test File contents proposed by a Test-Generation Tas
 _Avoid_: LLM-authored unified diff, application-code patch
 
 **Patch Review**:
-An evidence-based assessment of whether a Test Patch matches the task, repository conventions, and retrieved code. It does not execute tests or install repository dependencies.
-_Avoid_: Test execution, CI validation
+An evidence-based assessment that scores a Test Patch out of ten against the task, repository conventions, and retrieved code, accompanied by categorized findings. The reviewer only scores; the backend decides pass/fail against a configurable threshold (default seven) and independently hard-fails any patch that escapes the Test File boundary regardless of score. It does not execute tests or install repository dependencies.
+_Avoid_: Test execution, CI validation, model-decided accept/reject, reviewer as the sole gate
 
-**Revision Attempt**:
-The single opportunity for the test generator to correct a Test Patch rejected by Patch Review. A second rejection fails the Coding Run and prevents Approval.
-_Avoid_: Retry loop, unlimited revision
+**Revision Budget**:
+The configurable number of opportunities (default two) for the test generator to correct a Test Patch scored below threshold by Patch Review. Exhausting the budget never fails the Coding Run: the best-scoring attempt is still escalated to human review with its score and findings, so the owner always gets to inspect and decide. The same generator agent performs both generation and revision; revision is no longer tool-free.
+_Avoid_: Single fixed attempt, unlimited revision, failing the run on exhaustion, a separate revision agent
 
 **Coding Run**:
 A test-generation attempt performed in the Repository's local checkout on a temporary non-default branch. A Repository has at most one active Coding Run; concurrent requests are outside the demo scope.
@@ -81,5 +81,5 @@ The user's authorization to commit an accepted Test Patch to a new non-default b
 _Avoid_: Merge, pull-request approval
 
 **Run Failure**:
-A terminal Coding Run outcome identified by the stage that failed and a sanitized reason. Review rejection, generation errors, patch validation errors, Git commit errors, and Git push errors remain distinguishable without becoming separate run statuses.
-_Avoid_: Generic failure, provider error dump
+A terminal Coding Run outcome identified by the stage that failed and a sanitized reason, reserved for unexpected stage errors: generation errors, patch validation errors, Git commit errors, and Git push errors, kept distinguishable without becoming separate run statuses. A Test Patch scored below threshold is not a Run Failure — it escalates to human review.
+_Avoid_: Generic failure, provider error dump, failing the run on a low review score

@@ -57,6 +57,140 @@ export const Body_login_login_access_tokenSchema = {
     title: 'Body_login-login_access_token'
 } as const;
 
+export const CitationSchema = {
+    properties: {
+        source: {
+            type: 'string',
+            title: 'Source'
+        }
+    },
+    type: 'object',
+    required: ['source'],
+    title: 'Citation',
+    description: 'A single Repository source backing an answer.'
+} as const;
+
+export const CodingRunPublicSchema = {
+    properties: {
+        id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'Id'
+        },
+        status: {
+            '$ref': '#/components/schemas/CodingRunStatus'
+        },
+        failed_stage: {
+            anyOf: [
+                {
+                    '$ref': '#/components/schemas/CodingRunStage'
+                },
+                {
+                    type: 'null'
+                }
+            ]
+        },
+        failure_reason: {
+            anyOf: [
+                {
+                    type: 'string'
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Failure Reason'
+        },
+        review_findings: {
+            items: {
+                '$ref': '#/components/schemas/ReviewFinding'
+            },
+            type: 'array',
+            title: 'Review Findings'
+        },
+        diff: {
+            anyOf: [
+                {
+                    type: 'string'
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Diff'
+        },
+        disclaimer: {
+            type: 'string',
+            title: 'Disclaimer',
+            default: 'These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.'
+        }
+    },
+    type: 'object',
+    required: ['id', 'status'],
+    title: 'CodingRunPublic',
+    description: `Post-stream read of a Coding Run's persisted lifecycle, review, and failure state.
+
+\`\`disclaimer\`\` restates that the generated tests were not executed and their
+runtime correctness was not verified — the Patch Review was static only.`
+} as const;
+
+export const CodingRunStageSchema = {
+    type: 'string',
+    enum: ['planning', 'retrieving', 'generating', 'reviewing', 'git_commit', 'git_push'],
+    title: 'CodingRunStage',
+    description: 'A working stage a Coding Run can fail at, recorded as ``failed_stage``.'
+} as const;
+
+export const CodingRunStatusSchema = {
+    type: 'string',
+    enum: ['queued', 'planning', 'retrieving', 'generating', 'awaiting_review', 'reviewing', 'awaiting_approval', 'changes_requested', 'approved', 'succeeded', 'rejected', 'failed'],
+    title: 'CodingRunStatus',
+    description: `The lifecycle states of a Coding Run.
+
+This issue drives a run through \`\`queued -> planning -> retrieving\`\` and to
+\`\`failed\`\` on a rejected scope; the later states are the planned vocabulary
+that subsequent stages (generation, review, application) advance into.`
+} as const;
+
+export const ExternalReferenceSchema = {
+    properties: {
+        url: {
+            type: 'string',
+            title: 'Url',
+            description: 'URL of the consulted external source.'
+        },
+        title: {
+            type: 'string',
+            title: 'Title',
+            description: 'Human-readable title of the external source.',
+            default: ''
+        }
+    },
+    type: 'object',
+    required: ['url'],
+    title: 'ExternalReference',
+    description: 'A web result consulted for test-writing guidance, kept apart from Repository Evidence.'
+} as const;
+
+export const GeneratedFileSchema = {
+    properties: {
+        path: {
+            type: 'string',
+            title: 'Path',
+            description: 'Repository-relative path of the test file to write.'
+        },
+        content: {
+            type: 'string',
+            title: 'Content',
+            description: 'The complete contents of the test file.'
+        }
+    },
+    type: 'object',
+    required: ['path', 'content'],
+    title: 'GeneratedFile',
+    description: 'One complete proposed file: a checkout-relative path and its full contents.'
+} as const;
+
 export const HTTPValidationErrorSchema = {
     properties: {
         detail: {
@@ -71,129 +205,32 @@ export const HTTPValidationErrorSchema = {
     title: 'HTTPValidationError'
 } as const;
 
-export const ItemCreateSchema = {
+export const HumanDecisionRequestSchema = {
     properties: {
-        title: {
-            type: 'string',
-            maxLength: 255,
-            minLength: 1,
-            title: 'Title'
-        },
-        description: {
-            anyOf: [
-                {
-                    type: 'string',
-                    maxLength: 255
-                },
-                {
-                    type: 'null'
-                }
-            ],
-            title: 'Description'
-        }
-    },
-    type: 'object',
-    required: ['title'],
-    title: 'ItemCreate'
-} as const;
-
-export const ItemPublicSchema = {
-    properties: {
-        title: {
-            type: 'string',
-            maxLength: 255,
-            minLength: 1,
-            title: 'Title'
-        },
-        description: {
-            anyOf: [
-                {
-                    type: 'string',
-                    maxLength: 255
-                },
-                {
-                    type: 'null'
-                }
-            ],
-            title: 'Description'
-        },
-        id: {
+        coding_run_id: {
             type: 'string',
             format: 'uuid',
-            title: 'Id'
+            title: 'Coding Run Id'
         },
-        owner_id: {
+        approved: {
+            type: 'boolean',
+            title: 'Approved'
+        },
+        feedback: {
             type: 'string',
-            format: 'uuid',
-            title: 'Owner Id'
-        },
-        created_at: {
-            anyOf: [
-                {
-                    type: 'string',
-                    format: 'date-time'
-                },
-                {
-                    type: 'null'
-                }
-            ],
-            title: 'Created At'
+            maxLength: 4000,
+            title: 'Feedback',
+            default: ''
         }
     },
     type: 'object',
-    required: ['title', 'id', 'owner_id'],
-    title: 'ItemPublic'
-} as const;
+    required: ['coding_run_id', 'approved'],
+    title: 'HumanDecisionRequest',
+    description: `The owner's human-in-the-loop decision on a reviewed Test Patch.
 
-export const ItemUpdateSchema = {
-    properties: {
-        title: {
-            anyOf: [
-                {
-                    type: 'string',
-                    maxLength: 255,
-                    minLength: 1
-                },
-                {
-                    type: 'null'
-                }
-            ],
-            title: 'Title'
-        },
-        description: {
-            anyOf: [
-                {
-                    type: 'string',
-                    maxLength: 255
-                },
-                {
-                    type: 'null'
-                }
-            ],
-            title: 'Description'
-        }
-    },
-    type: 'object',
-    title: 'ItemUpdate'
-} as const;
-
-export const ItemsPublicSchema = {
-    properties: {
-        data: {
-            items: {
-                '$ref': '#/components/schemas/ItemPublic'
-            },
-            type: 'array',
-            title: 'Data'
-        },
-        count: {
-            type: 'integer',
-            title: 'Count'
-        }
-    },
-    type: 'object',
-    required: ['data', 'count'],
-    title: 'ItemsPublic'
+Delivered through the same session stream that produced the patch: it resumes
+the suspended Coding Run rather than starting a new one. \`\`approved\`\` is the
+verdict; a rejection discards the patch.`
 } as const;
 
 export const MessageSchema = {
@@ -249,6 +286,397 @@ export const PrivateUserCreateSchema = {
     type: 'object',
     required: ['email', 'password', 'full_name'],
     title: 'PrivateUserCreate'
+} as const;
+
+export const RepositoriesPublicSchema = {
+    properties: {
+        data: {
+            items: {
+                '$ref': '#/components/schemas/RepositoryPublic'
+            },
+            type: 'array',
+            title: 'Data'
+        },
+        count: {
+            type: 'integer',
+            title: 'Count'
+        }
+    },
+    type: 'object',
+    required: ['data', 'count'],
+    title: 'RepositoriesPublic'
+} as const;
+
+export const RepositoryCreateSchema = {
+    properties: {
+        token: {
+            type: 'string',
+            maxLength: 2048,
+            minLength: 1,
+            title: 'Token'
+        },
+        token_expiration_days: {
+            anyOf: [
+                {
+                    type: 'integer',
+                    exclusiveMinimum: 0
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Token Expiration Days'
+        },
+        repository_url: {
+            type: 'string',
+            maxLength: 2048,
+            minLength: 1,
+            title: 'Repository Url'
+        }
+    },
+    type: 'object',
+    required: ['token', 'repository_url'],
+    title: 'RepositoryCreate'
+} as const;
+
+export const RepositoryProviderSchema = {
+    type: 'string',
+    enum: ['github'],
+    title: 'RepositoryProvider'
+} as const;
+
+export const RepositoryPublicSchema = {
+    properties: {
+        id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'Id'
+        },
+        user_id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'User Id'
+        },
+        repository_url: {
+            type: 'string',
+            maxLength: 2048,
+            minLength: 1,
+            title: 'Repository Url'
+        },
+        name: {
+            type: 'string',
+            maxLength: 255,
+            minLength: 1,
+            title: 'Name'
+        },
+        provider: {
+            anyOf: [
+                {
+                    '$ref': '#/components/schemas/RepositoryProvider',
+                    maxLength: 255,
+                    minLength: 1
+                },
+                {
+                    type: 'null'
+                }
+            ]
+        },
+        owner: {
+            type: 'string',
+            maxLength: 255,
+            minLength: 1,
+            title: 'Owner'
+        },
+        default_branch: {
+            anyOf: [
+                {
+                    type: 'string',
+                    maxLength: 255
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Default Branch'
+        },
+        indexed_commit_sha: {
+            anyOf: [
+                {
+                    type: 'string',
+                    maxLength: 40,
+                    minLength: 40
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Indexed Commit Sha'
+        },
+        status: {
+            '$ref': '#/components/schemas/RepositoryStatus'
+        },
+        failed_reason: {
+            anyOf: [
+                {
+                    type: 'string'
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Failed Reason'
+        },
+        created_at: {
+            type: 'string',
+            format: 'date-time',
+            title: 'Created At'
+        },
+        updated_at: {
+            type: 'string',
+            format: 'date-time',
+            title: 'Updated At'
+        }
+    },
+    type: 'object',
+    required: ['id', 'user_id', 'repository_url', 'name', 'owner', 'status', 'failed_reason', 'created_at', 'updated_at'],
+    title: 'RepositoryPublic'
+} as const;
+
+export const RepositoryQuestionRequestSchema = {
+    properties: {
+        question: {
+            anyOf: [
+                {
+                    type: 'string',
+                    maxLength: 4000
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Question'
+        },
+        decision: {
+            anyOf: [
+                {
+                    '$ref': '#/components/schemas/HumanDecisionRequest'
+                },
+                {
+                    type: 'null'
+                }
+            ]
+        }
+    },
+    type: 'object',
+    title: 'RepositoryQuestionRequest',
+    description: `One turn on a session stream: a new question or a decision resuming a paused run.
+
+The same entry point both asks a repository-grounded/test-generation question and
+delivers the owner's human-in-the-loop decision, so exactly one of \`\`question\`\` or
+\`\`decision\`\` must be present — never both, never neither.`
+} as const;
+
+export const RepositorySessionCreateSchema = {
+    properties: {
+        repository_id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'Repository Id'
+        },
+        title: {
+            type: 'string',
+            maxLength: 255,
+            minLength: 1,
+            title: 'Title',
+            default: 'New Repository Session'
+        }
+    },
+    type: 'object',
+    required: ['repository_id'],
+    title: 'RepositorySessionCreate'
+} as const;
+
+export const RepositorySessionPublicSchema = {
+    properties: {
+        id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'Id'
+        },
+        title: {
+            type: 'string',
+            title: 'Title'
+        },
+        owner_id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'Owner Id'
+        },
+        repository_id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'Repository Id'
+        },
+        created_at: {
+            type: 'string',
+            format: 'date-time',
+            title: 'Created At'
+        },
+        updated_at: {
+            type: 'string',
+            format: 'date-time',
+            title: 'Updated At'
+        }
+    },
+    type: 'object',
+    required: ['id', 'title', 'owner_id', 'repository_id', 'created_at', 'updated_at'],
+    title: 'RepositorySessionPublic'
+} as const;
+
+export const RepositoryStatusSchema = {
+    type: 'string',
+    enum: ['pending', 'cloning', 'indexing', 'ready', 'failed'],
+    title: 'RepositoryStatus'
+} as const;
+
+export const RepositoryUpdateSchema = {
+    properties: {
+        token: {
+            type: 'string',
+            maxLength: 2048,
+            minLength: 1,
+            title: 'Token'
+        },
+        token_expiration_days: {
+            anyOf: [
+                {
+                    type: 'integer',
+                    exclusiveMinimum: 0
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Token Expiration Days'
+        }
+    },
+    type: 'object',
+    required: ['token'],
+    title: 'RepositoryUpdate'
+} as const;
+
+export const ReviewFindingSchema = {
+    properties: {
+        category: {
+            type: 'string',
+            enum: ['coverage', 'readability', 'conventions', 'imports', 'scope', 'versioning'],
+            title: 'Category',
+            description: 'The review concern this finding falls under.'
+        },
+        detail: {
+            type: 'string',
+            title: 'Detail',
+            description: 'A human-readable explanation of the finding.'
+        }
+    },
+    type: 'object',
+    required: ['category', 'detail'],
+    title: 'ReviewFinding',
+    description: 'One categorized, human-readable observation about a proposed Test Patch.'
+} as const;
+
+export const RunPatchPublicSchema = {
+    properties: {
+        coding_run_id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'Coding Run Id'
+        },
+        diff: {
+            type: 'string',
+            title: 'Diff'
+        },
+        generated_files: {
+            items: {
+                '$ref': '#/components/schemas/GeneratedFile'
+            },
+            type: 'array',
+            title: 'Generated Files'
+        },
+        external_references: {
+            items: {
+                '$ref': '#/components/schemas/ExternalReference'
+            },
+            type: 'array',
+            title: 'External References'
+        }
+    },
+    type: 'object',
+    required: ['coding_run_id', 'diff'],
+    title: 'RunPatchPublic',
+    description: "Post-stream read of a Coding Run's persisted Test Patch content."
+} as const;
+
+export const SessionHistoriesPublicSchema = {
+    properties: {
+        data: {
+            items: {
+                '$ref': '#/components/schemas/SessionHistoryPublic'
+            },
+            type: 'array',
+            title: 'Data'
+        }
+    },
+    type: 'object',
+    required: ['data'],
+    title: 'SessionHistoriesPublic'
+} as const;
+
+export const SessionHistoryPublicSchema = {
+    properties: {
+        id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'Id'
+        },
+        session_id: {
+            type: 'string',
+            format: 'uuid',
+            title: 'Session Id'
+        },
+        role: {
+            '$ref': '#/components/schemas/SessionMessageRole'
+        },
+        content: {
+            type: 'string',
+            title: 'Content'
+        },
+        citations: {
+            items: {
+                '$ref': '#/components/schemas/Citation'
+            },
+            type: 'array',
+            title: 'Citations'
+        },
+        position: {
+            type: 'integer',
+            title: 'Position'
+        },
+        created_at: {
+            type: 'string',
+            format: 'date-time',
+            title: 'Created At'
+        }
+    },
+    type: 'object',
+    required: ['id', 'session_id', 'role', 'content', 'citations', 'position', 'created_at'],
+    title: 'SessionHistoryPublic'
+} as const;
+
+export const SessionMessageRoleSchema = {
+    type: 'string',
+    enum: ['user', 'assistant'],
+    title: 'SessionMessageRole'
 } as const;
 
 export const TokenSchema = {

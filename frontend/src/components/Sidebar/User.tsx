@@ -1,5 +1,4 @@
-import { Link as RouterLink } from "@tanstack/react-router"
-import { ChevronsUpDown, LogOut, Settings } from "lucide-react"
+import { ChevronsUpDown, LogOut } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -20,7 +19,7 @@ import useAuth from "@/hooks/useAuth"
 import { getInitials } from "@/utils"
 
 interface UserInfoProps {
-  fullName?: string
+  fullName?: string | null
   email?: string
 }
 
@@ -40,8 +39,8 @@ function UserInfo({ fullName, email }: UserInfoProps) {
   )
 }
 
-export function User({ user }: { user: any }) {
-  const { logout } = useAuth()
+export function User() {
+  const { logout, user } = useAuth()
   const { isMobile, setOpenMobile } = useSidebar()
 
   if (!user) return null
@@ -79,13 +78,12 @@ export function User({ user }: { user: any }) {
               <UserInfo fullName={user?.full_name} email={user?.email} />
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <RouterLink to="/settings" onClick={handleMenuClick}>
-              <DropdownMenuItem>
-                <Settings />
-                User Settings
-              </DropdownMenuItem>
-            </RouterLink>
-            <DropdownMenuItem onClick={handleLogout}>
+            <DropdownMenuItem
+              onClick={() => {
+                handleMenuClick()
+                handleLogout()
+              }}
+            >
               <LogOut />
               Log Out
             </DropdownMenuItem>

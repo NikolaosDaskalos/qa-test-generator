@@ -9,31 +9,86 @@ export type Body_login_login_access_token = {
     client_secret?: (string | null);
 };
 
+/**
+ * A single Repository source backing an answer.
+ */
+export type Citation = {
+    source: string;
+};
+
+/**
+ * Post-stream read of a Coding Run's persisted lifecycle, review, and failure state.
+ *
+ * ``disclaimer`` restates that the generated tests were not executed and their
+ * runtime correctness was not verified — the Patch Review was static only.
+ */
+export type CodingRunPublic = {
+    id: string;
+    status: CodingRunStatus;
+    failed_stage?: (CodingRunStage | null);
+    failure_reason?: (string | null);
+    review_findings?: Array<ReviewFinding>;
+    diff?: (string | null);
+    disclaimer?: string;
+};
+
+/**
+ * A working stage a Coding Run can fail at, recorded as ``failed_stage``.
+ */
+export type CodingRunStage = 'planning' | 'retrieving' | 'generating' | 'reviewing' | 'git_commit' | 'git_push';
+
+/**
+ * The lifecycle states of a Coding Run.
+ *
+ * This issue drives a run through ``queued -> planning -> retrieving`` and to
+ * ``failed`` on a rejected scope; the later states are the planned vocabulary
+ * that subsequent stages (generation, review, application) advance into.
+ */
+export type CodingRunStatus = 'queued' | 'planning' | 'retrieving' | 'generating' | 'awaiting_review' | 'reviewing' | 'awaiting_approval' | 'changes_requested' | 'approved' | 'succeeded' | 'rejected' | 'failed';
+
+/**
+ * A web result consulted for test-writing guidance, kept apart from Repository Evidence.
+ */
+export type ExternalReference = {
+    /**
+     * URL of the consulted external source.
+     */
+    url: string;
+    /**
+     * Human-readable title of the external source.
+     */
+    title?: string;
+};
+
+/**
+ * One complete proposed file: a checkout-relative path and its full contents.
+ */
+export type GeneratedFile = {
+    /**
+     * Repository-relative path of the test file to write.
+     */
+    path: string;
+    /**
+     * The complete contents of the test file.
+     */
+    content: string;
+};
+
 export type HTTPValidationError = {
     detail?: Array<ValidationError>;
 };
 
-export type ItemCreate = {
-    title: string;
-    description?: (string | null);
-};
-
-export type ItemPublic = {
-    title: string;
-    description?: (string | null);
-    id: string;
-    owner_id: string;
-    created_at?: (string | null);
-};
-
-export type ItemsPublic = {
-    data: Array<ItemPublic>;
-    count: number;
-};
-
-export type ItemUpdate = {
-    title?: (string | null);
-    description?: (string | null);
+/**
+ * The owner's human-in-the-loop decision on a reviewed Test Patch.
+ *
+ * Delivered through the same session stream that produced the patch: it resumes
+ * the suspended Coding Run rather than starting a new one. ``approved`` is the
+ * verdict; a rejection discards the patch.
+ */
+export type HumanDecisionRequest = {
+    coding_run_id: string;
+    approved: boolean;
+    feedback?: string;
 };
 
 export type Message = {
@@ -51,6 +106,112 @@ export type PrivateUserCreate = {
     full_name: string;
     is_verified?: boolean;
 };
+
+export type RepositoriesPublic = {
+    data: Array<RepositoryPublic>;
+    count: number;
+};
+
+export type RepositoryCreate = {
+    token: string;
+    token_expiration_days?: (number | null);
+    repository_url: string;
+};
+
+export type RepositoryProvider = 'github';
+
+export type RepositoryPublic = {
+    id: string;
+    user_id: string;
+    repository_url: string;
+    name: string;
+    provider?: (RepositoryProvider | null);
+    owner: string;
+    default_branch?: (string | null);
+    indexed_commit_sha?: (string | null);
+    status: RepositoryStatus;
+    failed_reason: (string | null);
+    created_at: string;
+    updated_at: string;
+};
+
+/**
+ * One turn on a session stream: a new question or a decision resuming a paused run.
+ *
+ * The same entry point both asks a repository-grounded/test-generation question and
+ * delivers the owner's human-in-the-loop decision, so exactly one of ``question`` or
+ * ``decision`` must be present — never both, never neither.
+ */
+export type RepositoryQuestionRequest = {
+    question?: (string | null);
+    decision?: (HumanDecisionRequest | null);
+};
+
+export type RepositorySessionCreate = {
+    repository_id: string;
+    title?: string;
+};
+
+export type RepositorySessionPublic = {
+    id: string;
+    title: string;
+    owner_id: string;
+    repository_id: string;
+    created_at: string;
+    updated_at: string;
+};
+
+export type RepositoryStatus = 'pending' | 'cloning' | 'indexing' | 'ready' | 'failed';
+
+export type RepositoryUpdate = {
+    token: string;
+    token_expiration_days?: (number | null);
+};
+
+/**
+ * One categorized, human-readable observation about a proposed Test Patch.
+ */
+export type ReviewFinding = {
+    /**
+     * The review concern this finding falls under.
+     */
+    category: 'coverage' | 'readability' | 'conventions' | 'imports' | 'scope' | 'versioning';
+    /**
+     * A human-readable explanation of the finding.
+     */
+    detail: string;
+};
+
+/**
+ * The review concern this finding falls under.
+ */
+export type category = 'coverage' | 'readability' | 'conventions' | 'imports' | 'scope' | 'versioning';
+
+/**
+ * Post-stream read of a Coding Run's persisted Test Patch content.
+ */
+export type RunPatchPublic = {
+    coding_run_id: string;
+    diff: string;
+    generated_files?: Array<GeneratedFile>;
+    external_references?: Array<ExternalReference>;
+};
+
+export type SessionHistoriesPublic = {
+    data: Array<SessionHistoryPublic>;
+};
+
+export type SessionHistoryPublic = {
+    id: string;
+    session_id: string;
+    role: SessionMessageRole;
+    content: string;
+    citations: Array<Citation>;
+    position: number;
+    created_at: string;
+};
+
+export type SessionMessageRole = 'user' | 'assistant';
 
 export type Token = {
     access_token: string;
@@ -113,38 +274,6 @@ export type ValidationError = {
     };
 };
 
-export type ItemsReadItemsData = {
-    limit?: number;
-    skip?: number;
-};
-
-export type ItemsReadItemsResponse = (ItemsPublic);
-
-export type ItemsCreateItemData = {
-    requestBody: ItemCreate;
-};
-
-export type ItemsCreateItemResponse = (ItemPublic);
-
-export type ItemsReadItemData = {
-    id: string;
-};
-
-export type ItemsReadItemResponse = (ItemPublic);
-
-export type ItemsUpdateItemData = {
-    id: string;
-    requestBody: ItemUpdate;
-};
-
-export type ItemsUpdateItemResponse = (ItemPublic);
-
-export type ItemsDeleteItemData = {
-    id: string;
-};
-
-export type ItemsDeleteItemResponse = (Message);
-
 export type LoginLoginAccessTokenData = {
     formData: Body_login_login_access_token;
 };
@@ -176,6 +305,71 @@ export type PrivateCreateUserData = {
 };
 
 export type PrivateCreateUserResponse = (UserPublic);
+
+export type RepositoriesReadRepositoriesData = {
+    limit?: number;
+    skip?: number;
+};
+
+export type RepositoriesReadRepositoriesResponse = (RepositoriesPublic);
+
+export type RepositoriesCreateRepositoryData = {
+    requestBody: RepositoryCreate;
+};
+
+export type RepositoriesCreateRepositoryResponse = (RepositoryPublic);
+
+export type RepositoriesReadRepositoryData = {
+    repositoryId: string;
+};
+
+export type RepositoriesReadRepositoryResponse = (RepositoryPublic);
+
+export type RepositoriesUpdateRepositoryData = {
+    repositoryId: string;
+    requestBody: RepositoryUpdate;
+};
+
+export type RepositoriesUpdateRepositoryResponse = (void);
+
+export type RepositoriesDeleteRepositoryData = {
+    repositoryId: string;
+};
+
+export type RepositoriesDeleteRepositoryResponse = (void);
+
+export type SessionsCreateRepositorySessionData = {
+    requestBody: RepositorySessionCreate;
+};
+
+export type SessionsCreateRepositorySessionResponse = (RepositorySessionPublic);
+
+export type SessionsAskRepositoryQuestionData = {
+    repositorySessionId: string;
+    requestBody: RepositoryQuestionRequest;
+};
+
+export type SessionsAskRepositoryQuestionResponse = (unknown);
+
+export type SessionsReadRepositorySessionHistoryData = {
+    repositorySessionId: string;
+};
+
+export type SessionsReadRepositorySessionHistoryResponse = (SessionHistoriesPublic);
+
+export type SessionsReadCodingRunData = {
+    codingRunId: string;
+    repositorySessionId: string;
+};
+
+export type SessionsReadCodingRunResponse = (CodingRunPublic);
+
+export type SessionsReadCodingRunPatchData = {
+    codingRunId: string;
+    repositorySessionId: string;
+};
+
+export type SessionsReadCodingRunPatchResponse = (RunPatchPublic);
 
 export type UsersReadUsersData = {
     limit?: number;
