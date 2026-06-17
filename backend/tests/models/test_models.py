@@ -3,7 +3,6 @@ import sys
 import uuid
 from datetime import timezone
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -14,7 +13,6 @@ from sqlalchemy.orm import configure_mappers
 from sqlmodel import Session, SQLModel, select
 
 from app.enums.repository import RepositoryProvider, RepositoryStatus
-from app.models.branch import Branch
 from app.models.repository import Repository
 from app.models.session import RepositorySession, SessionHistory
 from app.models.source_document import SourceDocument
@@ -69,14 +67,13 @@ def test_repository_session_timestamps_are_timezone_aware() -> None:
 def test_all_database_models_are_registered() -> None:
     configure_mappers()
 
-    assert {"branch", "repository", "repository_session", "session_history", "user"} <= set(SQLModel.metadata.tables)
+    assert {"repository", "repository_session", "session_history", "user"} <= set(SQLModel.metadata.tables)
+    assert "branch" not in SQLModel.metadata.tables
     assert "item" not in SQLModel.metadata.tables
     assert "todo" not in SQLModel.metadata.tables
     assert "search_session" not in SQLModel.metadata.tables
     assert "search_history" not in SQLModel.metadata.tables
     assert "memory" not in RepositorySession.model_fields
-    branch_table = cast(Any, Branch).__table__
-    assert branch_table.c.repository_id.foreign_keys
 
 
 def test_importing_one_model_registers_all_relationship_targets() -> None:

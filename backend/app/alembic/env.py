@@ -5,7 +5,6 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
-import app.models.branch  # noqa: F401
 import app.models.repository  # noqa: F401
 import app.models.session  # noqa: F401
 import app.models.source_document  # noqa: F401

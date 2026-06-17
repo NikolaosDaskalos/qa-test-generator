@@ -8,7 +8,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from app.enums.repository import RepositoryProvider, RepositoryStatus
 
 if TYPE_CHECKING:
-    from app.models import Branch, RepositorySession, SourceDocument, User
+    from app.models import RepositorySession, SourceDocument, User
 
 
 class Repository(SQLModel, table=True):
@@ -35,7 +35,6 @@ class Repository(SQLModel, table=True):
         sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
     )
     user: "User" = Relationship(back_populates="repositories")
-    branches: list["Branch"] = Relationship(back_populates="repository", cascade_delete=True)
     sessions: list["RepositorySession"] = Relationship(
         back_populates="repository", sa_relationship_kwargs={"passive_deletes": "all"}
     )
