@@ -38,7 +38,7 @@ def _seed(db: Session):
     return session_id
 
 
-def test_recorder_starts_advances_and_fails_through_the_store() -> None:
+def test_recorder_starts_and_transitions_through_the_named_stages() -> None:
     engine = _engine()
     with Session(engine) as db:
         session_id = _seed(db)
@@ -48,10 +48,29 @@ def test_recorder_starts_advances_and_fails_through_the_store() -> None:
         run_id = recorder.start(thread_id="t-1", repository_session_id=session_id)
         assert store.get_by_id(run_id).status == CodingRunStatus.queued
 
-        recorder.advance(run_id, CodingRunStatus.planning)
+        recorder.begin_planning(run_id)
         assert store.get_by_id(run_id).status == CodingRunStatus.planning
 
-        recorder.fail(run_id, failed_stage="planning", reason="Out of scope")
+        recorder.begin_retrieving(run_id)
+        assert store.get_by_id(run_id).status == CodingRunStatus.retrieving
+
+        recorder.begin_generating(run_id)
+        assert store.get_by_id(run_id).status == CodingRunStatus.generating
+
+        recorder.begin_reviewing(run_id)
+        assert store.get_by_id(run_id).status == CodingRunStatus.reviewing
+
+
+def test_recorder_fails_a_run_at_a_typed_stage() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        recorder = CodingRunRecorder(store)
+
+        run_id = recorder.start(thread_id="t-1", repository_session_id=session_id)
+        recorder.fail(run_id, failed_stage=CodingRunStage.planning, reason="Out of scope")
+
         failed = store.get_by_id(run_id)
         assert failed.status == CodingRunStatus.failed
         assert failed.failed_stage == CodingRunStage.planning
@@ -66,7 +85,7 @@ def test_recorder_persists_git_push_failures() -> None:
         recorder = CodingRunRecorder(store)
         run_id = recorder.start(thread_id="t-push-fail", repository_session_id=session_id)
 
-        recorder.fail(run_id, failed_stage="git_push", reason="Could not push the approved Test Patch branch.")
+        recorder.fail(run_id, failed_stage=CodingRunStage.git_push, reason="Could not push the approved Test Patch branch.")
 
         failed = store.get_by_id(run_id)
         assert failed.status == CodingRunStatus.failed
@@ -144,6 +163,23 @@ def test_recorder_approves_a_reviewed_run_through_the_store() -> None:
         assert approved.status == CodingRunStatus.approved
         # The persisted review record survives the approval for later inspection.
         assert approved.review_findings == [{"category": "conventions", "detail": "matches existing tests"}]
+
+
+def test_run_awaits_a_decision_only_while_awaiting_approval() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        recorder = CodingRunRecorder(store)
+        run_id = recorder.start(thread_id="t-decide", repository_session_id=session_id)
+
+        assert store.get_by_id(run_id).awaiting_decision is False
+
+        recorder.record_review(run_id, accepted=True, findings=[])
+        assert store.get_by_id(run_id).awaiting_decision is True
+
+        recorder.approve(run_id)
+        assert store.get_by_id(run_id).awaiting_decision is False
 
 
 def test_recorder_records_a_rejected_review_as_changes_requested() -> None:

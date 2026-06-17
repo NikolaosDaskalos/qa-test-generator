@@ -17,7 +17,7 @@ from app.agent.patch_builder import PatchBuilder, PatchBuildRequest
 from app.agent.revision_attempt_budget import RevisionAttemptBudget
 from app.agent.stream import emit
 from app.agent.test_files import verify_test_file_boundary
-from app.enums.coding_run import CodingRunStatus
+from app.enums.coding_run import CodingRunStage
 from app.schemas.agent_stream import ReviewResult, RunApproved, RunFailure, RunRejected, Stage
 
 logger = logging.getLogger(__name__)
@@ -69,13 +69,13 @@ def build_prepare_branch_node(workspace_factory, recorder):
     """
 
     def prepare_branch(state) -> dict:
-        recorder.advance(state["coding_run_id"], CodingRunStatus.generating)
+        recorder.begin_generating(state["coding_run_id"])
         try:
             workspace = workspace_factory(state.get("checkout_root"))
             branch = workspace.prepare_branch(state.get("indexed_commit_sha"))
         except Exception:
             logger.exception("Generation branch preparation failed")
-            return {"failure": RunFailure(failed_stage="generating", reason=BRANCH_PREPARATION_FAILED), "trace": ["prepare_branch"]}
+            return {"failure": RunFailure(failed_stage=CodingRunStage.generating, reason=BRANCH_PREPARATION_FAILED), "trace": ["prepare_branch"]}
         return {"generation_branch": branch, "trace": ["prepare_branch"]}
 
     return prepare_branch
@@ -97,7 +97,7 @@ def build_generate_tests_node(generator):
             )
         except Exception:
             logger.exception("Test generation failed")
-            return {"failure": RunFailure(failed_stage="generating", reason=GENERATION_FAILED), "trace": ["generate_tests"]}
+            return {"failure": RunFailure(failed_stage=CodingRunStage.generating, reason=GENERATION_FAILED), "trace": ["generate_tests"]}
         return {"generated_files": proposal.generated_files, "external_references": proposal.external_references, "trace": ["generate_tests"]}
 
     return generate_tests
@@ -129,7 +129,7 @@ def build_revise_tests_node(generator):
             )
         except Exception:
             logger.exception("Test revision failed")
-            return {"failure": RunFailure(failed_stage="generating", reason=REVISION_FAILED), "trace": ["revise_tests"]}
+            return {"failure": RunFailure(failed_stage=CodingRunStage.generating, reason=REVISION_FAILED), "trace": ["revise_tests"]}
         budget = RevisionAttemptBudget.from_state(state).spend()
         return {
             "generated_files": proposal.generated_files,
@@ -185,7 +185,7 @@ def build_review_patch_node(reviewer, recorder):
 
     def review_patch(state) -> dict:
         coding_run_id = state.get("coding_run_id")
-        recorder.advance(coding_run_id, CodingRunStatus.reviewing)
+        recorder.begin_reviewing(coding_run_id)
         # A second pass over this node is the review of a Revision Attempt; surface it
         # as a distinct stage marker so the Agent Stream tells the two reviews apart.
         emit(Stage(stage="re_reviewing" if RevisionAttemptBudget.from_state(state).is_revision_attempt else "reviewing"))
@@ -205,7 +205,7 @@ def build_review_patch_node(reviewer, recorder):
             )
         except Exception:
             logger.exception("Patch review failed")
-            return {"failure": RunFailure(failed_stage="reviewing", reason=REVIEW_FAILED), "trace": ["review_patch"]}
+            return {"failure": RunFailure(failed_stage=CodingRunStage.reviewing, reason=REVIEW_FAILED), "trace": ["review_patch"]}
         accepted = bool(review.accepted)
         findings = list(review.findings)
 
@@ -295,12 +295,12 @@ def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
             publisher.commit(APPROVAL_COMMIT_MESSAGE)
         except Exception:
             logger.error("Approved patch commit failed: %s", COMMIT_FAILED)
-            return {"failure": RunFailure(failed_stage="git_commit", reason=COMMIT_FAILED), "trace": ["approve_patch"]}
+            return {"failure": RunFailure(failed_stage=CodingRunStage.git_commit, reason=COMMIT_FAILED), "trace": ["approve_patch"]}
         try:
             publisher.push()
         except Exception:
             logger.error("Approved patch push failed: %s", PUSH_FAILED)
-            return {"failure": RunFailure(failed_stage="git_push", reason=PUSH_FAILED), "trace": ["approve_patch"]}
+            return {"failure": RunFailure(failed_stage=CodingRunStage.git_push, reason=PUSH_FAILED), "trace": ["approve_patch"]}
         recorder.approve(coding_run_id)
         workspace = workspace_factory(state.get("checkout_root"))
         workspace.discard_generation(state.get("indexed_commit_sha"), state.get("generation_branch"))

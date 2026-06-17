@@ -37,7 +37,6 @@ from app.agent.test_generation import (
     build_revise_tests_node,
 )
 from app.agent.workspace import LocalGitWorkspace
-from app.enums.coding_run import CodingRunStatus
 from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, RunStarted, Stage
 from app.schemas.research_intent import ResearchIntent
 
@@ -161,7 +160,7 @@ def _persist_run_node(recorder):
     def persist_run(state: GraphState, config) -> dict:
         thread_id = config["configurable"]["thread_id"]
         coding_run_id = recorder.start(thread_id=thread_id, repository_session_id=state.get("repository_session_id"))
-        recorder.advance(coding_run_id, CodingRunStatus.planning)
+        recorder.begin_planning(coding_run_id)
         emit(RunStarted(coding_run_id=coding_run_id))
         emit(Stage(stage="planning"))
         return {"coding_run_id": coding_run_id, "trace": ["persist_run"]}
@@ -173,7 +172,7 @@ def _begin_retrieving_node(recorder):
     """Build the node that advances a run into the retrieving stage."""
 
     def begin_retrieving(state: GraphState) -> dict:
-        recorder.advance(state["coding_run_id"], CodingRunStatus.retrieving)
+        recorder.begin_retrieving(state["coding_run_id"])
         emit(Stage(stage="retrieving"))
         return {"trace": ["begin_retrieving"]}
 

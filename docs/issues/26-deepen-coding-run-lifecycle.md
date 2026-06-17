@@ -1,6 +1,6 @@
 # Deepen the Coding Run lifecycle behind named transitions
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 13-15 (refactor under the Coding Run lifecycle)
 
@@ -42,22 +42,22 @@ Run Failure, and is still only resumable for a decision while awaiting approval.
 
 ## Acceptance criteria
 
-- [ ] The `RunRecorder` port exposes intention-named transition methods that each
+- [x] The `RunRecorder` port exposes intention-named transition methods that each
       encode their own target status; the generic `advance(id, status)` is gone
       from the public interface.
-- [ ] The Protocol, the `CodingRunStore`-backed recorder, and the null recorder
+- [x] The Protocol, the `CodingRunStore`-backed recorder, and the null recorder
       all move together; the store remains the persistence-only adapter.
-- [ ] The failure stage is typed as the `CodingRunStage` enum where it is
+- [x] The failure stage is typed as the `CodingRunStage` enum where it is
       produced; nodes reference the enum and the recorder no longer coerces a
       string into the enum.
-- [ ] The Coding Run entity exposes an `awaiting_decision` predicate, and the
+- [x] The Coding Run entity exposes an `awaiting_decision` predicate, and the
       session-stream resume path reads it instead of comparing the status enum.
-- [ ] No `advance(... CodingRunStatus ...)` status-literal calls remain in the
+- [x] No `advance(... CodingRunStatus ...)` status-literal calls remain in the
       unified graph or the test-generation branch.
-- [ ] The deepened recorder transitions and the `awaiting_decision` predicate are
+- [x] The deepened recorder transitions and the `awaiting_decision` predicate are
       unit-tested directly against a fake/in-memory store, without compiling or
       running the graph.
-- [ ] Behavior is preserved: existing graph and session-stream tests pass
+- [x] Behavior is preserved: existing graph and session-stream tests pass
       unchanged (pure behavior-preserving refactor); the backend suite passes
       excluding known environmental/pre-existing failures.
 

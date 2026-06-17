@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.agent.test_files import RejectedTestFile, validate_generated_test_files
 from app.agent.workspace import GenerationWorkspace
+from app.enums.coding_run import CodingRunStage
 from app.schemas.agent_stream import PatchResult, RunFailure
 from app.schemas.generation import ExternalReference, GeneratedFile
 
@@ -47,7 +48,7 @@ class PatchBuilder:
         try:
             validated = validate_generated_test_files(Path(request.checkout_root), request.generated_files) if request.checkout_root else list(request.generated_files)
         except RejectedTestFile as rejection:
-            return PatchBuildOutcome(failure=RunFailure(failed_stage="generating", reason=rejection.reason))
+            return PatchBuildOutcome(failure=RunFailure(failed_stage=CodingRunStage.generating, reason=rejection.reason))
 
         try:
             workspace = self._workspace_factory(request.checkout_root)
@@ -64,7 +65,7 @@ class PatchBuilder:
             )
         except Exception:
             logger.exception("Patch derivation failed")
-            return PatchBuildOutcome(failure=RunFailure(failed_stage="generating", reason=PATCH_DERIVATION_FAILED))
+            return PatchBuildOutcome(failure=RunFailure(failed_stage=CodingRunStage.generating, reason=PATCH_DERIVATION_FAILED))
 
         return PatchBuildOutcome(
             patch_result=PatchResult(

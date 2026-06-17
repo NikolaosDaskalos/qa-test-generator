@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from app.enums.coding_run import CodingRunStage
 from app.schemas.agent_stream import RunFailure
 
 REVISION_ATTEMPT_LIMIT = 1
@@ -41,4 +42,4 @@ class RevisionAttemptBudget:
         return {REVISION_ATTEMPTS_STATE_KEY: self.spent}
 
     def exhausted_failure(self) -> RunFailure:
-        return RunFailure(failed_stage="reviewing", reason=SECOND_REVIEW_REJECTED)
+        return RunFailure(failed_stage=CodingRunStage.reviewing, reason=SECOND_REVIEW_REJECTED)

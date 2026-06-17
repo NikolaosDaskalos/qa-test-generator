@@ -7,7 +7,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.types import Command
 
 from app.agent.stream import map_graph_stream
-from app.enums.coding_run import CodingRunStatus
 from app.enums.repository import RepositoryStatus
 from app.enums.session import SessionMessageRole
 from app.models.coding_run import CodingRun
@@ -130,7 +129,7 @@ class RepositorySessionService:
         checkout — is ever touched.
         """
         run = self.get_owned_run(repository_session_id=repository_session_id, coding_run_id=decision.coding_run_id, user=user)
-        if run.status != CodingRunStatus.awaiting_approval:
+        if not run.awaiting_decision:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Coding Run is not awaiting a decision")
         self._assert_checkpoint_awaits_decision(run, graph)
         return self._resume_stream(run, decision, graph)

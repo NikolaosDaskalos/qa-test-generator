@@ -50,3 +50,8 @@ class CodingRun(SQLModel, table=True):
     )
 
     repository_session: "RepositorySession" = Relationship(back_populates="coding_runs")
+
+    @property
+    def awaiting_decision(self) -> bool:
+        """Whether the run is paused for an owner's approval decision and so resumable."""
+        return self.status == CodingRunStatus.awaiting_approval

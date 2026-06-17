@@ -16,6 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.enums.coding_run import CodingRunStage
 from app.schemas.generation import ExternalReference, GeneratedFile
 from app.schemas.review import ReviewFinding
 
@@ -84,7 +85,7 @@ class RunFailure(BaseModel):
 
     type: Literal["run_failure"] = "run_failure"
     coding_run_id: uuid.UUID | None = None
-    failed_stage: Literal["planning", "retrieving", "generating", "reviewing", "git_commit", "git_push"]
+    failed_stage: CodingRunStage
     reason: str
 
 

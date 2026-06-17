@@ -21,10 +21,19 @@ class RunRecorder(Protocol):
     def start(self, *, thread_id: str, repository_session_id: uuid.UUID) -> uuid.UUID:
         """Persist a queued Coding Run and return its id."""
 
-    def advance(self, coding_run_id: uuid.UUID, status: CodingRunStatus) -> None:
-        """Advance a Coding Run to ``status``."""
+    def begin_planning(self, coding_run_id: uuid.UUID) -> None:
+        """Move a Coding Run into the planning stage."""
 
-    def fail(self, coding_run_id: uuid.UUID, *, failed_stage: str, reason: str) -> None:
+    def begin_retrieving(self, coding_run_id: uuid.UUID) -> None:
+        """Move a Coding Run into the retrieving stage."""
+
+    def begin_generating(self, coding_run_id: uuid.UUID) -> None:
+        """Move a Coding Run into the generating stage."""
+
+    def begin_reviewing(self, coding_run_id: uuid.UUID) -> None:
+        """Move a Coding Run into the reviewing stage."""
+
+    def fail(self, coding_run_id: uuid.UUID, *, failed_stage: CodingRunStage, reason: str) -> None:
         """Mark a Coding Run failed at ``failed_stage`` with a sanitized ``reason``."""
 
     def complete(
@@ -52,15 +61,27 @@ class CodingRunRecorder:
         run = self.store.create(repository_session_id=repository_session_id, thread_id=thread_id)
         return run.id
 
-    def advance(self, coding_run_id: uuid.UUID, status: CodingRunStatus) -> None:
+    def begin_planning(self, coding_run_id: uuid.UUID) -> None:
+        self._advance(coding_run_id, CodingRunStatus.planning)
+
+    def begin_retrieving(self, coding_run_id: uuid.UUID) -> None:
+        self._advance(coding_run_id, CodingRunStatus.retrieving)
+
+    def begin_generating(self, coding_run_id: uuid.UUID) -> None:
+        self._advance(coding_run_id, CodingRunStatus.generating)
+
+    def begin_reviewing(self, coding_run_id: uuid.UUID) -> None:
+        self._advance(coding_run_id, CodingRunStatus.reviewing)
+
+    def _advance(self, coding_run_id: uuid.UUID, status: CodingRunStatus) -> None:
         run = self.store.get_by_id(coding_run_id)
         if run is not None:
             self.store.advance_status(run, status)
 
-    def fail(self, coding_run_id: uuid.UUID, *, failed_stage: str, reason: str) -> None:
+    def fail(self, coding_run_id: uuid.UUID, *, failed_stage: CodingRunStage, reason: str) -> None:
         run = self.store.get_by_id(coding_run_id)
         if run is not None:
-            self.store.mark_failed(run, failed_stage=CodingRunStage(failed_stage), failure_reason=reason)
+            self.store.mark_failed(run, failed_stage=failed_stage, failure_reason=reason)
 
     def complete(
         self, coding_run_id: uuid.UUID, *, branch: str, diff: str, generated_files: list[GeneratedFile], external_references: list[ExternalReference]
@@ -97,10 +118,19 @@ class NullRunRecorder:
     def start(self, *, thread_id: str, repository_session_id: uuid.UUID) -> uuid.UUID:
         return uuid.uuid4()
 
-    def advance(self, coding_run_id: uuid.UUID, status: CodingRunStatus) -> None:
+    def begin_planning(self, coding_run_id: uuid.UUID) -> None:
         return None
 
-    def fail(self, coding_run_id: uuid.UUID, *, failed_stage: str, reason: str) -> None:
+    def begin_retrieving(self, coding_run_id: uuid.UUID) -> None:
+        return None
+
+    def begin_generating(self, coding_run_id: uuid.UUID) -> None:
+        return None
+
+    def begin_reviewing(self, coding_run_id: uuid.UUID) -> None:
+        return None
+
+    def fail(self, coding_run_id: uuid.UUID, *, failed_stage: CodingRunStage, reason: str) -> None:
         return None
 
     def complete(
