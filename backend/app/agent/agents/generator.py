@@ -3,12 +3,12 @@
 The generator is a ReAct agent whose **only** tool is ``web_search`` — no shell,
 no filesystem. It looks up a test framework's current syntax and best practices,
 then returns structured complete-file proposals (never diff text). The loop is
-bounded by single-tool binding and a graph recursion cap. Revision is deliberately
-tool-free: it corrects the rejected Test Patch from Patch Review findings and
-Repository Evidence instead of reopening web research. Web results become
-``External Reference``s harvested from the generation agent's tool messages, kept
-separate from Repository Evidence and never used to ground claims about the
-Repository's code — only how tests are written.
+bounded by single-tool binding and a graph recursion cap. A single agent performs
+both initial generation and revision; revision may also call ``web_search``, since
+many findings (e.g. a deprecated test-framework API) are exactly what a web lookup
+resolves. Web results become ``External Reference``s harvested from the agent's tool
+messages, kept separate from Repository Evidence and never used to ground claims
+about the Repository's code — only how tests are written.
 """
 
 import json
@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from app.prompts.rendering import format_evidence, format_files
 from app.agent.agents.tools import web_search
 from app.core.config import settings
-from app.prompts.prompts import GENERATOR_SYSTEM_PROMPT, REVISION_SYSTEM_PROMPT
+from app.prompts.prompts import GENERATOR_SYSTEM_PROMPT
 from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 
 logger = logging.getLogger(__name__)
@@ -38,14 +38,11 @@ class _GeneratorResponse(BaseModel):
 
 
 class ReActTestGenerator:
-    """Production ``TestGenerator`` with web-backed generation and tool-free revision."""
+    """Production ``TestGenerator``: one web-backed agent for both generation and revision."""
 
-    def __init__(self, llm, *, recursion_limit: int | None = None, agent=None, revision_agent=None) -> None:
+    def __init__(self, llm, *, recursion_limit: int | None = None) -> None:
         self._recursion_limit = recursion_limit if recursion_limit is not None else settings.RECURSION_LIMIT
-        self._agent = agent or create_agent(llm, tools=[web_search], system_prompt=GENERATOR_SYSTEM_PROMPT, response_format=_GeneratorResponse)
-        self._revision_agent = revision_agent or (
-            agent if agent is not None else create_agent(llm, tools=[], system_prompt=REVISION_SYSTEM_PROMPT, response_format=_GeneratorResponse)
-        )
+        self._agent = create_agent(llm, tools=[web_search], system_prompt=GENERATOR_SYSTEM_PROMPT, response_format=_GeneratorResponse)
 
     def generate(self, *, task: str, source_evidence: list, test_evidence: list) -> GenerationProposal:
         prompt = _build_prompt(task, source_evidence, test_evidence)
@@ -60,11 +57,10 @@ class ReActTestGenerator:
         replacement proposal — never a diff.
         """
         prompt = _build_revision_prompt(task, source_evidence, test_evidence, prior_files, diff, findings)
-        return self._propose(prompt, agent=self._revision_agent)
+        return self._propose(prompt)
 
-    def _propose(self, prompt: str, *, agent=None) -> GenerationProposal:
-        active_agent = agent or self._agent
-        result = active_agent.invoke({"messages": [HumanMessage(content=prompt)]}, config={"recursion_limit": self._recursion_limit})
+    def _propose(self, prompt: str) -> GenerationProposal:
+        result = self._agent.invoke({"messages": [HumanMessage(content=prompt)]}, config={"recursion_limit": self._recursion_limit})
         response = result.get("structured_response")
         generated_files = response.generated_files if response else []
         return GenerationProposal(generated_files=generated_files, external_references=_references_from_messages(result.get("messages") or []))

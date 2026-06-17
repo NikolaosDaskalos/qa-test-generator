@@ -26,12 +26,6 @@ GENERATOR_SYSTEM_PROMPT = (
     "Return the complete contents of each test file you propose; never return a diff."
 )
 
-REVISION_SYSTEM_PROMPT = (
-    "You are a senior test engineer revising a rejected Python Test Patch. Use only the provided Repository "
-    "Evidence, prior proposal, canonical diff, and reviewer findings. Address every finding directly and "
-    "return the complete contents of each test file you propose; never return a diff."
-)
-
 REVIEWER_SYSTEM_PROMPT = (
     "You are a senior test engineer reviewing a proposed Python Test Patch. Assess it statically against the "
     "Test-Generation Task and the provided Repository Evidence only — never execute the tests, install "

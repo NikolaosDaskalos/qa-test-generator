@@ -30,7 +30,18 @@ def _web_search_message(results) -> ToolMessage:
     return ToolMessage(content=json.dumps({"results": results}), name="web_search", tool_call_id="c1")
 
 
-def test_generator_extracts_structured_files_and_harvests_external_references() -> None:
+def _build_generator(monkeypatch, final_state, *, recursion_limit=7):
+    """Build a generator whose single agent is a FakeAgent returning ``final_state``.
+
+    The agent is injected by monkeypatching ``create_agent`` so tests drive the
+    generator through its public ``generate``/``revise`` interface with no real model.
+    """
+    agent = FakeAgent(final_state)
+    monkeypatch.setattr("app.agent.agents.generator.create_agent", lambda *a, **k: agent)
+    return ReActTestGenerator(llm=object(), recursion_limit=recursion_limit), agent
+
+
+def test_generator_extracts_structured_files_and_harvests_external_references(monkeypatch) -> None:
     """The structured response yields files; web_search tool messages yield External References."""
     final_state = {
         "messages": [
@@ -41,8 +52,7 @@ def test_generator_extracts_structured_files_and_harvests_external_references() 
         ],
         "structured_response": _GeneratorResponse(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
     }
-    agent = FakeAgent(final_state)
-    generator = ReActTestGenerator(llm=object(), agent=agent, recursion_limit=7)
+    generator, _agent = _build_generator(monkeypatch, final_state)
 
     proposal = generator.generate(task="add tests for auth", source_evidence=[], test_evidence=[])
 
@@ -50,11 +60,10 @@ def test_generator_extracts_structured_files_and_harvests_external_references() 
     assert [reference.url for reference in proposal.external_references] == ["https://docs.pytest.org"]
 
 
-def test_generator_caps_the_web_search_loop_with_a_recursion_limit() -> None:
+def test_generator_caps_the_web_search_loop_with_a_recursion_limit(monkeypatch) -> None:
     """The agent is invoked under the configured recursion limit, bounding the tool loop."""
     final_state = {"messages": [], "structured_response": _GeneratorResponse(generated_files=[])}
-    agent = FakeAgent(final_state)
-    generator = ReActTestGenerator(llm=object(), agent=agent, recursion_limit=5)
+    generator, agent = _build_generator(monkeypatch, final_state, recursion_limit=5)
 
     generator.generate(task="add tests", source_evidence=[], test_evidence=[])
 
@@ -62,7 +71,7 @@ def test_generator_caps_the_web_search_loop_with_a_recursion_limit() -> None:
     assert config["recursion_limit"] == 5
 
 
-def test_generator_revises_a_prior_proposal_against_reviewer_findings() -> None:
+def test_generator_revises_a_prior_proposal_against_reviewer_findings(monkeypatch) -> None:
     """Revision returns the new files and prompts with the prior proposal, the canonical diff, and the findings."""
     final_state = {
         "messages": [],
@@ -70,8 +79,7 @@ def test_generator_revises_a_prior_proposal_against_reviewer_findings() -> None:
             generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")]
         ),
     }
-    agent = FakeAgent(final_state)
-    generator = ReActTestGenerator(llm=object(), agent=agent, recursion_limit=7)
+    generator, agent = _build_generator(monkeypatch, final_state)
 
     proposal = generator.revise(
         task="add tests for auth",
@@ -92,8 +100,8 @@ def test_generator_revises_a_prior_proposal_against_reviewer_findings() -> None:
     assert "def test_x(): ..." in prompt
 
 
-def test_generator_uses_a_separate_revision_agent_without_web_search(monkeypatch) -> None:
-    """Revision is deterministic: it does not reopen the web-search ReAct loop."""
+def test_generator_uses_one_web_search_agent_for_both_generation_and_revision(monkeypatch) -> None:
+    """A single web_search-capable agent serves both generation and revision."""
     created = []
 
     def fake_create_agent(_llm, tools=None, **kwargs):
@@ -104,11 +112,34 @@ def test_generator_uses_a_separate_revision_agent_without_web_search(monkeypatch
     monkeypatch.setattr("app.agent.agents.generator.create_agent", fake_create_agent)
 
     generator = ReActTestGenerator(llm=object())
-
+    generator.generate(task="add tests", source_evidence=[], test_evidence=[])
     generator.revise(task="add tests", source_evidence=[], test_evidence=[], prior_files=[], diff="", findings=[])
 
-    assert len(created) == 2
+    # Exactly one agent is constructed, it is web_search-capable, and both passes go through it.
+    assert len(created) == 1
     assert len(created[0]["tools"]) == 1
-    assert created[1]["tools"] == []
-    assert len(created[0]["agent"].invocations) == 0
-    assert len(created[1]["agent"].invocations) == 1
+    assert len(created[0]["agent"].invocations) == 2
+
+
+def test_generator_revision_consults_web_search_and_harvests_references(monkeypatch) -> None:
+    """Revision may now call web_search, so its tool messages yield External References."""
+    final_state = {
+        "messages": [
+            AIMessage(content="looking up the current framework API"),
+            _web_search_message([{"url": "https://docs.pytest.org/fixtures", "title": "fixtures"}]),
+            AIMessage(content="done"),
+        ],
+        "structured_response": _GeneratorResponse(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+    }
+    generator, _agent = _build_generator(monkeypatch, final_state)
+
+    proposal = generator.revise(
+        task="add tests for auth",
+        source_evidence=[],
+        test_evidence=[],
+        prior_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")],
+        diff="diff --git a/tests/test_auth.py b/tests/test_auth.py",
+        findings=[ReviewFinding(category="versioning", detail="uses a deprecated fixture API")],
+    )
+
+    assert [reference.url for reference in proposal.external_references] == ["https://docs.pytest.org/fixtures"]
