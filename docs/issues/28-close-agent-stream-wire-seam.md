@@ -1,6 +1,6 @@
 # Close the Agent Stream wire seam by removing the dead Answer event
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: (refactor — tightens the typed Agent Stream wire seam from issues 19/20, supports ADR-0002)
 
@@ -30,14 +30,14 @@ the SSE adapter still serializes exactly the events it does today.
 
 ## Acceptance criteria
 
-- [ ] The `Answer` model is removed and dropped from the `AgentStreamEvent` union;
+- [x] The `Answer` model is removed and dropped from the `AgentStreamEvent` union;
       the union now contains only events that are serialized to the wire.
-- [ ] The `agent_stream` module docstring no longer describes an `Answer` internal
+- [x] The `agent_stream` module docstring no longer describes an `Answer` internal
       hop.
-- [ ] A repository-wide check confirms nothing constructs or pattern-matches
+- [x] A repository-wide check confirms nothing constructs or pattern-matches
       `Answer` (it was referenced only by its own definition and the union).
-- [ ] The answer path's shared-state → final-state `Result` behavior is unchanged.
-- [ ] The backend suite passes excluding known environmental/pre-existing failures.
+- [x] The answer path's shared-state → final-state `Result` behavior is unchanged.
+- [x] The backend suite passes excluding known environmental/pre-existing failures.
 
 ## Blocked by
 
