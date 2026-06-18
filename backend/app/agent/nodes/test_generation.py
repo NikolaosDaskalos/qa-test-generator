@@ -36,10 +36,6 @@ REVIEW_FAILED = "The patch reviewer could not complete its assessment."
 AWAITING_DECISION_MESSAGE = "Review the generated Test Patch and approve or reject it."
 
 
-def _continue_to(node: str, update: dict) -> Command:
-    return Command(update=update, goto=node)
-
-
 def _fail_with(failure: RunFailure, trace: str) -> Command:
     return Command(update={"failure": failure, "trace": [trace]}, goto="fail_run")
 
@@ -71,123 +67,115 @@ def build_gather_evidence_node(retriever, recorder):
     return gather_evidence
 
 
-def build_prepare_branch_node(workspace_factory, recorder):
-    """Build the node that restores a clean generation branch at the indexed commit.
-
-    The backend — never the model — restores the shared checkout to the
-    Repository's indexed commit on a uniquely named, non-default temporary branch
-    before any generation. A Git failure here is a generating-stage Run Failure.
-    """
-
-    def prepare_branch(state) -> dict:
-        recorder.begin_generating(state["coding_run_id"])
-        try:
-            workspace = workspace_factory(state.get("checkout_root"))
-            branch = workspace.prepare_branch(state.get("indexed_commit_sha"))
-        except Exception:
-            logger.exception("Generation branch preparation failed")
-            return _fail_with(RunFailure(failed_stage=CodingRunStage.generating, reason=BRANCH_PREPARATION_FAILED), "prepare_branch")
-        return _continue_to("generate_tests", {"generation_branch": branch, "trace": ["prepare_branch"]})
-
-    return prepare_branch
+def _generating_failure(reason: str) -> dict:
+    """Plain generating-stage failure state for the merged node's exception arms."""
+    return {"failure": RunFailure(failed_stage=CodingRunStage.generating, reason=reason), "trace": ["generate_tests"]}
 
 
-def build_generate_tests_node(generator):
-    """Build the bounded generator node that proposes complete Test File contents.
+def build_generate_tests_node(generator, workspace_factory, recorder):
+    """Build the single node that runs the whole generating stage end-to-end.
 
-    The generator may call only the bounded ``web_search`` tool — no shell or
-    filesystem access — and returns structured complete-file proposals plus the
-    External References it consulted, kept separate from Repository Evidence.
-    """
+    The node distinguishes its two passes by whether a prior ``review_result`` is on
+    state — absent on the first pass (straight from evidence gathering), present
+    whenever the post-review router routes a below-threshold patch back here. On the
+    first pass it advances the run into generating, restores a clean generation branch
+    at the indexed commit (the backend — never the model — owns this), and calls the
+    generator's initial generation. On a revision pass it skips branch preparation (the
+    branch already exists), calls the generator's revision with the prior proposal, the
+    reviewed canonical diff, and the reviewer's findings, and spends one unit of the
+    Revision Budget so the post-review router admits only as many revisions as the
+    budget allows before escalating to human review. The generator may call only the
+    bounded ``web_search`` tool — no shell or filesystem access.
 
-    def generate_tests(state) -> dict:
-        emit(Stage(stage="generating"))
-        try:
-            proposal = generator.generate(
-                task=state["question"], source_evidence=state.get("source_evidence") or [], test_evidence=state.get("test_evidence") or []
-            )
-        except Exception:
-            logger.exception("Test generation failed")
-            return _fail_with(RunFailure(failed_stage=CodingRunStage.generating, reason=GENERATION_FAILED), "generate_tests")
-        return _continue_to(
-            "build_patch", {"generated_files": proposal.generated_files, "external_references": proposal.external_references, "trace": ["generate_tests"]}
-        )
-
-    return generate_tests
-
-
-def build_revise_tests_node(generator):
-    """Build the node that performs one Revision Attempt against a below-threshold review.
-
-    The generator is handed the original task, partitioned Repository Evidence, its
-    own prior complete-file proposal, the canonical diff that was reviewed, and the
-    reviewer's findings, and replaces the proposal. The revised files flow back
-    through the same write/validation/review path as initial generation; a generator
-    failure here is a generating-stage Run Failure. One unit of the Revision Budget is
-    spent so the post-review router admits only as many revisions as the budget allows
-    before escalating to human review.
-    """
-
-    def revise_tests(state) -> dict:
-        emit(Stage(stage="revising"))
-        review: ReviewResult | None = state.get("review_result")
-        findings = list(review.findings) if review is not None else []
-        try:
-            proposal = generator.revise(
-                task=state["question"],
-                source_evidence=state.get("source_evidence") or [],
-                test_evidence=state.get("test_evidence") or [],
-                prior_files=state.get("generated_files") or [],
-                diff=state.get("diff") or "",
-                findings=findings,
-            )
-        except Exception:
-            logger.exception("Test revision failed")
-            return _fail_with(RunFailure(failed_stage=CodingRunStage.generating, reason=REVISION_FAILED), "revise_tests")
-        budget = RevisionBudget.from_state(state).spend()
-        return _continue_to(
-            "build_patch",
-            {
-                "generated_files": proposal.generated_files,
-                "external_references": proposal.external_references or state.get("external_references") or [],
-                **budget.state_update(),
-                "trace": ["revise_tests"],
-            },
-        )
-
-    return revise_tests
-
-
-def build_build_patch_node(workspace_factory, recorder):
-    """Build the node that validates, writes, and derives the canonical Test Patch.
-
-    Each proposed path is validated before any write; an unsafe path, a non-Python
-    file, or application code is a generating-stage Run Failure. Validated files are
-    written and the displayed diff is obtained from Git, then the Coding Run
-    persists the proposals, External References, and canonical diff.
+    Either pass then validates, writes, and derives the canonical Test Patch through the
+    deep ``PatchBuilder`` (a revision resets the prior patch first via the now-spent
+    ``is_revision_attempt`` signal). The node returns plain state — never a ``Command`` —
+    leaving routing to ``build_generate_router``. Any generating-stage failure (branch
+    preparation, generation, revision, or patch validation/build) is folded onto state
+    as a user-safe ``RunFailure`` instead of escaping.
     """
 
     builder = PatchBuilder(workspace_factory=workspace_factory, recorder=recorder)
 
-    def build_patch(state) -> dict:
+    def generate_tests(state) -> dict:
+        budget = RevisionBudget.from_state(state)
+        review: ReviewResult | None = state.get("review_result")
+
+        if review is not None:
+            emit(Stage(stage="revising"))
+            try:
+                proposal = generator.revise(
+                    task=state["question"],
+                    source_evidence=state.get("source_evidence") or [],
+                    test_evidence=state.get("test_evidence") or [],
+                    prior_files=state.get("generated_files") or [],
+                    diff=state.get("diff") or "",
+                    findings=list(review.findings),
+                )
+            except Exception:
+                logger.exception("Test revision failed")
+                return _generating_failure(REVISION_FAILED)
+            budget = budget.spend()
+            generation_branch = state.get("generation_branch")
+            external_references = proposal.external_references or state.get("external_references") or []
+            budget_update = budget.state_update()
+        else:
+            recorder.begin_generating(state["coding_run_id"])
+            try:
+                workspace = workspace_factory(state.get("checkout_root"))
+                generation_branch = workspace.prepare_branch(state.get("indexed_commit_sha"))
+            except Exception:
+                logger.exception("Generation branch preparation failed")
+                return _generating_failure(BRANCH_PREPARATION_FAILED)
+            emit(Stage(stage="generating"))
+            try:
+                proposal = generator.generate(
+                    task=state["question"], source_evidence=state.get("source_evidence") or [], test_evidence=state.get("test_evidence") or []
+                )
+            except Exception:
+                logger.exception("Test generation failed")
+                return _generating_failure(GENERATION_FAILED)
+            external_references = proposal.external_references
+            budget_update = {}
+
         outcome = builder.build(
             PatchBuildRequest(
-                generated_files=state.get("generated_files") or [],
+                generated_files=proposal.generated_files,
                 checkout_root=state.get("checkout_root"),
-                is_revision_attempt=RevisionBudget.from_state(state).is_revision_attempt,
-                generation_branch=state.get("generation_branch"),
+                is_revision_attempt=budget.is_revision_attempt,
+                generation_branch=generation_branch,
                 coding_run_id=state.get("coding_run_id"),
-                external_references=state.get("external_references") or [],
+                external_references=external_references,
             )
         )
         if outcome.failure is not None:
-            return _fail_with(outcome.failure, "build_patch")
+            return {"failure": outcome.failure, "trace": ["generate_tests"]}
         patch_result = outcome.patch_result
-        return _continue_to(
-            "review_patch", {"patch_result": patch_result, "diff": patch_result.diff, "generated_files": patch_result.generated_files, "trace": ["build_patch"]}
-        )
+        return {
+            "generation_branch": generation_branch,
+            "generated_files": patch_result.generated_files,
+            "external_references": patch_result.external_references,
+            "patch_result": patch_result,
+            "diff": patch_result.diff,
+            **budget_update,
+            "trace": ["generate_tests"],
+        }
 
-    return build_patch
+    return generate_tests
+
+
+def build_generate_router():
+    """Build the router that drives the conditional edge off ``generate_tests``.
+
+    Reading only the state the node wrote, it routes any generating-stage failure
+    (branch preparation, generation, revision, or patch validation/build) to the
+    failure sink and an otherwise-built Test Patch to patch review.
+    """
+
+    def route_after_generate(state) -> Literal["review", "failed"]:
+        return "failed" if state.get("failure") is not None else "review"
+
+    return route_after_generate
 
 
 def _escalates_to_owner(review: ReviewResult | None, state, max_revision_attempts: int | None) -> bool:
@@ -280,7 +268,7 @@ def build_review_router(max_revision_attempts: int | None = None):
     Reading only the verdict ``review_patch`` wrote to state, it reproduces the three
     outcomes the old ``review_gate`` owned: a reviewing-stage Run Failure routes to
     the failure sink; a below-threshold patch with Revision Budget remaining routes
-    back to one more ``revise_tests``; an accepted patch, or a below-threshold one
+    back to ``generate_tests`` for one more Revision Attempt; an accepted patch, or a below-threshold one
     whose budget is exhausted, routes to the owner's human decision. Exhausting the
     budget escalates — it never fails. The router has no side effects; ``review_patch``
     already emitted the terminal ``ReviewResult`` on the escalation path.

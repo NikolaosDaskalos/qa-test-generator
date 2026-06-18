@@ -537,23 +537,25 @@ def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None
     )
 
 
-def test_generator_receives_partitioned_evidence_and_emits_structured_files() -> None:
+def test_generator_receives_partitioned_evidence_and_emits_structured_files(tmp_path) -> None:
     """The generator is handed the task and partitioned evidence and returns complete-file proposals."""
+    (tmp_path / "tests").mkdir()  # an existing test root admits the new test file
     repository_id = uuid.uuid4()
     retriever = QueryRetriever({"impl": [_source(repository_id, "app/auth.py", "code")]})
     planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="impl")])
     generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     graph = _build(FakeClassifierLLM("test_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output), generator=generator)
 
-    final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id, "checkout_root": "/unused"}, config=_config())
+    final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path)}, config=_config())
 
     assert generator.calls[0]["task"] == "add tests for auth"
     assert [doc.doc_metadata["source"] for doc in generator.calls[0]["source_evidence"]] == ["app/auth.py"]
     assert [file.path for file in final["generated_files"]] == ["tests/test_auth.py"]
 
 
-def test_external_references_are_collected_separately_from_repository_evidence() -> None:
+def test_external_references_are_collected_separately_from_repository_evidence(tmp_path) -> None:
     """Web results ride external_references, never mixed into source or test evidence."""
+    (tmp_path / "tests").mkdir()  # an existing test root admits the new test file
     repository_id = uuid.uuid4()
     generator = FakeGenerator(
         GenerationProposal(
@@ -563,7 +565,7 @@ def test_external_references_are_collected_separately_from_repository_evidence()
     )
     graph = _generation_graph(generator=generator)
 
-    final = graph.invoke({"question": "add tests", "repository_id": repository_id, "checkout_root": "/unused"}, config=_config())
+    final = graph.invoke({"question": "add tests", "repository_id": repository_id, "checkout_root": str(tmp_path)}, config=_config())
 
     assert [reference.url for reference in final["external_references"]] == ["https://docs.pytest.org"]
     assert all("docs.pytest.org" not in doc.content for doc in final.get("source_evidence", []))
@@ -666,6 +668,34 @@ def test_generation_failure_is_a_generating_run_failure() -> None:
     assert final["failure"].failed_stage == "generating"
     assert final["failure"].coding_run_id == recorder.run_id
     assert final.get("patch_result") is None
+
+
+def test_branch_preparation_failure_is_a_generating_run_failure(tmp_path) -> None:
+    """A workspace that cannot restore a clean branch fails at generating before any generation or write."""
+    recorder = RecordingRecorder()
+
+    class RaisingPrepareWorkspace(FakeWorkspace):
+        def prepare_branch(self, indexed_commit_sha):
+            raise GitError("could not prepare branch")
+
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=RaisingPrepareWorkspace())
+
+    final = graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=_config(),
+    )
+
+    assert final["failure"].failed_stage == "generating"
+    assert final["failure"].coding_run_id == recorder.run_id
+    assert final.get("patch_result") is None
+    assert recorder.events[-1][0] == "fail"
 
 
 # ── test_generation branch: patch review ──────────────────────────

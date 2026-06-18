@@ -27,14 +27,12 @@ from app.streaming.agent_stream import emit
 from app.agent.nodes.test_generation import (
     build_approve_patch_node,
     build_await_decision_node,
-    build_build_patch_node,
     build_discard_patch_node,
     build_gather_evidence_node,
+    build_generate_router,
     build_generate_tests_node,
-    build_prepare_branch_node,
     build_review_patch_node,
     build_review_router,
-    build_revise_tests_node,
 )
 from app.services.coding_runs.workspace import LocalGitWorkspace
 from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, Stage
@@ -175,14 +173,11 @@ def build_graph(
     graph.add_node("classify", _classify_node(classifier_llm))
     graph.add_node("plan", build_plan_node(planner_llm, recorder))
     graph.add_node("gather_evidence", build_gather_evidence_node(retriever, recorder))
-    graph.add_node("prepare_branch", build_prepare_branch_node(workspaces, recorder), destinations=("generate_tests", "fail_run"))
-    graph.add_node("generate_tests", build_generate_tests_node(generator), destinations=("build_patch", "fail_run"))
-    graph.add_node("build_patch", build_build_patch_node(workspaces, recorder), destinations=("review_patch", "fail_run"))
+    graph.add_node("generate_tests", build_generate_tests_node(generator, workspaces, recorder))
     graph.add_node("review_patch", build_review_patch_node(reviewer, recorder, max_revision_attempts=max_revision_attempts))
     graph.add_node("await_decision", build_await_decision_node())
     graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder), destinations=(END, "fail_run"))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
-    graph.add_node("revise_tests", build_revise_tests_node(generator), destinations=("build_patch", "fail_run"))
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("retrieve", build_retrieve_node(retriever))
     graph.add_node("generate", build_generate_node(llm))
@@ -190,9 +185,10 @@ def build_graph(
     graph.add_edge(START, "classify")
     graph.add_conditional_edges("classify", _route_intent, {"test_generation": "plan", "repository_question": "retrieve"})
     graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "gather_evidence"})
-    graph.add_edge("gather_evidence", "prepare_branch")
+    graph.add_edge("gather_evidence", "generate_tests")
+    graph.add_conditional_edges("generate_tests", build_generate_router(), {"review": "review_patch", "failed": "fail_run"})
     graph.add_conditional_edges(
-        "review_patch", build_review_router(max_revision_attempts), {"revise": "revise_tests", "escalate": "await_decision", "failed": "fail_run"}
+        "review_patch", build_review_router(max_revision_attempts), {"revise": "generate_tests", "escalate": "await_decision", "failed": "fail_run"}
     )
     graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
     graph.add_edge("discard_patch", END)
