@@ -34,7 +34,7 @@ export async function* decideReviewedPatchStream({
 }): AsyncGenerator<AgentStreamEvent> {
   yield* streamRepositorySessionTurn({
     repositorySessionId,
-    requestBody: decision,
+    requestBody: { decision },
   })
 }
 
@@ -43,7 +43,7 @@ async function* streamRepositorySessionTurn({
   requestBody,
 }: {
   repositorySessionId: string
-  requestBody: { question: string } | HumanDecisionRequest
+  requestBody: { question: string } | { decision: HumanDecisionRequest }
 }): AsyncGenerator<AgentStreamEvent> {
   try {
     const token = await resolveToken()
