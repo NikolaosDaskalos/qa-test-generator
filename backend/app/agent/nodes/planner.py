@@ -6,10 +6,12 @@ out-of-scope (or uncommitted) request is rejected here as a terminal
 ``RunFailure(failed_stage=CodingRunStage.planning)`` before any retrieval or generation.
 """
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agent.nodes.failures import fail_state
 from app.enums.coding_run import CodingRunStage
+from app.prompts.prompts import PLANNER_SYSTEM_PROMPT
 from app.schemas.agent_stream import RunFailure, RunStarted, Stage
 from app.schemas.research_intent import ResearchIntent
 from app.streaming.agent_stream import emit
@@ -48,7 +50,7 @@ def build_plan_node(planner_llm, recorder):
         recorder.begin_planning(coding_run_id)
         emit(RunStarted(coding_run_id=coding_run_id))
         emit(Stage(stage="planning"))
-        result = structured.invoke(state["question"])
+        result = structured.invoke([SystemMessage(content=PLANNER_SYSTEM_PROMPT), HumanMessage(content=state["question"])])
         if result is None or not result.in_scope:
             reason = (result.reason if result and result.reason else None) or DEFAULT_REJECTION_REASON
             return {"coding_run_id": coding_run_id, **fail_state(RunFailure(failed_stage=CodingRunStage.planning, reason=reason), trace="plan")}
