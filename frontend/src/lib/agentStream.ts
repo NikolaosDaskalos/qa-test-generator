@@ -7,7 +7,6 @@ export type AgentStreamEvent =
   | { type: "result"; answer: string; citations: Citation[] }
   | { type: "run_started"; coding_run_id: string }
   | { type: "review_result"; [key: string]: unknown }
-  | { type: "patch_result"; [key: string]: unknown }
   | { type: "run_failure"; [key: string]: unknown }
   | { type: "run_approved"; [key: string]: unknown }
   | { type: "run_rejected"; [key: string]: unknown }

@@ -5,6 +5,7 @@ import type {
   Citation,
   HumanDecisionRequest,
   RepositoryPublic,
+  RepositorySessionPublic,
   ReviewFinding,
   SessionHistoryPublic,
 } from "@/client"
@@ -47,6 +48,7 @@ type RunDecisionView =
   | {
       status: "approved"
       branch: string
+      message: string
       diff: string
       disclaimer: string
     }
@@ -127,6 +129,34 @@ function CopilotShell() {
     },
   })
   const repositories = repositoriesQuery.data?.data ?? []
+  const isRepositoryReady = activeRepository?.status === "ready"
+  const sessionsQuery = useQuery({
+    queryKey: ["sessions", activeRepository?.id],
+    queryFn: () =>
+      SessionsService.readRepositorySessions({
+        repositoryId: activeRepository?.id ?? "",
+      }),
+    enabled: !!activeRepository && isRepositoryReady,
+  })
+  const sessions = sessionsQuery.data?.data ?? []
+
+  async function handleSelectSession(sessionId: string) {
+    if (!activeRepository || sessionId === activeSessionId) {
+      return
+    }
+    setStageStatus([])
+    setStreamError(null)
+    setActiveSessionId(sessionId)
+    setChatMessages([])
+    localStorage.setItem(
+      getRepositorySessionStorageKey(activeRepository.id),
+      sessionId,
+    )
+    const history = await SessionsService.readRepositorySessionHistory({
+      repositorySessionId: sessionId,
+    })
+    setChatMessages(toChatMessages(history.data))
+  }
 
   useEffect(() => {
     if (!isRepositoryPublic(repositoryStatusQuery.data)) {
@@ -170,11 +200,12 @@ function CopilotShell() {
 
     createRepositorySession({
       repositoryId: activeRepository.id,
+      queryClient,
       setActiveSessionId,
       setChatMessages,
       setIsCreatingSession,
     })
-  }, [activeRepository])
+  }, [activeRepository, queryClient])
 
   return (
     <div className="flex min-h-[calc(100vh-12rem)] flex-col gap-6">
@@ -204,6 +235,14 @@ function CopilotShell() {
               setStreamError(null)
             }}
           />
+          {isRepositoryReady ? (
+            <SessionList
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              isLoading={sessionsQuery.isLoading}
+              onSelectSession={handleSelectSession}
+            />
+          ) : null}
           <RepositoryCreationForm
             error={getErrorMessage(createRepositoryMutation.error)}
             isSubmitting={createRepositoryMutation.isPending}
@@ -235,6 +274,7 @@ function CopilotShell() {
                 setStreamError(null)
                 createRepositorySession({
                   repositoryId: activeRepository.id,
+                  queryClient,
                   setActiveSessionId,
                   setChatMessages,
                   setIsCreatingSession,
@@ -260,10 +300,11 @@ function CopilotShell() {
                   }
                 >
                   <p className="whitespace-pre-wrap">{message.content}</p>
-                  {message.codingRunId ? (
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      Coding Run {message.codingRunId}
-                    </p>
+                  {message.codingRunId && activeSessionId ? (
+                    <RunDetails
+                      repositorySessionId={activeSessionId}
+                      codingRunId={message.codingRunId}
+                    />
                   ) : null}
                   {message.review ? (
                     <ReviewResultSummary
@@ -469,6 +510,50 @@ function RepositorySelector({
   )
 }
 
+function SessionList({
+  sessions,
+  activeSessionId,
+  isLoading,
+  onSelectSession,
+}: {
+  sessions: RepositorySessionPublic[]
+  activeSessionId: string | null
+  isLoading: boolean
+  onSelectSession: (sessionId: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-sm font-semibold">Sessions</h3>
+      {isLoading ? (
+        <p className="text-xs text-muted-foreground">Loading sessions...</p>
+      ) : sessions.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No sessions yet.</p>
+      ) : (
+        <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto">
+          {sessions.map((session) => (
+            <li key={session.id}>
+              <Button
+                type="button"
+                variant="ghost"
+                aria-pressed={session.id === activeSessionId}
+                className="h-auto w-full justify-start p-2 text-left aria-pressed:bg-muted"
+                onClick={() => onSelectSession(session.id)}
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-sm">{session.title}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {new Date(session.updated_at).toLocaleString()}
+                  </span>
+                </span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function ReviewResultSummary({
   isPending,
   message,
@@ -569,6 +654,9 @@ function RunDecisionSummary({ decision }: { decision: RunDecisionView }) {
       {decision.status === "approved" ? (
         <>
           <p className="text-sm font-medium">Approved and pushed</p>
+          {decision.message ? (
+            <p className="text-sm text-muted-foreground">{decision.message}</p>
+          ) : null}
           <p className="text-sm text-muted-foreground">
             Branch {decision.branch}
           </p>
@@ -608,6 +696,128 @@ function RunFailureSummary({ failure }: { failure: RunFailureView }) {
   )
 }
 
+function RunDetails({
+  repositorySessionId,
+  codingRunId,
+}: {
+  repositorySessionId: string
+  codingRunId: string
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const runQuery = useQuery({
+    queryKey: ["coding-run", repositorySessionId, codingRunId],
+    queryFn: () =>
+      SessionsService.readCodingRun({ repositorySessionId, codingRunId }),
+    enabled: expanded,
+  })
+  const patchQuery = useQuery({
+    queryKey: ["coding-run-patch", repositorySessionId, codingRunId],
+    queryFn: () =>
+      SessionsService.readCodingRunPatch({ repositorySessionId, codingRunId }),
+    enabled: expanded,
+  })
+
+  const run = runQuery.data
+  const patch = patchQuery.data
+  const isLoading = runQuery.isLoading || patchQuery.isLoading
+  const error = runQuery.error ?? patchQuery.error
+
+  return (
+    <div className="mt-3 grid gap-2 text-xs">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <span>Coding Run {codingRunId}</span>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-auto px-2 py-1 text-xs"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? "Hide run details" : "View run details"}
+        </Button>
+      </div>
+      {expanded ? (
+        isLoading ? (
+          <p className="text-muted-foreground">Loading run details...</p>
+        ) : error ? (
+          <p className="text-destructive">
+            {getErrorMessage(error) ?? "Failed to load run details."}
+          </p>
+        ) : run ? (
+          <div className="grid gap-2 rounded-md border p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">{run.status}</Badge>
+              {run.failed_stage ? (
+                <span className="text-muted-foreground">
+                  Failed at {run.failed_stage}
+                </span>
+              ) : null}
+            </div>
+            {run.failure_reason ? (
+              <p className="text-destructive">{run.failure_reason}</p>
+            ) : null}
+            {run.review_findings && run.review_findings.length > 0 ? (
+              <ul className="space-y-1">
+                {run.review_findings.map((finding) => (
+                  <li key={`${finding.category}:${finding.detail}`}>
+                    <span className="font-medium">{finding.category}: </span>
+                    {finding.detail}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {patch?.diff ? (
+              <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3">
+                {patch.diff}
+              </pre>
+            ) : run.diff ? (
+              <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3">
+                {run.diff}
+              </pre>
+            ) : null}
+            {patch?.generated_files && patch.generated_files.length > 0 ? (
+              <div className="grid gap-1">
+                <p className="font-medium">Generated files</p>
+                <ul className="space-y-1">
+                  {patch.generated_files.map((file) => (
+                    <li key={file.path} className="text-muted-foreground">
+                      {file.path}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {patch?.external_references &&
+            patch.external_references.length > 0 ? (
+              <div className="grid gap-1">
+                <p className="font-medium">External references</p>
+                <ul className="space-y-1">
+                  {patch.external_references.map((reference) => (
+                    <li key={reference.url}>
+                      <a
+                        className="text-primary underline"
+                        href={reference.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {reference.title || reference.url}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {run.disclaimer ? (
+              <p className="text-muted-foreground">{run.disclaimer}</p>
+            ) : null}
+          </div>
+        ) : null
+      ) : null}
+    </div>
+  )
+}
+
 function getChatStatusMessage(repository: RepositoryPublic | null) {
   if (!repository) {
     return "Select a repository to start a Repository Session."
@@ -643,11 +853,13 @@ function toChatMessages(history: SessionHistoryPublic[]): ChatMessage[] {
 
 async function createRepositorySession({
   repositoryId,
+  queryClient,
   setActiveSessionId,
   setChatMessages,
   setIsCreatingSession,
 }: {
   repositoryId: string
+  queryClient: ReturnType<typeof useQueryClient>
   setActiveSessionId: React.Dispatch<React.SetStateAction<string | null>>
   setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
   setIsCreatingSession: React.Dispatch<React.SetStateAction<boolean>>
@@ -670,6 +882,7 @@ async function createRepositorySession({
       repositorySessionId: sessionId,
     })
     setChatMessages(toChatMessages(history.data))
+    queryClient.invalidateQueries({ queryKey: ["sessions", repositoryId] })
   } finally {
     setIsCreatingSession(false)
   }
@@ -839,6 +1052,7 @@ async function submitDecision({
                   decision: {
                     status: "approved",
                     branch: event.branch,
+                    message: event.message ?? "",
                     diff: event.diff,
                     disclaimer: event.disclaimer,
                   },
@@ -900,6 +1114,7 @@ function isReviewResultEvent(event: { [key: string]: unknown }): event is {
 function isRunApprovedEvent(event: { [key: string]: unknown }): event is {
   coding_run_id: string
   branch: string
+  message?: string
   diff: string
   disclaimer: string
 } {

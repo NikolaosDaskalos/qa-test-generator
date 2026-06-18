@@ -161,6 +161,11 @@ export type RepositorySessionPublic = {
     updated_at: string;
 };
 
+export type RepositorySessionsPublic = {
+    data: Array<RepositorySessionPublic>;
+    count: number;
+};
+
 export type RepositoryStatus = 'pending' | 'cloning' | 'indexing' | 'ready' | 'failed';
 
 export type RepositoryUpdate = {
@@ -343,6 +348,14 @@ export type SessionsCreateRepositorySessionData = {
 };
 
 export type SessionsCreateRepositorySessionResponse = (RepositorySessionPublic);
+
+export type SessionsReadRepositorySessionsData = {
+    limit?: number;
+    repositoryId?: (string | null);
+    skip?: number;
+};
+
+export type SessionsReadRepositorySessionsResponse = (RepositorySessionsPublic);
 
 export type SessionsAskRepositoryQuestionData = {
     repositorySessionId: string;

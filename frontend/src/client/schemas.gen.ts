@@ -533,6 +533,25 @@ export const RepositorySessionPublicSchema = {
     title: 'RepositorySessionPublic'
 } as const;
 
+export const RepositorySessionsPublicSchema = {
+    properties: {
+        data: {
+            items: {
+                '$ref': '#/components/schemas/RepositorySessionPublic'
+            },
+            type: 'array',
+            title: 'Data'
+        },
+        count: {
+            type: 'integer',
+            title: 'Count'
+        }
+    },
+    type: 'object',
+    required: ['data', 'count'],
+    title: 'RepositorySessionsPublic'
+} as const;
+
 export const RepositoryStatusSchema = {
     type: 'string',
     enum: ['pending', 'cloning', 'indexing', 'ready', 'failed'],

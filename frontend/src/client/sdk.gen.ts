@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { LoginLoginAccessTokenData, LoginLoginAccessTokenResponse, LoginTestTokenResponse, LoginRecoverPasswordData, LoginRecoverPasswordResponse, LoginResetPasswordData, LoginResetPasswordResponse, LoginRecoverPasswordHtmlContentData, LoginRecoverPasswordHtmlContentResponse, PrivateCreateUserData, PrivateCreateUserResponse, RepositoriesReadRepositoriesData, RepositoriesReadRepositoriesResponse, RepositoriesCreateRepositoryData, RepositoriesCreateRepositoryResponse, RepositoriesReadRepositoryData, RepositoriesReadRepositoryResponse, RepositoriesUpdateRepositoryData, RepositoriesUpdateRepositoryResponse, RepositoriesDeleteRepositoryData, RepositoriesDeleteRepositoryResponse, SessionsCreateRepositorySessionData, SessionsCreateRepositorySessionResponse, SessionsAskRepositoryQuestionData, SessionsAskRepositoryQuestionResponse, SessionsReadRepositorySessionHistoryData, SessionsReadRepositorySessionHistoryResponse, SessionsReadCodingRunData, SessionsReadCodingRunResponse, SessionsReadCodingRunPatchData, SessionsReadCodingRunPatchResponse, UsersReadUsersData, UsersReadUsersResponse, UsersCreateUserData, UsersCreateUserResponse, UsersReadUserMeResponse, UsersDeleteUserMeResponse, UsersUpdateUserMeData, UsersUpdateUserMeResponse, UsersUpdatePasswordMeData, UsersUpdatePasswordMeResponse, UsersRegisterUserData, UsersRegisterUserResponse, UsersReadUserByIdData, UsersReadUserByIdResponse, UsersUpdateUserData, UsersUpdateUserResponse, UsersDeleteUserData, UsersDeleteUserResponse, UtilsTestEmailData, UtilsTestEmailResponse, UtilsHealthCheckResponse } from './types.gen';
+import type { LoginLoginAccessTokenData, LoginLoginAccessTokenResponse, LoginTestTokenResponse, LoginRecoverPasswordData, LoginRecoverPasswordResponse, LoginResetPasswordData, LoginResetPasswordResponse, LoginRecoverPasswordHtmlContentData, LoginRecoverPasswordHtmlContentResponse, PrivateCreateUserData, PrivateCreateUserResponse, RepositoriesReadRepositoriesData, RepositoriesReadRepositoriesResponse, RepositoriesCreateRepositoryData, RepositoriesCreateRepositoryResponse, RepositoriesReadRepositoryData, RepositoriesReadRepositoryResponse, RepositoriesUpdateRepositoryData, RepositoriesUpdateRepositoryResponse, RepositoriesDeleteRepositoryData, RepositoriesDeleteRepositoryResponse, SessionsCreateRepositorySessionData, SessionsCreateRepositorySessionResponse, SessionsReadRepositorySessionsData, SessionsReadRepositorySessionsResponse, SessionsAskRepositoryQuestionData, SessionsAskRepositoryQuestionResponse, SessionsReadRepositorySessionHistoryData, SessionsReadRepositorySessionHistoryResponse, SessionsReadCodingRunData, SessionsReadCodingRunResponse, SessionsReadCodingRunPatchData, SessionsReadCodingRunPatchResponse, UsersReadUsersData, UsersReadUsersResponse, UsersCreateUserData, UsersCreateUserResponse, UsersReadUserMeResponse, UsersDeleteUserMeResponse, UsersUpdateUserMeData, UsersUpdateUserMeResponse, UsersUpdatePasswordMeData, UsersUpdatePasswordMeResponse, UsersRegisterUserData, UsersRegisterUserResponse, UsersReadUserByIdData, UsersReadUserByIdResponse, UsersUpdateUserData, UsersUpdateUserResponse, UsersDeleteUserData, UsersDeleteUserResponse, UtilsTestEmailData, UtilsTestEmailResponse, UtilsHealthCheckResponse } from './types.gen';
 
 export class LoginService {
     /**
@@ -249,6 +249,31 @@ export class SessionsService {
             url: '/api/v1/sessions',
             body: data.requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Read Repository Sessions
+     * List the caller's Repository Sessions, optionally filtered by Repository.
+     * @param data The data for the request.
+     * @param data.repositoryId
+     * @param data.skip
+     * @param data.limit
+     * @returns RepositorySessionsPublic Successful Response
+     * @throws ApiError
+     */
+    public static readRepositorySessions(data: SessionsReadRepositorySessionsData = {}): CancelablePromise<SessionsReadRepositorySessionsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/sessions',
+            query: {
+                repository_id: data.repositoryId,
+                skip: data.skip,
+                limit: data.limit
+            },
             errors: {
                 422: 'Validation Error'
             }
