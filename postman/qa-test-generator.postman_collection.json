@@ -464,6 +464,68 @@
           "response": []
         },
         {
+          "name": "List Repository Sessions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Paginated repository-session response is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.data).to.be.an('array');",
+                  "    pm.expect(response.count).to.be.a('number');",
+                  "    response.data.forEach(function (session) {",
+                  "        pm.expect(session.id).to.be.a('string').and.not.empty;",
+                  "        pm.expect(session.owner_id).to.be.a('string').and.not.empty;",
+                  "        pm.expect(session.repository_id).to.be.a('string').and.not.empty;",
+                  "        pm.expect(session.title).to.be.a('string');",
+                  "        pm.expect(session.created_at).to.be.a('string').and.not.empty;",
+                  "        pm.expect(session.updated_at).to.be.a('string').and.not.empty;",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions?repository_id={{repositoryId}}&skip={{skip}}&limit={{limit}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions"
+              ],
+              "query": [
+                {
+                  "key": "repository_id",
+                  "value": "{{repositoryId}}",
+                  "description": "Optional. Filters sessions to a single repository; remove to list all of the caller's sessions."
+                },
+                {
+                  "key": "skip",
+                  "value": "{{skip}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "{{limit}}"
+                }
+              ]
+            },
+            "description": "Lists the authenticated user's Repository Sessions, optionally filtered by `repository_id`. Returns a paginated `data`/`count` payload ordered for the caller."
+          },
+          "response": []
+        },
+        {
           "name": "Ask Repository Question",
           "event": [
             {
@@ -824,10 +886,13 @@
                   "    const response = pm.response.json();",
                   "    pm.expect(response.data).to.be.an('array');",
                   "    response.data.forEach(function (message, index) {",
+                  "        pm.expect(message.id).to.be.a('string').and.not.empty;",
                   "        pm.expect(message.session_id).to.eql(pm.variables.get('repositorySessionId'));",
                   "        pm.expect(message.role).to.be.oneOf(['user', 'assistant']);",
                   "        pm.expect(message.content).to.be.a('string');",
+                  "        pm.expect(message.citations).to.be.an('array');",
                   "        pm.expect(message.position).to.be.a('number');",
+                  "        pm.expect(message.created_at).to.be.a('string').and.not.empty;",
                   "        if (index > 0) {",
                   "            pm.expect(message.position).to.be.above(response.data[index - 1].position);",
                   "        }",
