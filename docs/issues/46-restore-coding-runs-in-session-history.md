@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Type: AFK
-User stories: (post-PRD workspace UX — durable Test-Generation Task chronology)
+User stories: 55, 102-103
 
 ## What to build
 

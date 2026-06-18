@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Type: AFK
-User stories: (post-PRD workspace UX — complete conversation display with bounded AI context)
+User stories: 21-22, 25, 98-101
 
 ## What to build
 

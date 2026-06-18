@@ -15,6 +15,7 @@ import { Route as RecoverPasswordRouteImport } from './routes/recover-password'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as LayoutIndexRouteImport } from './routes/_layout/index'
+import { Route as LayoutRepositoriesNewRouteImport } from './routes/_layout/repositories/new'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -45,6 +46,11 @@ const LayoutIndexRoute = LayoutIndexRouteImport.update({
   path: '/',
   getParentRoute: () => LayoutRoute,
 } as any)
+const LayoutRepositoriesNewRoute = LayoutRepositoriesNewRouteImport.update({
+  id: '/repositories/new',
+  path: '/repositories/new',
+  getParentRoute: () => LayoutRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof LayoutIndexRoute
@@ -52,6 +58,7 @@ export interface FileRoutesByFullPath {
   '/recover-password': typeof RecoverPasswordRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/repositories/new': typeof LayoutRepositoriesNewRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/': typeof LayoutIndexRoute
+  '/repositories/new': typeof LayoutRepositoriesNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/_layout/': typeof LayoutIndexRoute
+  '/_layout/repositories/new': typeof LayoutRepositoriesNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -77,8 +86,15 @@ export interface FileRouteTypes {
     | '/recover-password'
     | '/reset-password'
     | '/signup'
+    | '/repositories/new'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/recover-password' | '/reset-password' | '/signup' | '/'
+  to:
+    | '/login'
+    | '/recover-password'
+    | '/reset-password'
+    | '/signup'
+    | '/'
+    | '/repositories/new'
   id:
     | '__root__'
     | '/_layout'
@@ -87,6 +103,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/_layout/'
+    | '/_layout/repositories/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -141,15 +158,24 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutIndexRouteImport
       parentRoute: typeof LayoutRoute
     }
+    '/_layout/repositories/new': {
+      id: '/_layout/repositories/new'
+      path: '/repositories/new'
+      fullPath: '/repositories/new'
+      preLoaderRoute: typeof LayoutRepositoriesNewRouteImport
+      parentRoute: typeof LayoutRoute
+    }
   }
 }
 
 interface LayoutRouteChildren {
   LayoutIndexRoute: typeof LayoutIndexRoute
+  LayoutRepositoriesNewRoute: typeof LayoutRepositoriesNewRoute
 }
 
 const LayoutRouteChildren: LayoutRouteChildren = {
   LayoutIndexRoute: LayoutIndexRoute,
+  LayoutRepositoriesNewRoute: LayoutRepositoriesNewRoute,
 }
 
 const LayoutRouteWithChildren =

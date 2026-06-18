@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { createFileRoute } from "@tanstack/react-router"
-import { type FormEvent, useEffect, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { createFileRoute, Link } from "@tanstack/react-router"
+import { Plus } from "lucide-react"
+import { useEffect, useState } from "react"
 import type {
   Citation,
   HumanDecisionRequest,
@@ -12,12 +13,12 @@ import type {
 import { RepositoriesService, SessionsService } from "@/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   askRepositoryQuestionStream,
   decideReviewedPatchStream,
 } from "@/lib/agentStream"
+import { getErrorMessage } from "@/lib/apiError"
 
 type ChatMessage = {
   id: string
@@ -61,6 +62,9 @@ type RunDecisionView =
 
 export const Route = createFileRoute("/_layout/")({
   component: CopilotShell,
+  validateSearch: (search: Record<string, unknown>): { selected?: string } => ({
+    selected: typeof search.selected === "string" ? search.selected : undefined,
+  }),
   head: () => ({
     meta: [
       {
@@ -72,6 +76,7 @@ export const Route = createFileRoute("/_layout/")({
 
 function CopilotShell() {
   const queryClient = useQueryClient()
+  const { selected: selectedRepositoryId } = Route.useSearch()
   const [activeRepository, setActiveRepository] =
     useState<RepositoryPublic | null>(null)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -107,29 +112,20 @@ function CopilotShell() {
       return 1000
     },
   })
-  const createRepositoryMutation = useMutation({
-    mutationFn: RepositoriesService.createRepository,
-    onSuccess: (repository) => {
-      queryClient.setQueryData(
-        ["repositories"],
-        (current: { data: RepositoryPublic[]; count: number } | undefined) => {
-          const currentRepositories = current?.data ?? []
-          const nextRepositories = [
-            repository,
-            ...currentRepositories.filter((item) => item.id !== repository.id),
-          ]
-
-          return {
-            data: nextRepositories,
-            count: current?.count ? current.count + 1 : nextRepositories.length,
-          }
-        },
-      )
-      setActiveRepository(repository)
-    },
-  })
   const repositories = repositoriesQuery.data?.data ?? []
   const isRepositoryReady = activeRepository?.status === "ready"
+
+  useEffect(() => {
+    if (!selectedRepositoryId) {
+      return
+    }
+    const requested = repositories.find(
+      (repository) => repository.id === selectedRepositoryId,
+    )
+    if (requested) {
+      setActiveRepository(requested)
+    }
+  }, [selectedRepositoryId, repositories])
   const sessionsQuery = useQuery({
     queryKey: ["sessions", activeRepository?.id],
     queryFn: () =>
@@ -207,6 +203,10 @@ function CopilotShell() {
     })
   }, [activeRepository, queryClient])
 
+  if (!repositoriesQuery.isLoading && repositories.length === 0) {
+    return <RepositoryEmptyState />
+  }
+
   return (
     <div className="flex min-h-[calc(100vh-12rem)] flex-col gap-6">
       <header className="flex flex-col gap-2">
@@ -218,13 +218,25 @@ function CopilotShell() {
           aria-label="Repository"
           className="flex min-h-72 flex-col gap-4 rounded-lg border bg-background p-4"
         >
-          <div>
-            <h2 className="text-base font-semibold">Repository</h2>
-            <p className="text-sm text-muted-foreground">
-              {activeRepository
-                ? `${activeRepository.name} selected`
-                : "No repository selected"}
-            </p>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold">Repositories</h2>
+              <p className="text-sm text-muted-foreground">
+                {activeRepository
+                  ? `${activeRepository.name} selected`
+                  : "No repository selected"}
+              </p>
+            </div>
+            <Button
+              asChild
+              variant="outline"
+              size="icon"
+              className="size-8 shrink-0"
+            >
+              <Link to="/repositories/new" aria-label="Add repository">
+                <Plus className="size-4" />
+              </Link>
+            </Button>
           </div>
           <RepositorySelector
             activeRepository={activeRepository}
@@ -243,15 +255,6 @@ function CopilotShell() {
               onSelectSession={handleSelectSession}
             />
           ) : null}
-          <RepositoryCreationForm
-            error={getErrorMessage(createRepositoryMutation.error)}
-            isSubmitting={createRepositoryMutation.isPending}
-            onCreate={(values) =>
-              createRepositoryMutation.mutate({
-                requestBody: values,
-              })
-            }
-          />
         </section>
 
         <section
@@ -395,70 +398,22 @@ function CopilotShell() {
   )
 }
 
-function RepositoryCreationForm({
-  error,
-  isSubmitting,
-  onCreate,
-}: {
-  error: string | null
-  isSubmitting: boolean
-  onCreate: (values: {
-    repository_url: string
-    token: string
-    token_expiration_days: number
-  }) => void
-}) {
-  const [repositoryUrl, setRepositoryUrl] = useState("")
-  const [token, setToken] = useState("")
-  const [tokenExpirationDays, setTokenExpirationDays] = useState("30")
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    onCreate({
-      repository_url: repositoryUrl,
-      token,
-      token_expiration_days: Number(tokenExpirationDays),
-    })
-  }
-
+function RepositoryEmptyState() {
   return (
-    <form className="mt-auto flex flex-col gap-3" onSubmit={handleSubmit}>
+    <div className="flex min-h-[calc(100vh-12rem)] flex-col items-center justify-center gap-4 text-center">
       <div className="grid gap-2">
-        <Label htmlFor="repository-url">GitHub repository URL</Label>
-        <Input
-          id="repository-url"
-          type="url"
-          value={repositoryUrl}
-          onChange={(event) => setRepositoryUrl(event.target.value)}
-          required
-        />
+        <h1 className="text-2xl font-bold tracking-tight">
+          Connect a repository to get started
+        </h1>
+        <p className="max-w-md text-sm text-muted-foreground">
+          Register a GitHub repository to ask grounded questions and generate
+          tests for its code.
+        </p>
       </div>
-      <div className="grid gap-2">
-        <Label htmlFor="github-token">GitHub token</Label>
-        <Input
-          id="github-token"
-          type="password"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-          required
-        />
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor="token-expiration-days">Token expiration in days</Label>
-        <Input
-          id="token-expiration-days"
-          type="number"
-          min="1"
-          value={tokenExpirationDays}
-          onChange={(event) => setTokenExpirationDays(event.target.value)}
-          required
-        />
-      </div>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      <Button type="submit" disabled={isSubmitting}>
-        {isSubmitting ? "Registering..." : "Register repository"}
+      <Button asChild>
+        <Link to="/repositories/new">Add your code repository</Link>
       </Button>
-    </form>
+    </div>
   )
 }
 
@@ -1163,44 +1118,6 @@ function isReviewFinding(value: unknown): value is ReviewFinding {
     typeof value.category === "string" &&
     "detail" in value &&
     typeof value.detail === "string"
-  )
-}
-
-function getErrorMessage(error: unknown) {
-  if (!error) {
-    return null
-  }
-
-  if (
-    typeof error === "object" &&
-    "body" in error &&
-    hasValidationDetails(error.body)
-  ) {
-    return error.body.detail.map((detail) => detail.msg).join(" ")
-  }
-
-  if (error instanceof Error) {
-    return error.message
-  }
-
-  return "Repository registration failed."
-}
-
-function hasValidationDetails(
-  body: unknown,
-): body is { detail: Array<{ msg: string }> } {
-  return (
-    typeof body === "object" &&
-    body !== null &&
-    "detail" in body &&
-    Array.isArray(body.detail) &&
-    body.detail.every(
-      (detail) =>
-        typeof detail === "object" &&
-        detail !== null &&
-        "msg" in detail &&
-        typeof detail.msg === "string",
-    )
   )
 }
 

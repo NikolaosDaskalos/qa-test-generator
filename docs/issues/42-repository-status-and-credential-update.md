@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Type: AFK
-User stories: (post-PRD workspace UX — Repository processing visibility and credential maintenance)
+User stories: 7-8, 82-84, 94
 
 ## What to build
 

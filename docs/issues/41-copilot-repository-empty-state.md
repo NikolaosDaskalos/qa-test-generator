@@ -1,8 +1,8 @@
 # Replace the template landing screen with the Copilot Repository empty state
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
-User stories: (post-PRD workspace UX — Repository onboarding and product shell)
+User stories: 75-81, 104
 
 ## What to build
 
@@ -14,14 +14,14 @@ When Repositories already exist, expose a compact add action beside the “Repos
 
 ## Acceptance criteria
 
-- [ ] The authenticated shell is branded “AI Codebase Copilot” and no longer shows Dashboard, Items, FastAPI template branding, template social links, or the generic footer.
-- [ ] Appearance and user profile controls remain at the bottom of the collapsible left panel.
-- [ ] A user with no Repositories sees a central “Add your code repository” empty-state action rather than an enabled chat or an inline registration form.
-- [ ] Repository registration has its own authenticated route, keeps the left panel visible, and provides Back/Cancel navigation.
-- [ ] The registration form requires a GitHub repository URL and Repository Credential; token expiration remains an optional positive number of days.
-- [ ] Successful registration returns to the workspace with the newly created Repository selected and its current status visible.
-- [ ] A user with existing Repositories can reach the same registration screen from an add action beside the Repositories heading.
-- [ ] Empty-state, navigation, validation-error, and successful-registration behavior are covered by frontend tests.
+- [x] The authenticated shell is branded “AI Codebase Copilot” and no longer shows Dashboard, Items, FastAPI template branding, template social links, or the generic footer.
+- [x] Appearance and user profile controls remain at the bottom of the collapsible left panel.
+- [x] A user with no Repositories sees a central “Add your code repository” empty-state action rather than an enabled chat or an inline registration form.
+- [x] Repository registration has its own authenticated route, keeps the left panel visible, and provides Back/Cancel navigation.
+- [x] The registration form requires a GitHub repository URL and Repository Credential; token expiration remains an optional positive number of days.
+- [x] Successful registration returns to the workspace with the newly created Repository selected and its current status visible.
+- [x] A user with existing Repositories can reach the same registration screen from an add action beside the Repositories heading.
+- [x] Empty-state, navigation, validation-error, and successful-registration behavior are covered by frontend tests.
 
 ## Blocked by
 
