@@ -11,9 +11,9 @@ tested), which are kept apart on the shared state.
 import logging
 from typing import Literal
 
-from langgraph.graph import END
-from langgraph.types import Command, interrupt
+from langgraph.types import interrupt
 
+from app.agent.nodes.failures import fail_state
 from app.core.config import settings
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 from app.services.coding_runs.evidence_partitioner import EvidencePartitioner, EvidencePartitionRequest
@@ -34,10 +34,6 @@ REVISION_FAILED = "The test generator could not revise its proposal."
 REVIEW_FAILED = "The patch reviewer could not complete its assessment."
 # The prompt the human-in-the-loop interrupt surfaces while awaiting the owner's decision.
 AWAITING_DECISION_MESSAGE = "Review the generated Test Patch and approve or reject it."
-
-
-def _fail_with(failure: RunFailure, trace: str) -> Command:
-    return Command(update={"failure": failure, "trace": [trace]}, goto="fail_run")
 
 
 def build_gather_evidence_node(retriever, recorder):
@@ -69,7 +65,7 @@ def build_gather_evidence_node(retriever, recorder):
 
 def _generating_failure(reason: str) -> dict:
     """Plain generating-stage failure state for the merged node's exception arms."""
-    return {"failure": RunFailure(failed_stage=CodingRunStage.generating, reason=reason), "trace": ["generate_tests"]}
+    return fail_state(RunFailure(failed_stage=CodingRunStage.generating, reason=reason), trace="generate_tests")
 
 
 def build_generate_tests_node(generator, workspace_factory, recorder):
@@ -149,7 +145,7 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
             )
         )
         if outcome.failure is not None:
-            return {"failure": outcome.failure, "trace": ["generate_tests"]}
+            return fail_state(outcome.failure, trace="generate_tests")
         patch_result = outcome.patch_result
         return {
             "generation_branch": generation_branch,
@@ -238,7 +234,7 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None,
             )
         except Exception:
             logger.exception("Patch review failed")
-            return {"failure": RunFailure(failed_stage=CodingRunStage.reviewing, reason=REVIEW_FAILED), "trace": ["review_patch"]}
+            return fail_state(RunFailure(failed_stage=CodingRunStage.reviewing, reason=REVIEW_FAILED), trace="review_patch")
         # The reviewer only scores; the backend owns the pass bar.
         score = review.score
         findings = list(review.findings)
@@ -350,9 +346,11 @@ def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
 
     The node unpacks state, builds the publisher and workspace, delegates the
     commit → push → record-approved → restore-checkout orchestration to the deep
-    ``DecisionFinalizer``, then emits the returned terminal and folds it onto state. A
-    ``git_commit`` / ``git_push`` Run Failure short-circuits the run; a ``RunApproved``
-    ends it. Emission stays at the node; the finalizer holds no wire knowledge.
+    ``DecisionFinalizer``, and returns plain state — never a ``Command``. A
+    ``git_commit`` / ``git_push`` Run Failure is folded onto state via ``fail_state``
+    so the post-approval router routes it to the single ``fail_run`` sink, which owns
+    its terminal emission; a successful ``RunApproved`` is emitted here and routed to
+    the run's end. The finalizer holds no wire knowledge.
     """
 
     finalizer = DecisionFinalizer(recorder=recorder)
@@ -366,9 +364,22 @@ def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
             diff=state.get("diff") or "",
             indexed_commit_sha=state.get("indexed_commit_sha"),
         )
-        emit(outcome)
         if isinstance(outcome, RunFailure):
-            return _fail_with(outcome, "approve_patch")
-        return Command(update={"approval_result": outcome, "trace": ["approve_patch"]}, goto=END)
+            return fail_state(outcome, trace="approve_patch")
+        emit(outcome)
+        return {"approval_result": outcome, "trace": ["approve_patch"]}
 
     return approve_patch
+
+
+def build_approval_router():
+    """Build the post-approval router that drives the conditional edge off ``approve_patch``.
+
+    Reading only the state the node wrote, a commit/push Run Failure routes to the
+    failure sink while a finalized approval routes to the run's end.
+    """
+
+    def route_after_approval(state) -> Literal["approved", "failed"]:
+        return "failed" if state.get("failure") is not None else "approved"
+
+    return route_after_approval

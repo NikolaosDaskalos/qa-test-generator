@@ -8,6 +8,7 @@ out-of-scope (or uncommitted) request is rejected here as a terminal
 
 from pydantic import BaseModel, Field
 
+from app.agent.nodes.failures import fail_state
 from app.enums.coding_run import CodingRunStage
 from app.schemas.agent_stream import RunFailure, RunStarted, Stage
 from app.schemas.research_intent import ResearchIntent
@@ -50,7 +51,7 @@ def build_plan_node(planner_llm, recorder):
         result = structured.invoke(state["question"])
         if result is None or not result.in_scope:
             reason = (result.reason if result and result.reason else None) or DEFAULT_REJECTION_REASON
-            return {"coding_run_id": coding_run_id, "failure": RunFailure(failed_stage=CodingRunStage.planning, reason=reason), "trace": ["plan"]}
+            return {"coding_run_id": coding_run_id, **fail_state(RunFailure(failed_stage=CodingRunStage.planning, reason=reason), trace="plan")}
         return {"coding_run_id": coding_run_id, "research_intents": result.intents, "trace": ["plan"]}
 
     return plan

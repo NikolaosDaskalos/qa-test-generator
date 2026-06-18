@@ -1,6 +1,6 @@
 # Unify error handling and remove the last Command(goto)
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 ADR: [0002 - Intent-routed unified LangGraph](../adr/0002-intent-routed-unified-langgraph.md)
 
@@ -27,12 +27,12 @@ in any step flow through one helper to one sink.
 
 ## Acceptance criteria
 
-- [ ] A single failure helper builds the user-safe `RunFailure` state and is used by every node's exception handler.
-- [ ] No node in the graph returns a `Command(goto=...)`; the dead `_fail_with`/`_continue_to` helpers are removed.
-- [ ] The approval node returns plain state and is routed by a `Literal`-returning router to either the failure sink or the run's end.
-- [ ] `fail_run` remains the single sink that records, stamps, and emits the failure, reached via `"failed"` literals from routers that check state first.
-- [ ] A commit/push failure during approval routes to the failure sink and ends the run as a failure; a successful approval ends the run approved.
-- [ ] Tests covering each stage's failure path and the approval success/failure paths pass.
+- [x] A single failure helper builds the user-safe `RunFailure` state and is used by every node's exception handler.
+- [x] No node in the graph returns a `Command(goto=...)`; the dead `_fail_with`/`_continue_to` helpers are removed.
+- [x] The approval node returns plain state and is routed by a `Literal`-returning router to either the failure sink or the run's end.
+- [x] `fail_run` remains the single sink that records, stamps, and emits the failure, reached via `"failed"` literals from routers that check state first.
+- [x] A commit/push failure during approval routes to the failure sink and ends the run as a failure; a successful approval ends the run approved.
+- [x] Tests covering each stage's failure path and the approval success/failure paths pass.
 
 ## Blocked by
 

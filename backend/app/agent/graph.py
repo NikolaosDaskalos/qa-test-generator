@@ -25,6 +25,7 @@ from app.agent.nodes.repository_question import build_generate_node, build_retri
 from app.services.coding_runs.recorder import NullRunRecorder
 from app.streaming.agent_stream import emit
 from app.agent.nodes.test_generation import (
+    build_approval_router,
     build_approve_patch_node,
     build_await_decision_node,
     build_discard_patch_node,
@@ -176,7 +177,7 @@ def build_graph(
     graph.add_node("generate_tests", build_generate_tests_node(generator, workspaces, recorder))
     graph.add_node("review_patch", build_review_patch_node(reviewer, recorder, max_revision_attempts=max_revision_attempts))
     graph.add_node("await_decision", build_await_decision_node())
-    graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder), destinations=(END, "fail_run"))
+    graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("retrieve", build_retrieve_node(retriever))
@@ -191,6 +192,7 @@ def build_graph(
         "review_patch", build_review_router(max_revision_attempts), {"revise": "generate_tests", "escalate": "await_decision", "failed": "fail_run"}
     )
     graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
+    graph.add_conditional_edges("approve_patch", build_approval_router(), {"approved": END, "failed": "fail_run"})
     graph.add_edge("discard_patch", END)
     graph.add_edge("fail_run", END)
     graph.add_edge("retrieve", "generate")

@@ -1069,6 +1069,40 @@ def test_approval_push_failure_is_a_git_push_stage_failure(tmp_path, caplog) -> 
     assert "secret-token" not in caplog.text
 
 
+def test_approval_failure_stream_emits_one_stamped_run_failure(tmp_path) -> None:
+    """An approval git failure rides the stream as the single stamped RunFailure the sink owns.
+
+    The approval node returns plain failure state and leaves the terminal emission to
+    ``fail_run``, so the stream carries exactly one RunFailure — stamped with the run —
+    never a duplicate unstamped one from the approval node itself.
+    """
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    publisher = FakePublisher(fail_on="commit")
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    events = [chunk for _mode, chunk in graph.stream(Command(resume={"approved": True}), config=config, stream_mode=["custom"])]
+
+    failures = [event for event in events if isinstance(event, RunFailure)]
+    assert len(failures) == 1
+    assert failures[0].failed_stage == "git_commit"
+    assert failures[0].coding_run_id == recorder.run_id
+
+
 def test_rejected_first_review_records_its_findings_before_revising(tmp_path) -> None:
     """A first rejection persists its findings as a recorded review and routes onward to a Revision Attempt, not a failure."""
     (tmp_path / "tests").mkdir()
