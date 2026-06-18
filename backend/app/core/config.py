@@ -151,7 +151,7 @@ class Settings(BaseSettings):
     HF_TOKEN: str
 
     LLM_MODEL: str = "gpt-4o-mini"
-    MAX_TOKENS: int = 5_000
+    MAX_TOKENS: int = 10_000
     TEMPERATURE: float = 0.0
 
     # LangSmith tracing. The whole agent graph runs on LangChain/LangGraph runnables,
@@ -188,7 +188,7 @@ class Settings(BaseSettings):
     CHECKPOINTER_POOL_MAX_SIZE: int = Field(default=10, ge=1)
 
     SESSION_HISTORY_LIMIT: int = 10
-    RECURSION_LIMIT: int = 3
+    RECURSION_LIMIT: int = 7
 
     # The Patch Review pass bar: a patch is accepted when its reviewer score (0–10)
     # meets this threshold. The backend owns this decision; the reviewer only scores.
