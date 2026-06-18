@@ -214,12 +214,14 @@ class Settings(BaseSettings):
         disabled or no API key is set we leave the environment untouched so a stray
         ``LANGSMITH_TRACING`` never silently turns tracing on without credentials.
         """
-        if not (self.LANGSMITH_TRACING and self.LANGSMITH_API_KEY):
-            return
-        os.environ["LANGSMITH_TRACING"] = "true"
-        os.environ["LANGSMITH_API_KEY"] = self.LANGSMITH_API_KEY
-        os.environ["LANGSMITH_PROJECT"] = self.LANGSMITH_PROJECT
-        os.environ["LANGSMITH_ENDPOINT"] = self.LANGSMITH_ENDPOINT
+        if self.LANGSMITH_TRACING and self.LANGSMITH_API_KEY:
+            os.environ["LANGSMITH_TRACING"] = "true"
+            os.environ["LANGSMITH_API_KEY"] = self.LANGSMITH_API_KEY
+            os.environ["LANGSMITH_PROJECT"] = self.LANGSMITH_PROJECT
+            os.environ["LANGSMITH_ENDPOINT"] = self.LANGSMITH_ENDPOINT
+
+        if self.HF_TOKEN:
+            os.environ["HF_TOKEN"] = self.HF_TOKEN
 
     @classmethod
     def settings_customise_sources(
