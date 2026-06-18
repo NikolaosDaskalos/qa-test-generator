@@ -1,6 +1,6 @@
 # Merge the generating-stage nodes into one generate_tests node
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 Revises: [34 - Collapse to a single generator agent](34-single-generator-agent.md)
 ADR: [0002 - Intent-routed unified LangGraph](../adr/0002-intent-routed-unified-langgraph.md)
@@ -28,14 +28,14 @@ validation/build).
 
 ## Acceptance criteria
 
-- [ ] The `prepare_branch`, `revise_tests`, and `build_patch` nodes are removed; their work lives inside `generate_tests`.
-- [ ] `generate_tests` prepares the branch only on the first pass and skips it on a revision pass, selecting initial generation vs. revision via the Revision Budget signal.
-- [ ] A revision pass spends one unit of the Revision Budget and carries the prior proposal, reviewed diff, and findings into the generator.
-- [ ] The node validates, writes, and derives the canonical Test Patch on both passes.
-- [ ] `generate_tests` returns plain state; a `Literal`-returning router drives the edge to review on success and to the failure sink on any generating-stage failure.
-- [ ] The post-review revision arm targets `generate_tests`.
-- [ ] The correct stage markers (generating vs. revising, and re-reviewing downstream) are emitted across both passes.
-- [ ] Tests covering initial generation, a revision pass, branch-preparation failure, generation/revision failure, and patch-build failure pass.
+- [x] The `prepare_branch`, `revise_tests`, and `build_patch` nodes are removed; their work lives inside `generate_tests`.
+- [x] `generate_tests` prepares the branch only on the first pass and skips it on a revision pass, selecting initial generation vs. revision via the Revision Budget signal.
+- [x] A revision pass spends one unit of the Revision Budget and carries the prior proposal, reviewed diff, and findings into the generator.
+- [x] The node validates, writes, and derives the canonical Test Patch on both passes.
+- [x] `generate_tests` returns plain state; a `Literal`-returning router drives the edge to review on success and to the failure sink on any generating-stage failure.
+- [x] The post-review revision arm targets `generate_tests`.
+- [x] The correct stage markers (generating vs. revising, and re-reviewing downstream) are emitted across both passes.
+- [x] Tests covering initial generation, a revision pass, branch-preparation failure, generation/revision failure, and patch-build failure pass.
 
 ## Blocked by
 
