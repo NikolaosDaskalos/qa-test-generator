@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { Plus } from "lucide-react"
 import { type FormEvent, useEffect, useState } from "react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import type {
   Citation,
   HumanDecisionRequest,
@@ -439,11 +441,15 @@ function CopilotShell() {
                     key={message.id}
                     className={
                       message.role === "user"
-                        ? "self-end rounded-md bg-primary px-3 py-2 text-primary-foreground"
-                        : "max-w-3xl"
+                        ? "max-w-[80%] self-end rounded-2xl bg-primary px-4 py-2 text-primary-foreground"
+                        : "max-w-3xl self-start rounded-2xl border bg-muted px-4 py-3"
                     }
                   >
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    {message.role === "assistant" ? (
+                      <MarkdownContent content={message.content} />
+                    ) : (
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                    )}
                     {message.codingRunId && activeSessionId ? (
                       <RunDetails
                         repositorySessionId={activeSessionId}
@@ -525,6 +531,12 @@ function CopilotShell() {
                 placeholder="Ask about the selected repository"
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault()
+                    event.currentTarget.form?.requestSubmit()
+                  }
+                }}
               />
               <Button
                 type="submit"
@@ -968,6 +980,14 @@ function RunDecisionSummary({ decision }: { decision: RunDecisionView }) {
         </>
       )}
       <p className="text-xs text-muted-foreground">{decision.disclaimer}</p>
+    </div>
+  )
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="space-y-3 text-sm leading-relaxed [&_a]:text-primary [&_a]:underline [&_code]:rounded [&_code]:bg-muted-foreground/15 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:my-1 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:bg-background [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:font-semibold [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   )
 }

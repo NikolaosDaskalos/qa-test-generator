@@ -72,8 +72,8 @@ export interface FileRoutesByTo {
   '/recover-password': typeof RecoverPasswordRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
-  '/': typeof LayoutIndexRoute
   '/settings': typeof LayoutSettingsRoute
+  '/': typeof LayoutIndexRoute
   '/repositories/new': typeof LayoutRepositoriesNewRoute
 }
 export interface FileRoutesById {
@@ -83,8 +83,8 @@ export interface FileRoutesById {
   '/recover-password': typeof RecoverPasswordRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
-  '/_layout/': typeof LayoutIndexRoute
   '/_layout/settings': typeof LayoutSettingsRoute
+  '/_layout/': typeof LayoutIndexRoute
   '/_layout/repositories/new': typeof LayoutRepositoriesNewRoute
 }
 export interface FileRouteTypes {
@@ -103,8 +103,8 @@ export interface FileRouteTypes {
     | '/recover-password'
     | '/reset-password'
     | '/signup'
-    | '/'
     | '/settings'
+    | '/'
     | '/repositories/new'
   id:
     | '__root__'
@@ -113,8 +113,8 @@ export interface FileRouteTypes {
     | '/recover-password'
     | '/reset-password'
     | '/signup'
-    | '/_layout/'
     | '/_layout/settings'
+    | '/_layout/'
     | '/_layout/repositories/new'
   fileRoutesById: FileRoutesById
 }
@@ -188,14 +188,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface LayoutRouteChildren {
-  LayoutIndexRoute: typeof LayoutIndexRoute
   LayoutSettingsRoute: typeof LayoutSettingsRoute
+  LayoutIndexRoute: typeof LayoutIndexRoute
   LayoutRepositoriesNewRoute: typeof LayoutRepositoriesNewRoute
 }
 
 const LayoutRouteChildren: LayoutRouteChildren = {
-  LayoutIndexRoute: LayoutIndexRoute,
   LayoutSettingsRoute: LayoutSettingsRoute,
+  LayoutIndexRoute: LayoutIndexRoute,
   LayoutRepositoriesNewRoute: LayoutRepositoriesNewRoute,
 }
 
