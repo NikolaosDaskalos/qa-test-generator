@@ -1,5 +1,6 @@
 """Define application settings and environment-value normalization."""
 
+import os
 import secrets
 import warnings
 from base64 import urlsafe_b64encode
@@ -153,6 +154,15 @@ class Settings(BaseSettings):
     MAX_TOKENS: int = 5_000
     TEMPERATURE: float = 0.0
 
+    # LangSmith tracing. The whole agent graph runs on LangChain/LangGraph runnables,
+    # which auto-export traces to LangSmith when these are present in ``os.environ``.
+    # ``model_post_init`` mirrors them out of pydantic settings into the process
+    # environment, so enabling tracing is purely a matter of setting these here.
+    LANGSMITH_TRACING: bool = False
+    LANGSMITH_API_KEY: str | None = None
+    LANGSMITH_PROJECT: str = "qa-test-generator"
+    LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
+
     EMBEDDING_MODEL: str = "voyage-code-3"
     EMBEDDING_MODEL_TOKENIZER: str = "voyageai/voyage-code-3"
     EMBEDDING_DIMENSIONS: Literal[256, 512, 1024, 2048] = 1024
@@ -192,8 +202,24 @@ class Settings(BaseSettings):
     REPO_PATH: Path = Field(default_factory=lambda: PROJECT_PATH / ".tmp/repositories")
 
     def model_post_init(self, __context) -> None:
-        """Create the local repository storage directory after validation."""
+        """Create the local repository storage directory and wire LangSmith tracing."""
         self.REPO_PATH.mkdir(parents=True, exist_ok=True)
+        self._configure_langsmith()
+
+    def _configure_langsmith(self) -> None:
+        """Mirror LangSmith settings into ``os.environ`` for LangChain auto-tracing.
+
+        LangChain/LangGraph read tracing config straight from the process environment,
+        but pydantic loads the ``.env`` file without exporting it there. When tracing is
+        disabled or no API key is set we leave the environment untouched so a stray
+        ``LANGSMITH_TRACING`` never silently turns tracing on without credentials.
+        """
+        if not (self.LANGSMITH_TRACING and self.LANGSMITH_API_KEY):
+            return
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = self.LANGSMITH_API_KEY
+        os.environ["LANGSMITH_PROJECT"] = self.LANGSMITH_PROJECT
+        os.environ["LANGSMITH_ENDPOINT"] = self.LANGSMITH_ENDPOINT
 
     @classmethod
     def settings_customise_sources(
