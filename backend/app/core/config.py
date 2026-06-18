@@ -151,7 +151,12 @@ class Settings(BaseSettings):
     HF_TOKEN: str
 
     LLM_MODEL: str = "gpt-4o-mini"
-    MAX_TOKENS: int = 10_000
+    LLM_MODEL_STRONGEST: str = "claude-haiku-4-5"
+    LLM_MODEL_STRONG: str = "gpt-4o"
+
+    LLM_MAX_TOKENS: int = 2000
+    STRONG_LLM_MAX_TOKENS: int = 7000
+    STRONGEST_LLM_MAX_TOKENS: int = 7000
     TEMPERATURE: float = 0.0
 
     # LangSmith tracing. The whole agent graph runs on LangChain/LangGraph runnables,

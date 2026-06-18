@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from langchain_cohere import CohereRerank
+from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr, ValidationError
 from sqlmodel import Session
@@ -97,7 +98,7 @@ CodingRunStoreDep = Annotated[CodingRunStore, Depends(get_coding_run_store)]
 
 
 def get_repository_session_service(
-    session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep, coding_run_store: CodingRunStoreDep
+        session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep, coding_run_store: CodingRunStoreDep
 ) -> RepositorySessionService:
     return RepositorySessionService(session_store, repository_store, coding_run_store)
 
@@ -146,24 +147,49 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
     return current_user
 
 
-def get_openai_llm() -> ChatOpenAI:
-    """Build the configured streaming chat model."""
+def _build_chat_model(model: str, max_tokens: int) -> ChatOpenAI:
+    """Build a streaming chat model for the given OpenAI model id."""
     return ChatOpenAI(
-        model=settings.LLM_MODEL,
+        model=model,
         temperature=settings.TEMPERATURE,
-        max_tokens=settings.MAX_TOKENS,
+        max_tokens=max_tokens,
         streaming=True,
         api_key=settings.OPENAI_API_KEY,
     )
 
 
+def get_openai_llm() -> ChatOpenAI:
+    """Build the default streaming chat model (gpt-4o-mini)."""
+    return _build_chat_model(settings.LLM_MODEL, settings.LLM_MAX_TOKENS)
+
+
+def get_openai_llm_strong() -> ChatOpenAI:
+    """Build the strong streaming chat model (gpt-4o)."""
+    return _build_chat_model(settings.LLM_MODEL_STRONG, settings.STRONG_LLM_MAX_TOKENS)
+
+
+def get_anthropic_llm() -> ChatAnthropic:
+    """Build the strongest streaming chat model (Claude Haiku 4.5, via Anthropic)."""
+    return ChatAnthropic(
+        model_name=settings.LLM_MODEL_STRONGEST,
+        temperature=settings.TEMPERATURE,
+        max_tokens_to_sample=settings.STRONGEST_LLM_MAX_TOKENS,
+        streaming=True,
+        api_key=settings.ANTHROPIC_API_KEY,
+        timeout=None,
+        stop=None,
+    )
+
+
 ChatOpenAIDep = Annotated[ChatOpenAI, Depends(get_openai_llm)]
+ChatOpenAIStrongDep = Annotated[ChatOpenAI, Depends(get_openai_llm_strong)]
+ChatAnthropicStrongestDep = Annotated[ChatAnthropic, Depends(get_anthropic_llm)]
 
 
 def get_document_retriever(
-    current_user: CurrentUser,
-    weaviate_resources: WeaviateResourcesDep,
-    source_document_store: SourceDocumentStoreDep,
+        current_user: CurrentUser,
+        weaviate_resources: WeaviateResourcesDep,
+        source_document_store: SourceDocumentStoreDep,
 ) -> DocumentRetriever:
     """Build the authenticated user's repository-scoped retriever."""
     reranker = CohereRerank(
@@ -178,11 +204,13 @@ DocumentRetrieverDep = Annotated[DocumentRetriever, Depends(get_document_retriev
 
 
 def get_session_graph(
-    request: Request,
-    chat_model: ChatOpenAIDep,
-    document_retriever: DocumentRetrieverDep,
-    coding_run_store: CodingRunStoreDep,
-    repository_store: RepositoryStoreDep,
+        request: Request,
+        chat_model: ChatOpenAIDep,
+        strong_chat_model: ChatOpenAIStrongDep,
+        strongest_chat_model: ChatAnthropicStrongestDep,
+        document_retriever: DocumentRetrieverDep,
+        coding_run_store: CodingRunStoreDep,
+        repository_store: RepositoryStoreDep,
 ):
     """Compile the unified intent-routed graph for one request.
 
@@ -197,8 +225,8 @@ def get_session_graph(
         retriever=document_retriever,
         llm=chat_model,
         planner_llm=chat_model,
-        generator=ReActTestGenerator(chat_model),
-        reviewer=ReActPatchReviewer(chat_model),
+        generator=ReActTestGenerator(strong_chat_model),
+        reviewer=ReActPatchReviewer(strongest_chat_model),
         run_recorder=CodingRunRecorder(coding_run_store),
         publisher_factory=build_patch_publisher_factory(repository_store),
         checkpointer=request.app.state.session_checkpointer,
