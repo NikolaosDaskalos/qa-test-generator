@@ -23,10 +23,6 @@ from app.persistence.source_document_store import SourceDocumentStore
 
 logger = logging.getLogger(__name__)
 
-# Avoid the warning emitted when the tokenizer receives a token only as an argument.
-os.environ.setdefault("HF_TOKEN", settings.HF_TOKEN)
-
-
 class DocumentIngestor:
     """Loads an existing local Git clone and stores Python chunks in Weaviate."""
 
