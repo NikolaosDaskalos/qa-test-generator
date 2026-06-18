@@ -1,6 +1,6 @@
 # Merge the Patch Review and its routing gate into one node
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 ADR: [0002 - Intent-routed unified LangGraph](../adr/0002-intent-routed-unified-langgraph.md)
 
@@ -26,12 +26,12 @@ control flow visible in the graph wiring.
 
 ## Acceptance criteria
 
-- [ ] The `review_gate` node is removed; `review_patch` returns plain state and never returns a `Command`.
-- [ ] A router function returning a `Literal` drives a conditional edge that reproduces the gate's three outcomes: revise, escalate to human decision, and fail.
-- [ ] The terminal `ReviewResult` is emitted on escalation to the human decision (both accepted and budget-exhausted below-threshold), matching current behavior.
-- [ ] `max_revision_attempts` is configured on the merged node's builder.
-- [ ] A reviewing-stage failure routes to the failure sink via the router, not via a node-level goto.
-- [ ] Tests covering review acceptance, below-threshold-with-budget revision, budget-exhausted escalation, and review failure pass.
+- [x] The `review_gate` node is removed; `review_patch` returns plain state and never returns a `Command`.
+- [x] A router function returning a `Literal` drives a conditional edge that reproduces the gate's three outcomes: revise, escalate to human decision, and fail.
+- [x] The terminal `ReviewResult` is emitted on escalation to the human decision (both accepted and budget-exhausted below-threshold), matching current behavior.
+- [x] `max_revision_attempts` is configured on the merged node's builder.
+- [x] A reviewing-stage failure routes to the failure sink via the router, not via a node-level goto.
+- [x] Tests covering review acceptance, below-threshold-with-budget revision, budget-exhausted escalation, and review failure pass.
 
 ## Blocked by
 

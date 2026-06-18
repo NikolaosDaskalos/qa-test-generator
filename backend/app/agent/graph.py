@@ -32,8 +32,8 @@ from app.agent.nodes.test_generation import (
     build_gather_evidence_node,
     build_generate_tests_node,
     build_prepare_branch_node,
-    build_review_gate_node,
     build_review_patch_node,
+    build_review_router,
     build_revise_tests_node,
 )
 from app.services.coding_runs.workspace import LocalGitWorkspace
@@ -178,10 +178,7 @@ def build_graph(
     graph.add_node("prepare_branch", build_prepare_branch_node(workspaces, recorder), destinations=("generate_tests", "fail_run"))
     graph.add_node("generate_tests", build_generate_tests_node(generator), destinations=("build_patch", "fail_run"))
     graph.add_node("build_patch", build_build_patch_node(workspaces, recorder), destinations=("review_patch", "fail_run"))
-    graph.add_node("review_patch", build_review_patch_node(reviewer, recorder))
-    graph.add_node(
-        "review_gate", build_review_gate_node(max_revision_attempts=max_revision_attempts), destinations=("await_decision", "revise_tests", "fail_run")
-    )
+    graph.add_node("review_patch", build_review_patch_node(reviewer, recorder, max_revision_attempts=max_revision_attempts))
     graph.add_node("await_decision", build_await_decision_node())
     graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder), destinations=(END, "fail_run"))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
@@ -194,7 +191,9 @@ def build_graph(
     graph.add_conditional_edges("classify", _route_intent, {"test_generation": "plan", "repository_question": "retrieve"})
     graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "gather_evidence"})
     graph.add_edge("gather_evidence", "prepare_branch")
-    graph.add_edge("review_patch", "review_gate")
+    graph.add_conditional_edges(
+        "review_patch", build_review_router(max_revision_attempts), {"revise": "revise_tests", "escalate": "await_decision", "failed": "fail_run"}
+    )
     graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
     graph.add_edge("discard_patch", END)
     graph.add_edge("fail_run", END)

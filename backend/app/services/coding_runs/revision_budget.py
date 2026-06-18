@@ -2,8 +2,8 @@
 
 The budget owns the count of spent Revision Attempts and a configurable limit
 (``MAX_REVISION_ATTEMPTS``). Exhausting it is not a failure: the post-review
-``review_gate`` escalates the best below-threshold attempt to human review. The
-budget therefore encodes only the spend/limit arithmetic, no terminal outcome.
+router escalates the best below-threshold attempt to human review. The budget
+therefore encodes only the spend/limit arithmetic, no terminal outcome.
 """
 
 from __future__ import annotations

@@ -9,6 +9,7 @@ tested), which are kept apart on the shared state.
 """
 
 import logging
+from typing import Literal
 
 from langgraph.graph import END
 from langgraph.types import Command, interrupt
@@ -123,7 +124,7 @@ def build_revise_tests_node(generator):
     reviewer's findings, and replaces the proposal. The revised files flow back
     through the same write/validation/review path as initial generation; a generator
     failure here is a generating-stage Run Failure. One unit of the Revision Budget is
-    spent so the ``review_gate`` admits only as many revisions as the budget allows
+    spent so the post-review router admits only as many revisions as the budget allows
     before escalating to human review.
     """
 
@@ -189,7 +190,21 @@ def build_build_patch_node(workspace_factory, recorder):
     return build_patch
 
 
-def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None):
+def _escalates_to_owner(review: ReviewResult | None, state, max_revision_attempts: int | None) -> bool:
+    """Whether the post-review path escalates this patch to the owner's decision.
+
+    An accepted patch escalates; a below-threshold patch escalates only once its
+    Revision Budget is spent (otherwise it is revised). A reviewing-stage failure
+    (no review on state) escalates to neither — it routes to the failure sink.
+    """
+    if review is None:
+        return False
+    if not review.accepted and RevisionBudget.from_state(state, limit=max_revision_attempts).can_spend:
+        return False
+    return True
+
+
+def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None, max_revision_attempts: int | None = None):
     """Build the node that statically reviews a generated Test Patch before approval.
 
     Review is evidence-based static assessment only: the reviewer never executes
@@ -201,6 +216,14 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None)
     when its score passes. The decision is persisted (accepted → awaiting approval,
     rejected → changes requested) and surfaced as a ``ReviewResult`` carrying the
     score, the threshold it was judged against, the findings, and the assessed diff.
+
+    The node returns plain state — never a ``Command`` — leaving post-review routing
+    to an explicit conditional edge (see ``build_review_router``). It does emit the
+    terminal ``ReviewResult`` whenever the run escalates to the owner (an accepted
+    patch, or a below-threshold one with the Revision Budget — bounded by
+    ``max_revision_attempts`` — exhausted), so the escalated patch surfaces its score
+    on the Agent Stream; a patch bound for one more Revision Attempt stays quiet until
+    its re-review.
     """
 
     pass_threshold = settings.REVIEW_PASS_THRESHOLD if threshold is None else threshold
@@ -242,42 +265,41 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None)
 
         recorder.record_review(coding_run_id, accepted=accepted, findings=findings)
         review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, score=score, threshold=pass_threshold, findings=findings, diff=diff)
+        # The terminal ReviewResult rides the stream only when the run escalates to the
+        # owner; a patch bound for one more Revision Attempt stays quiet until re-review.
+        if _escalates_to_owner(review_result, state, max_revision_attempts):
+            emit(review_result)
         return {"review_result": review_result, "trace": ["review_patch"]}
 
     return review_patch
 
 
-def build_review_gate_node(*, max_revision_attempts: int | None = None):
-    """Build the explicit node that owns post-review routing via ``Command(goto=…)``.
+def build_review_router(max_revision_attempts: int | None = None):
+    """Build the post-review router that drives the conditional edge off ``review_patch``.
 
-    The gate reads the review verdict and the spent Revision Budget and routes:
-    an accepted patch (score at/above threshold) goes to human review; a
-    below-threshold patch with budget remaining goes to one more ``revise_tests``;
-    a below-threshold patch with the budget exhausted **also** goes to human review,
-    carrying the best attempt with its score and findings. Exhausting the budget
-    escalates — it never fails. A reviewing-stage Run Failure recorded upstream is
-    routed to ``fail_run``. The terminal ``ReviewResult`` is emitted here whenever
-    the run escalates to the owner, so an escalated below-threshold patch surfaces
-    its score on the Agent Stream just as an accepted one does.
+    Reading only the verdict ``review_patch`` wrote to state, it reproduces the three
+    outcomes the old ``review_gate`` owned: a reviewing-stage Run Failure routes to
+    the failure sink; a below-threshold patch with Revision Budget remaining routes
+    back to one more ``revise_tests``; an accepted patch, or a below-threshold one
+    whose budget is exhausted, routes to the owner's human decision. Exhausting the
+    budget escalates — it never fails. The router has no side effects; ``review_patch``
+    already emitted the terminal ``ReviewResult`` on the escalation path.
     """
 
-    def review_gate(state) -> Command:
+    def route_after_review(state) -> Literal["revise", "escalate", "failed"]:
         if state.get("failure") is not None:
-            return Command(goto="fail_run", update={"trace": ["review_gate"]})
-        review: ReviewResult | None = state.get("review_result")
-        if review is not None and not review.accepted and RevisionBudget.from_state(state, limit=max_revision_attempts).can_spend:
-            return Command(goto="revise_tests", update={"trace": ["review_gate"]})
-        if review is not None:
-            emit(review)
-        return Command(goto="await_decision", update={"trace": ["review_gate"]})
+            return "failed"
+        if _escalates_to_owner(state.get("review_result"), state, max_revision_attempts):
+            return "escalate"
+        return "revise"
 
-    return review_gate
+    return route_after_review
 
 
 def build_await_decision_node():
     """Build the human-in-the-loop node that suspends a run for the owner's decision.
 
-    The ``review_gate`` routes here both for an accepted Patch Review and for a
+    The post-review router routes here both for an accepted Patch Review and for a
     below-threshold patch whose Revision Budget is exhausted, so the graph pauses via
     ``interrupt`` surfacing the Coding Run, the assessed canonical diff, the review
     ``score`` and ``threshold``, whether the backend accepted it, and the findings —

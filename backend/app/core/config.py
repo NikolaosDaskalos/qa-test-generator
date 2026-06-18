@@ -185,7 +185,7 @@ class Settings(BaseSettings):
     REVIEW_PASS_THRESHOLD: int = Field(default=7, ge=0, le=10)
 
     # The Revision Budget: how many times the generator may revise a below-threshold
-    # Test Patch before the review_gate escalates the best attempt to human review.
+    # Test Patch before the post-review router escalates the best attempt to human review.
     # Exhaustion escalates, never fails. Zero disables revision entirely.
     MAX_REVISION_ATTEMPTS: int = Field(default=2, ge=0)
 
