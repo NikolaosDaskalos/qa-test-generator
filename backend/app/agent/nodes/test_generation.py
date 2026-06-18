@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 from app.services.coding_runs.evidence_partitioner import EvidencePartitioner, EvidencePartitionRequest
 from app.services.coding_runs.patch_builder import PatchBuilder, PatchBuildRequest
-from app.services.coding_runs.revision_budget import RevisionBudget
+from app.services.coding_runs.revision_budget import can_revise, is_revision_attempt, spend_revision
 from app.streaming.agent_stream import emit
 from app.services.coding_runs.test_file_validation import verify_test_file_boundary
 from app.enums.coding_run import CodingRunStage
@@ -94,10 +94,12 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
     builder = PatchBuilder(workspace_factory=workspace_factory, recorder=recorder)
 
     def generate_tests(state) -> dict:
-        budget = RevisionBudget.from_state(state)
         review: ReviewResult | None = state.get("review_result")
+        # A prior review on state means the router routed a below-threshold patch back
+        # here for one more Revision Attempt; its absence is the first generation pass.
+        is_revision = review is not None
 
-        if review is not None:
+        if is_revision:
             emit(Stage(stage="revising"))
             try:
                 proposal = generator.revise(
@@ -111,10 +113,9 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
             except Exception:
                 logger.exception("Test revision failed")
                 return _generating_failure(REVISION_FAILED)
-            budget = budget.spend()
             generation_branch = state.get("generation_branch")
             external_references = proposal.external_references or state.get("external_references") or []
-            budget_update = budget.state_update()
+            budget_update = spend_revision(state)
         else:
             recorder.begin_generating(state["coding_run_id"])
             try:
@@ -138,7 +139,7 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
             PatchBuildRequest(
                 generated_files=proposal.generated_files,
                 checkout_root=state.get("checkout_root"),
-                is_revision_attempt=budget.is_revision_attempt,
+                is_revision_attempt=is_revision,
                 generation_branch=generation_branch,
                 coding_run_id=state.get("coding_run_id"),
                 external_references=external_references,
@@ -183,7 +184,7 @@ def _escalates_to_owner(review: ReviewResult | None, state, max_revision_attempt
     """
     if review is None:
         return False
-    if not review.accepted and RevisionBudget.from_state(state, limit=max_revision_attempts).can_spend:
+    if not review.accepted and can_revise(state, limit=max_revision_attempts):
         return False
     return True
 
@@ -217,7 +218,7 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None,
         recorder.begin_reviewing(coding_run_id)
         # A second pass over this node is the review of a Revision Attempt; surface it
         # as a distinct stage marker so the Agent Stream tells the two reviews apart.
-        emit(Stage(stage="re_reviewing" if RevisionBudget.from_state(state).is_revision_attempt else "reviewing"))
+        emit(Stage(stage="re_reviewing" if is_revision_attempt(state) else "reviewing"))
         diff = state.get("diff") or ""
         generated_files = state.get("generated_files") or []
 

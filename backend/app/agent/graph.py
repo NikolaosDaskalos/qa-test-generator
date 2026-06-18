@@ -48,45 +48,68 @@ class Classification(BaseModel):
     intent: Intent = Field(description="Route the user's request to either a read-only repository question or a test-generation coding run.")
 
 
-class GraphState(TypedDict, total=False):
-    """The single shared state threaded through every node."""
+class SharedState(TypedDict):
+    """The conversational/identity spine every node reads, whatever the branch."""
 
     # The LangChain-native message spine: recent Session History plus the current
-    # turn, reduced with ``add_messages``. ``classify`` reads it so follow-ups
-    # ("now write tests for that") route on conversational context, not the bare
-    # question. ``question`` stays as the plain retrieval/planning query string.
+    # turn, reduced with ``add_messages`` (so it starts empty and accumulates).
+    # ``classify`` reads it so follow-ups ("now write tests for that") route on
+    # conversational context, not the bare question. ``question`` stays as the plain
+    # retrieval/planning query string.
     messages: Annotated[list, add_messages]
     question: str
     repository_id: uuid.UUID
     repository_session_id: uuid.UUID
-    coding_run_id: uuid.UUID
-    intent: Intent
-    checkout_root: str
-    indexed_commit_sha: str
-    evidence: list
-    answer: str
-    citations: list[Citation]
-    research_intents: list[ResearchIntent]
-    source_evidence: list
-    test_evidence: list
-    candidate_hints: list[str]
-    generation_branch: str
-    generated_files: list
-    external_references: list
-    diff: str
-    patch_result: PatchResult
-    review_result: ReviewResult
-    # Serialized count of spent Revision Attempts. Its semantics live in
-    # ``RevisionBudget``.
-    revision_attempts: int
+    intent: Intent | None
+    # The terminal failure any stage may fold onto state for the single failure sink.
+    failure: RunFailure | None
+    # Append-only breadcrumb of visited nodes; starts empty and accumulates.
+    trace: Annotated[list[str], operator.add]
+
+
+class RepositoryQuestionState(TypedDict):
+    """The ``repository_question`` branch's private working set (retrieve → generate)."""
+
+    evidence: list | None
+    answer: str | None
+    citations: list[Citation] | None
+
+
+class TestGenerationState(TypedDict):
+    """The ``test_generation`` pipeline's private working set (plan → … → approve/discard)."""
+
+    coding_run_id: uuid.UUID | None
+    checkout_root: str | None
+    indexed_commit_sha: str | None
+    research_intents: list[ResearchIntent] | None
+    source_evidence: list | None
+    test_evidence: list | None
+    candidate_hints: list[str] | None
+    generation_branch: str | None
+    generated_files: list | None
+    external_references: list | None
+    diff: str | None
+    patch_result: PatchResult | None
+    review_result: ReviewResult | None
+    # Count of spent Revision Attempts; ``None``/absent means none spent yet. The
+    # spend/limit arithmetic lives in ``app.services.coding_runs.revision_budget``.
+    revision_attempts: int | None
     # The owner's human-in-the-loop decision on an accepted patch, supplied by resuming
     # the suspended graph, and the terminal outcome when that decision is a rejection.
-    approved: bool
-    human_feedback: str
-    rejection_result: RunRejected
-    approval_result: RunApproved
-    failure: RunFailure
-    trace: Annotated[list[str], operator.add]
+    approved: bool | None
+    human_feedback: str | None
+    rejection_result: RunRejected | None
+    approval_result: RunApproved | None
+
+
+class GraphState(SharedState, RepositoryQuestionState, TestGenerationState):
+    """The single state threaded through every node.
+
+    Composed from the shared spine plus the two branches' private working sets, so the
+    schema reads as three small named groups rather than one flat wall of fields. The
+    keys still collapse into one channel namespace on the compiled graph — this is an
+    organizational split, not a subgraph boundary.
+    """
 
 
 def _classify_node(classifier_llm):

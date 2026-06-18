@@ -1,38 +1,28 @@
-from app.services.coding_runs.revision_budget import RevisionBudget
+from app.services.coding_runs.revision_budget import can_revise, is_revision_attempt, revision_attempts, spend_revision
 
 
-def test_fresh_budget_can_spend_up_to_its_limit() -> None:
-    budget = RevisionBudget.fresh(limit=2)
-
-    assert budget.can_spend is True
-    assert budget.is_revision_attempt is False
+def test_a_fresh_state_has_no_spent_attempts() -> None:
+    assert revision_attempts({}) == 0
+    assert is_revision_attempt({}) is False
 
 
-def test_a_zero_limit_budget_can_never_spend() -> None:
-    budget = RevisionBudget.fresh(limit=0)
-
-    assert budget.can_spend is False
-    assert budget.is_revision_attempt is False
+def test_can_revise_while_under_the_limit() -> None:
+    assert can_revise({}, limit=2) is True
+    assert can_revise({"revision_attempts": 1}, limit=2) is True
 
 
-def test_spending_marks_a_revision_attempt_and_serializes_the_count() -> None:
-    spent = RevisionBudget.fresh(limit=2).spend()
-
-    assert spent.is_revision_attempt is True
-    assert spent.can_spend is True  # one of two attempts spent, budget remains
-    assert spent.state_update() == {"revision_attempts": 1}
+def test_a_zero_limit_never_admits_a_revision() -> None:
+    assert can_revise({}, limit=0) is False
 
 
-def test_budget_is_exhausted_once_the_limit_is_reached() -> None:
-    exhausted = RevisionBudget.fresh(limit=2).spend().spend()
-
-    assert exhausted.can_spend is False
-    assert exhausted.is_revision_attempt is True
-    assert exhausted.state_update() == {"revision_attempts": 2}
+def test_an_exhausted_budget_cannot_revise() -> None:
+    assert can_revise({"revision_attempts": 2}, limit=2) is False
 
 
-def test_from_state_reads_the_spent_count_against_a_given_limit() -> None:
-    budget = RevisionBudget.from_state({"revision_attempts": 1}, limit=1)
+def test_spending_increments_the_count_for_a_state_update() -> None:
+    assert spend_revision({}) == {"revision_attempts": 1}
+    assert spend_revision({"revision_attempts": 1}) == {"revision_attempts": 2}
 
-    assert budget.is_revision_attempt is True
-    assert budget.can_spend is False
+
+def test_a_spent_state_reads_as_a_revision_attempt() -> None:
+    assert is_revision_attempt({"revision_attempts": 1}) is True
