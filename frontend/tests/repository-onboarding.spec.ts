@@ -122,7 +122,10 @@ test("Registering a repository returns to the workspace with it selected and its
   await page.getByRole("button", { name: "Register repository" }).click()
 
   await expect(page).toHaveURL(/\/\?selected=repo-new$/)
-  const repositoryRegion = page.getByRole("region", { name: "Repository" })
+  const repositoryRegion = page.getByRole("region", {
+    name: "Repository",
+    exact: true,
+  })
   await expect(
     repositoryRegion.getByRole("button", { name: /new-api/i }),
   ).toBeVisible()
@@ -229,7 +232,10 @@ test("Existing repositories expose a compact add action beside the heading", asy
 
   await page.goto("/")
 
-  const repositoryRegion = page.getByRole("region", { name: "Repository" })
+  const repositoryRegion = page.getByRole("region", {
+    name: "Repository",
+    exact: true,
+  })
   await expect(repositoryRegion.getByText("Repositories")).toBeVisible()
   await expect(
     repositoryRegion.getByRole("textbox", { name: "GitHub repository URL" }),
@@ -281,7 +287,10 @@ test("New repository status updates live in the workspace until it is ready", as
   await page.getByRole("textbox", { name: "GitHub token" }).fill("github-token")
   await page.getByRole("button", { name: "Register repository" }).click()
 
-  const repositoryRegion = page.getByRole("region", { name: "Repository" })
+  const repositoryRegion = page.getByRole("region", {
+    name: "Repository",
+    exact: true,
+  })
   await expect(repositoryRegion.getByText(/^indexing$/)).toBeVisible()
   await expect(repositoryRegion.getByText(/^ready$/)).toBeVisible({
     timeout: 5000,
@@ -333,10 +342,14 @@ test("Failed repository indexing shows the reason in the workspace and stops pol
   await page.getByRole("textbox", { name: "GitHub token" }).fill("github-token")
   await page.getByRole("button", { name: "Register repository" }).click()
 
-  await expect(page.getByText(/^failed$/)).toBeVisible()
   await expect(
     page
-      .getByRole("region", { name: "Repository" })
+      .getByRole("region", { name: "Repository", exact: true })
+      .getByText(/^failed$/),
+  ).toBeVisible()
+  await expect(
+    page
+      .getByRole("region", { name: "Repository", exact: true })
       .getByText("GitHub token expired"),
   ).toBeVisible()
   await expect(

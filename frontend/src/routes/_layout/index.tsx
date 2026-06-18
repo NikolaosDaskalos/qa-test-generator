@@ -1,7 +1,7 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { Plus } from "lucide-react"
-import { useEffect, useState } from "react"
+import { type FormEvent, useEffect, useState } from "react"
 import type {
   Citation,
   HumanDecisionRequest,
@@ -13,7 +13,18 @@ import type {
 import { RepositoriesService, SessionsService } from "@/client"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import useCustomToast from "@/hooks/useCustomToast"
 import {
   askRepositoryQuestionStream,
   decideReviewedPatchStream,
@@ -88,6 +99,8 @@ function CopilotShell() {
   const [pendingDecisionRunId, setPendingDecisionRunId] = useState<
     string | null
   >(null)
+  const [credentialRepository, setCredentialRepository] =
+    useState<RepositoryPublic | null>(null)
   const repositoriesQuery = useQuery({
     queryKey: ["repositories"],
     queryFn: () => RepositoriesService.readRepositories({}),
@@ -257,144 +270,299 @@ function CopilotShell() {
           ) : null}
         </section>
 
-        <section
-          aria-label="Chat"
-          className="flex min-h-[32rem] flex-col rounded-lg border bg-background"
-        >
-          <div className="flex items-center justify-between gap-3 border-b p-4">
-            <h2 className="text-base font-semibold">Chat</h2>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={
-                activeRepository?.status !== "ready" || isCreatingSession
-              }
-              onClick={() => {
-                if (!activeRepository) {
+        {activeRepository && activeRepository.status !== "ready" ? (
+          <RepositoryDetails
+            repository={activeRepository}
+            onUpdateToken={() => setCredentialRepository(activeRepository)}
+          />
+        ) : (
+          <section
+            aria-label="Chat"
+            className="flex min-h-[32rem] flex-col rounded-lg border bg-background"
+          >
+            <div className="flex items-center justify-between gap-3 border-b p-4">
+              <h2 className="text-base font-semibold">Chat</h2>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setCredentialRepository(activeRepository)}
+                >
+                  Update token
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    activeRepository?.status !== "ready" || isCreatingSession
+                  }
+                  onClick={() => {
+                    if (!activeRepository) {
+                      return
+                    }
+                    setStageStatus([])
+                    setStreamError(null)
+                    createRepositorySession({
+                      repositoryId: activeRepository.id,
+                      queryClient,
+                      setActiveSessionId,
+                      setChatMessages,
+                      setIsCreatingSession,
+                    })
+                  }}
+                >
+                  New Session
+                </Button>
+              </div>
+            </div>
+            <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6 text-sm">
+              {chatMessages.length === 0 ? (
+                <div className="flex flex-1 items-center justify-center text-center text-muted-foreground">
+                  {getChatStatusMessage(activeRepository)}
+                </div>
+              ) : (
+                chatMessages.map((message) => (
+                  <article
+                    key={message.id}
+                    className={
+                      message.role === "user"
+                        ? "self-end rounded-md bg-primary px-3 py-2 text-primary-foreground"
+                        : "max-w-3xl"
+                    }
+                  >
+                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    {message.codingRunId && activeSessionId ? (
+                      <RunDetails
+                        repositorySessionId={activeSessionId}
+                        codingRunId={message.codingRunId}
+                      />
+                    ) : null}
+                    {message.review ? (
+                      <ReviewResultSummary
+                        isPending={pendingDecisionRunId === message.codingRunId}
+                        message={message}
+                        review={message.review}
+                        onDecision={(decision) => {
+                          if (!activeSessionId) {
+                            return
+                          }
+                          submitDecision({
+                            repositorySessionId: activeSessionId,
+                            decision,
+                            setChatMessages,
+                            setPendingDecisionRunId,
+                            setStageStatus,
+                            setStreamError,
+                          })
+                        }}
+                      />
+                    ) : null}
+                    {message.decision ? (
+                      <RunDecisionSummary decision={message.decision} />
+                    ) : null}
+                    {message.failure ? (
+                      <RunFailureSummary failure={message.failure} />
+                    ) : null}
+                    {message.citations.length > 0 ? (
+                      <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
+                        {message.citations.map((citation) => (
+                          <li key={citation.source}>{citation.source}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </article>
+                ))
+              )}
+              {stageStatus.length > 0 ? (
+                <ol className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                  {stageStatus.map((stage) => (
+                    <li key={stage}>{stage}</li>
+                  ))}
+                </ol>
+              ) : null}
+              {streamError ? (
+                <p className="text-sm text-destructive">{streamError}</p>
+              ) : null}
+            </div>
+            <form
+              className="flex gap-3 border-t p-4"
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (!activeSessionId || !question.trim()) {
                   return
                 }
-                setStageStatus([])
-                setStreamError(null)
-                createRepositorySession({
-                  repositoryId: activeRepository.id,
-                  queryClient,
-                  setActiveSessionId,
+                submitQuestion({
+                  repositorySessionId: activeSessionId,
+                  question: question.trim(),
                   setChatMessages,
-                  setIsCreatingSession,
+                  setQuestion,
+                  setStageStatus,
+                  setStreamError,
                 })
               }}
             >
-              New Session
-            </Button>
-          </div>
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6 text-sm">
-            {chatMessages.length === 0 ? (
-              <div className="flex flex-1 items-center justify-center text-center text-muted-foreground">
-                {getChatStatusMessage(activeRepository)}
-              </div>
-            ) : (
-              chatMessages.map((message) => (
-                <article
-                  key={message.id}
-                  className={
-                    message.role === "user"
-                      ? "self-end rounded-md bg-primary px-3 py-2 text-primary-foreground"
-                      : "max-w-3xl"
-                  }
-                >
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                  {message.codingRunId && activeSessionId ? (
-                    <RunDetails
-                      repositorySessionId={activeSessionId}
-                      codingRunId={message.codingRunId}
-                    />
-                  ) : null}
-                  {message.review ? (
-                    <ReviewResultSummary
-                      isPending={pendingDecisionRunId === message.codingRunId}
-                      message={message}
-                      review={message.review}
-                      onDecision={(decision) => {
-                        if (!activeSessionId) {
-                          return
-                        }
-                        submitDecision({
-                          repositorySessionId: activeSessionId,
-                          decision,
-                          setChatMessages,
-                          setPendingDecisionRunId,
-                          setStageStatus,
-                          setStreamError,
-                        })
-                      }}
-                    />
-                  ) : null}
-                  {message.decision ? (
-                    <RunDecisionSummary decision={message.decision} />
-                  ) : null}
-                  {message.failure ? (
-                    <RunFailureSummary failure={message.failure} />
-                  ) : null}
-                  {message.citations.length > 0 ? (
-                    <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
-                      {message.citations.map((citation) => (
-                        <li key={citation.source}>{citation.source}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </article>
-              ))
-            )}
-            {stageStatus.length > 0 ? (
-              <ol className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                {stageStatus.map((stage) => (
-                  <li key={stage}>{stage}</li>
-                ))}
-              </ol>
-            ) : null}
-            {streamError ? (
-              <p className="text-sm text-destructive">{streamError}</p>
-            ) : null}
-          </div>
-          <form
-            className="flex gap-3 border-t p-4"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (!activeSessionId || !question.trim()) {
-                return
-              }
-              submitQuestion({
-                repositorySessionId: activeSessionId,
-                question: question.trim(),
-                setChatMessages,
-                setQuestion,
-                setStageStatus,
-                setStreamError,
-              })
-            }}
-          >
-            <textarea
-              aria-label="Ask about the selected repository"
-              className="min-h-20 flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm disabled:bg-muted/30 disabled:text-muted-foreground"
-              disabled={activeRepository?.status !== "ready"}
-              placeholder="Ask about the selected repository"
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-            />
-            <Button
-              type="submit"
-              disabled={
-                activeRepository?.status !== "ready" ||
-                !activeSessionId ||
-                !question.trim()
-              }
-            >
-              Ask
-            </Button>
-          </form>
-        </section>
+              <textarea
+                aria-label="Ask about the selected repository"
+                className="min-h-20 flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm disabled:bg-muted/30 disabled:text-muted-foreground"
+                disabled={activeRepository?.status !== "ready"}
+                placeholder="Ask about the selected repository"
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+              />
+              <Button
+                type="submit"
+                disabled={
+                  activeRepository?.status !== "ready" ||
+                  !activeSessionId ||
+                  !question.trim()
+                }
+              >
+                Ask
+              </Button>
+            </form>
+          </section>
+        )}
       </div>
+
+      {credentialRepository ? (
+        <UpdateCredentialDialog
+          repository={credentialRepository}
+          onClose={() => setCredentialRepository(null)}
+        />
+      ) : null}
     </div>
+  )
+}
+
+function UpdateCredentialDialog({
+  repository,
+  onClose,
+}: {
+  repository: RepositoryPublic
+  onClose: () => void
+}) {
+  const { showSuccessToast } = useCustomToast()
+  const [token, setToken] = useState("")
+  const [tokenExpirationDays, setTokenExpirationDays] = useState("")
+
+  const updateCredentialMutation = useMutation({
+    mutationFn: RepositoriesService.updateRepository,
+    onSuccess: () => {
+      showSuccessToast("Repository token updated.")
+      onClose()
+    },
+  })
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const trimmedExpiration = tokenExpirationDays.trim()
+    updateCredentialMutation.mutate({
+      repositoryId: repository.id,
+      requestBody: {
+        token,
+        token_expiration_days:
+          trimmedExpiration === "" ? null : Number(trimmedExpiration),
+      },
+    })
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose()
+        }
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Update repository token</DialogTitle>
+          <DialogDescription>
+            Replace the GitHub credential for {repository.name}. This does not
+            change the repository's processing status.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="grid gap-4" onSubmit={handleSubmit}>
+          <div className="grid gap-2">
+            <Label htmlFor="update-github-token">GitHub token</Label>
+            <Input
+              id="update-github-token"
+              type="password"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              required
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="update-token-expiration-days">
+              Token expiration in days
+            </Label>
+            <Input
+              id="update-token-expiration-days"
+              type="number"
+              min="1"
+              placeholder="Optional"
+              value={tokenExpirationDays}
+              onChange={(event) => setTokenExpirationDays(event.target.value)}
+            />
+          </div>
+          {getErrorMessage(updateCredentialMutation.error) ? (
+            <p className="text-sm text-destructive">
+              {getErrorMessage(updateCredentialMutation.error)}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" type="button">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button type="submit" disabled={updateCredentialMutation.isPending}>
+              {updateCredentialMutation.isPending ? "Saving..." : "Save token"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RepositoryDetails({
+  repository,
+  onUpdateToken,
+}: {
+  repository: RepositoryPublic
+  onUpdateToken: () => void
+}) {
+  return (
+    <section
+      aria-label="Repository details"
+      className="flex min-h-[32rem] flex-col gap-4 rounded-lg border bg-background p-6"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <h2 className="text-base font-semibold">{repository.name}</h2>
+          <p className="text-sm text-muted-foreground">
+            {repository.owner}/{repository.name}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary">{repository.status}</Badge>
+          <Button type="button" variant="ghost" onClick={onUpdateToken}>
+            Update token
+          </Button>
+        </div>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {getChatStatusMessage(repository)}
+      </p>
+      {repository.status === "failed" ? (
+        <p className="text-sm text-destructive">
+          {repository.failed_reason ?? "No failure reason was provided."}
+        </p>
+      ) : null}
+    </section>
   )
 }
 

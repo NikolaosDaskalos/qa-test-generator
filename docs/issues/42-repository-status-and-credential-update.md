@@ -1,6 +1,6 @@
 # Expose Repository status and credential updates in the workspace
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 7-8, 82-84, 94
 
@@ -12,13 +12,13 @@ Allow the owner to update the Repository Credential from this details view for a
 
 ## Acceptance criteria
 
-- [ ] Selecting a non-ready Repository opens a clear status/details view instead of an enabled chat composer.
-- [ ] Pending, cloning, and indexing statuses refresh until the Repository reaches ready or failed, then polling stops.
-- [ ] A failed Repository displays its sanitized failure reason and does not offer a retry-processing action.
-- [ ] New Repository Session creation is unavailable unless the selected Repository is ready.
-- [ ] Every accessible Repository exposes an Update token action in the main details view rather than cluttering the sidebar.
-- [ ] Updating the Repository Credential supports an optional positive expiration period in days and leaves the Repository status unchanged.
-- [ ] Ready, processing, failed, credential-success, credential-validation-error, and unchanged-status behavior are covered end to end.
+- [x] Selecting a non-ready Repository opens a clear status/details view instead of an enabled chat composer.
+- [x] Pending, cloning, and indexing statuses refresh until the Repository reaches ready or failed, then polling stops.
+- [x] A failed Repository displays its sanitized failure reason and does not offer a retry-processing action.
+- [x] New Repository Session creation is unavailable unless the selected Repository is ready.
+- [x] Every accessible Repository exposes an Update token action in the main details view rather than cluttering the sidebar.
+- [x] Updating the Repository Credential supports an optional positive expiration period in days and leaves the Repository status unchanged.
+- [x] Ready, processing, failed, credential-success, credential-validation-error, and unchanged-status behavior are covered end to end.
 
 ## Blocked by
 

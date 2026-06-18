@@ -104,8 +104,11 @@ test("Chat is enabled only for the selected ready repository", async ({
     page.getByText("Chat is disabled while the repository is indexing."),
   ).toBeVisible()
   await expect(
+    page.getByRole("region", { name: "Repository details" }),
+  ).toBeVisible()
+  await expect(
     page.getByRole("textbox", { name: "Ask about the selected repository" }),
-  ).toBeDisabled()
+  ).toHaveCount(0)
 
   await page.getByRole("button", { name: /ready-api/i }).click()
   await expect(page.getByText("ready-api selected")).toBeVisible()
