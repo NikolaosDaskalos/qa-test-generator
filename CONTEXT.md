@@ -17,7 +17,7 @@ A conversation and task workspace bound to exactly one Repository for its lifeti
 _Avoid_: Search Session, chat session
 
 **Session History**:
-The persisted exchanges within a Repository Session. Each assistant exchange retains its supporting Repository Evidence citations as structured data, kept distinct from the answer text rather than embedded in it. At most the six most recent messages influence question reformulation or task planning, and no duplicate session-memory copy is maintained.
+The complete persisted exchanges within a Repository Session, available for chronological display. Each assistant exchange retains its supporting Repository Evidence citations as structured data kept distinct from the answer text; at most the ten most recent messages influence question reformulation or task planning, and no duplicate session-memory copy is maintained.
 _Avoid_: Session memory blob, full-history prompt, citations rendered into message text
 
 **Repository Evidence**:
