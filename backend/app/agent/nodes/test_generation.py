@@ -43,12 +43,18 @@ def _fail_with(failure: RunFailure, trace: str) -> Command:
     return Command(update={"failure": failure, "trace": [trace]}, goto="fail_run")
 
 
-def build_gather_evidence_node(retriever):
-    """Build the generic retrieve node that partitions evidence source vs. test."""
+def build_gather_evidence_node(retriever, recorder):
+    """Build the generic retrieve node that partitions evidence source vs. test.
+
+    Gathering evidence first advances the run into the retrieving stage and emits
+    the retrieving marker, then partitions Repository Evidence as before.
+    """
 
     partitioner = EvidencePartitioner(retriever)
 
     def gather_evidence(state) -> dict:
+        recorder.begin_retrieving(state["coding_run_id"])
+        emit(Stage(stage="retrieving"))
         partition = partitioner.partition(
             EvidencePartitionRequest(
                 research_intents=state.get("research_intents") or [], repository_id=state["repository_id"], checkout_root=state.get("checkout_root")

@@ -9,8 +9,9 @@ out-of-scope (or uncommitted) request is rejected here as a terminal
 from pydantic import BaseModel, Field
 
 from app.enums.coding_run import CodingRunStage
-from app.schemas.agent_stream import RunFailure
+from app.schemas.agent_stream import RunFailure, RunStarted, Stage
 from app.schemas.research_intent import ResearchIntent
+from app.streaming.agent_stream import emit
 
 # Used when the planner rejects scope without a specific, sanitized reason.
 DEFAULT_REJECTION_REASON = "This request is outside the scope of adding or improving tests."
@@ -30,15 +31,26 @@ class PlannerOutput(BaseModel):
     )
 
 
-def build_plan_node(planner_llm):
-    """Build the planner node from a structured-output language model."""
+def build_plan_node(planner_llm, recorder):
+    """Build the planner node, the test-generation branch entry point.
+
+    Planning owns the Coding Run's birth: it creates the queued run (minting
+    ``coding_run_id``), advances it into the planning stage, and emits the
+    run-started and planning markers before invoking the planner LLM. An
+    out-of-scope request still creates the run, which is then failed at planning.
+    """
     structured = planner_llm.with_structured_output(PlannerOutput)
 
-    def plan(state) -> dict:
+    def plan(state, config) -> dict:
+        thread_id = config["configurable"]["thread_id"]
+        coding_run_id = recorder.start(thread_id=thread_id, repository_session_id=state.get("repository_session_id"))
+        recorder.begin_planning(coding_run_id)
+        emit(RunStarted(coding_run_id=coding_run_id))
+        emit(Stage(stage="planning"))
         result = structured.invoke(state["question"])
         if result is None or not result.in_scope:
             reason = (result.reason if result and result.reason else None) or DEFAULT_REJECTION_REASON
-            return {"failure": RunFailure(failed_stage=CodingRunStage.planning, reason=reason), "trace": ["plan"]}
-        return {"research_intents": result.intents, "trace": ["plan"]}
+            return {"coding_run_id": coding_run_id, "failure": RunFailure(failed_stage=CodingRunStage.planning, reason=reason), "trace": ["plan"]}
+        return {"coding_run_id": coding_run_id, "research_intents": result.intents, "trace": ["plan"]}
 
     return plan

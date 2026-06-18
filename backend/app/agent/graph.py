@@ -37,7 +37,7 @@ from app.agent.nodes.test_generation import (
     build_revise_tests_node,
 )
 from app.services.coding_runs.workspace import LocalGitWorkspace
-from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, Stage
 from app.schemas.research_intent import ResearchIntent
 
 Intent = Literal["repository_question", "test_generation"]
@@ -124,31 +124,6 @@ def _route_after_decision(state: GraphState) -> Literal["approve", "reject"]:
     return "approve" if state.get("approved") else "reject"
 
 
-def _persist_run_node(recorder):
-    """Build the test-branch entry node that persists a queued run and enters planning."""
-
-    def persist_run(state: GraphState, config) -> dict:
-        thread_id = config["configurable"]["thread_id"]
-        coding_run_id = recorder.start(thread_id=thread_id, repository_session_id=state.get("repository_session_id"))
-        recorder.begin_planning(coding_run_id)
-        emit(RunStarted(coding_run_id=coding_run_id))
-        emit(Stage(stage="planning"))
-        return {"coding_run_id": coding_run_id, "trace": ["persist_run"]}
-
-    return persist_run
-
-
-def _begin_retrieving_node(recorder):
-    """Build the node that advances a run into the retrieving stage."""
-
-    def begin_retrieving(state: GraphState) -> dict:
-        recorder.begin_retrieving(state["coding_run_id"])
-        emit(Stage(stage="retrieving"))
-        return {"trace": ["begin_retrieving"]}
-
-    return begin_retrieving
-
-
 def _fail_run_node(recorder):
     """Build the node that records a stage failure and stamps the run on the event."""
 
@@ -198,10 +173,8 @@ def build_graph(
     publishers = publisher_factory or _default_publisher_factory
     graph = StateGraph(GraphState)
     graph.add_node("classify", _classify_node(classifier_llm))
-    graph.add_node("persist_run", _persist_run_node(recorder))
-    graph.add_node("plan", build_plan_node(planner_llm))
-    graph.add_node("begin_retrieving", _begin_retrieving_node(recorder))
-    graph.add_node("gather_evidence", build_gather_evidence_node(retriever))
+    graph.add_node("plan", build_plan_node(planner_llm, recorder))
+    graph.add_node("gather_evidence", build_gather_evidence_node(retriever, recorder))
     graph.add_node("prepare_branch", build_prepare_branch_node(workspaces, recorder), destinations=("generate_tests", "fail_run"))
     graph.add_node("generate_tests", build_generate_tests_node(generator), destinations=("build_patch", "fail_run"))
     graph.add_node("build_patch", build_build_patch_node(workspaces, recorder), destinations=("review_patch", "fail_run"))
@@ -218,10 +191,8 @@ def build_graph(
     graph.add_node("generate", build_generate_node(llm))
 
     graph.add_edge(START, "classify")
-    graph.add_conditional_edges("classify", _route_intent, {"test_generation": "persist_run", "repository_question": "retrieve"})
-    graph.add_edge("persist_run", "plan")
-    graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "begin_retrieving"})
-    graph.add_edge("begin_retrieving", "gather_evidence")
+    graph.add_conditional_edges("classify", _route_intent, {"test_generation": "plan", "repository_question": "retrieve"})
+    graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "gather_evidence"})
     graph.add_edge("gather_evidence", "prepare_branch")
     graph.add_edge("review_patch", "review_gate")
     graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
