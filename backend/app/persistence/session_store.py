@@ -22,6 +22,13 @@ class RepositorySessionStore:
     def get_by_id(self, repository_session_id: uuid.UUID) -> RepositorySession | None:
         return self.session.get(RepositorySession, repository_session_id)
 
+    def get_page(
+        self, *, skip: int, limit: int, owner_id: uuid.UUID | None = None, repository_id: uuid.UUID | None = None
+    ) -> list[RepositorySession]:
+        statement = self._scoped(select(RepositorySession), owner_id=owner_id, repository_id=repository_id)
+        statement = statement.order_by(col(RepositorySession.updated_at).desc(), col(RepositorySession.id)).offset(skip).limit(limit)
+        return list(self.session.exec(statement).all())
+
     def append_exchange(
             self, repository_session_id: uuid.UUID, *, user_message: str, assistant_message: str, assistant_citations: list[CitationData] | None = None
     ) -> tuple[SessionHistory, SessionHistory]:
@@ -43,6 +50,18 @@ class RepositorySessionStore:
         self.session.refresh(user_history)
         self.session.refresh(assistant_history)
         return user_history, assistant_history
+
+    def count(self, *, owner_id: uuid.UUID | None = None, repository_id: uuid.UUID | None = None) -> int:
+        statement = self._scoped(select(func.count()).select_from(RepositorySession), owner_id=owner_id, repository_id=repository_id)
+        return self.session.exec(statement).one()
+
+    @staticmethod
+    def _scoped(statement, *, owner_id: uuid.UUID | None, repository_id: uuid.UUID | None):
+        if owner_id is not None:
+            statement = statement.where(RepositorySession.owner_id == owner_id)
+        if repository_id is not None:
+            statement = statement.where(RepositorySession.repository_id == repository_id)
+        return statement
 
     def get_recent_history(self, repository_session_id: uuid.UUID) -> list[SessionHistory]:
         statement = (select(SessionHistory)

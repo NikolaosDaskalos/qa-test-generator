@@ -14,6 +14,7 @@ from app.schemas.session import (
     RepositoryQuestionRequest,
     RepositorySessionCreate,
     RepositorySessionPublic,
+    RepositorySessionsPublic,
     RunPatchPublic,
     SessionHistoriesPublic,
     SessionHistoryPublic,
@@ -29,6 +30,19 @@ def create_repository_session(
     *, repository_session_service: RepositorySessionServiceDep, current_user: CurrentUser, session_in: RepositorySessionCreate
 ) -> RepositorySession:
     return repository_session_service.create_session(session_in=session_in, user=current_user)
+
+
+@router.get("", response_model=RepositorySessionsPublic)
+def read_repository_sessions(
+    *,
+    repository_session_service: RepositorySessionServiceDep,
+    current_user: CurrentUser,
+    repository_id: uuid.UUID | None = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> RepositorySessionsPublic:
+    """List the caller's Repository Sessions, optionally filtered by Repository."""
+    return repository_session_service.list_sessions(user=current_user, repository_id=repository_id, skip=skip, limit=limit)
 
 
 @router.post("/{repository_session_id}/questions")

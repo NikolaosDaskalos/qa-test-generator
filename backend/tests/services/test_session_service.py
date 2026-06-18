@@ -24,10 +24,22 @@ class FakeRepositoryStore:
 
 
 class FakeRepositorySessionStore:
-    def __init__(self, repository_session: RepositorySession | None = None) -> None:
+    def __init__(self, repository_session: RepositorySession | None = None, *, page: list[RepositorySession] | None = None, total: int = 0) -> None:
         self.repository_session = repository_session
         self.saved = []
         self.append_calls = []
+        self.page = page or []
+        self.total = total
+        self.page_calls = []
+        self.count_calls = []
+
+    def get_page(self, *, skip, limit, owner_id=None, repository_id=None):
+        self.page_calls.append({"skip": skip, "limit": limit, "owner_id": owner_id, "repository_id": repository_id})
+        return self.page
+
+    def count(self, *, owner_id=None, repository_id=None):
+        self.count_calls.append({"owner_id": owner_id, "repository_id": repository_id})
+        return self.total
 
     def save(self, repository_session):
         self.repository_session = repository_session
@@ -53,6 +65,89 @@ def _user(user_id: uuid.UUID) -> User:
 
 def _repository(owner_id: uuid.UUID, *, status: RepositoryStatus = RepositoryStatus.ready) -> Repository:
     return Repository(user_id=owner_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai", status=status)
+
+
+def test_unfiltered_list_scopes_to_owner_and_wraps_data_with_total_count() -> None:
+    owner_id = uuid.uuid4()
+    sessions = [RepositorySession(owner_id=owner_id, repository_id=uuid.uuid4())]
+    session_store = FakeRepositorySessionStore(page=sessions, total=5)
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None))
+
+    result = service.list_sessions(user=_user(owner_id), repository_id=None, skip=10, limit=20)
+
+    assert [session.id for session in result.data] == [sessions[0].id]
+    assert result.count == 5
+    assert session_store.page_calls == [{"skip": 10, "limit": 20, "owner_id": owner_id, "repository_id": None}]
+    assert session_store.count_calls == [{"owner_id": owner_id, "repository_id": None}]
+
+
+def test_superuser_list_bypasses_owner_scoping() -> None:
+    session_store = FakeRepositorySessionStore(page=[], total=0)
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None))
+    superuser = User(id=uuid.uuid4(), email="root@example.com", hashed_password="not-used", is_superuser=True)
+
+    service.list_sessions(user=superuser, repository_id=None, skip=0, limit=100)
+
+    assert session_store.page_calls[0]["owner_id"] is None
+    assert session_store.count_calls[0]["owner_id"] is None
+
+
+def test_filtered_list_validates_then_passes_repository_id_to_the_store() -> None:
+    owner_id = uuid.uuid4()
+    repository = _repository(owner_id)
+    session_store = FakeRepositorySessionStore(page=[], total=0)
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+
+    service.list_sessions(user=_user(owner_id), repository_id=repository.id, skip=0, limit=100)
+
+    assert session_store.page_calls[0]["repository_id"] == repository.id
+    assert session_store.count_calls[0]["repository_id"] == repository.id
+
+
+def test_filtered_list_returns_404_when_repository_is_missing() -> None:
+    session_store = FakeRepositorySessionStore()
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None))
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.list_sessions(user=_user(uuid.uuid4()), repository_id=uuid.uuid4(), skip=0, limit=100)
+
+    assert exc_info.value.status_code == 404
+    assert session_store.page_calls == []
+
+
+def test_filtered_list_returns_403_when_caller_does_not_own_the_repository() -> None:
+    repository = _repository(uuid.uuid4())
+    session_store = FakeRepositorySessionStore()
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.list_sessions(user=_user(uuid.uuid4()), repository_id=repository.id, skip=0, limit=100)
+
+    assert exc_info.value.status_code == 403
+    assert session_store.page_calls == []
+
+
+def test_superuser_filtered_list_bypasses_repository_ownership() -> None:
+    repository = _repository(uuid.uuid4())
+    session_store = FakeRepositorySessionStore(page=[], total=0)
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+    superuser = User(id=uuid.uuid4(), email="root@example.com", hashed_password="not-used", is_superuser=True)
+
+    service.list_sessions(user=superuser, repository_id=repository.id, skip=0, limit=100)
+
+    assert session_store.page_calls[0]["repository_id"] == repository.id
+
+
+def test_filtered_list_does_not_enforce_repository_readiness() -> None:
+    owner_id = uuid.uuid4()
+    repository = _repository(owner_id, status=RepositoryStatus.indexing)
+    session_store = FakeRepositorySessionStore(page=[], total=0)
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+
+    result = service.list_sessions(user=_user(owner_id), repository_id=repository.id, skip=0, limit=100)
+
+    assert result.count == 0
+    assert session_store.page_calls[0]["repository_id"] == repository.id
 
 
 def test_user_cannot_create_session_for_another_users_repository() -> None:

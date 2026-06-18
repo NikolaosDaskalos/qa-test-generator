@@ -14,20 +14,37 @@ from app.enums.session import SessionMessageRole
 from app.models.coding_run import CodingRun
 from app.models.session import RepositorySession, SessionHistory
 from app.schemas.agent_stream import Citation, Result, RunApproved, RunRejected, Stage, Token
+from app.schemas.session import RepositorySessionPublic, RepositorySessionsPublic
 
 
 class FakeRepositorySessionService:
-    def __init__(self, repository_session: RepositorySession, history: list[SessionHistory] | None = None, run: CodingRun | None = None) -> None:
+    def __init__(
+        self,
+        repository_session: RepositorySession,
+        history: list[SessionHistory] | None = None,
+        run: CodingRun | None = None,
+        listing: RepositorySessionsPublic | None = None,
+        list_raises: HTTPException | None = None,
+    ) -> None:
         self.repository_session = repository_session
         self.history = history or []
         self.run = run
+        self.listing = listing
+        self.list_raises = list_raises
         self.create_calls = []
         self.history_calls = []
         self.run_calls = []
+        self.list_calls = []
 
     def create_session(self, **kwargs) -> RepositorySession:
         self.create_calls.append(kwargs)
         return self.repository_session
+
+    def list_sessions(self, **kwargs) -> RepositorySessionsPublic:
+        self.list_calls.append(kwargs)
+        if self.list_raises is not None:
+            raise self.list_raises
+        return self.listing
 
     def get_recent_history(self, **kwargs) -> list[SessionHistory]:
         self.history_calls.append(kwargs)
@@ -71,6 +88,77 @@ def test_create_repository_session_requires_authentication() -> None:
         response = client.post("/sessions", json={"repository_id": str(repository_session.repository_id)})
 
     assert response.status_code == 401
+
+
+def test_list_sessions_returns_data_and_count_and_forwards_filter_and_paging() -> None:
+    user_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    repository_session = RepositorySession(owner_id=user_id, repository_id=repository_id, title="Auth tests")
+    listing = RepositorySessionsPublic(data=[RepositorySessionPublic.model_validate(repository_session)], count=1)
+    service = FakeRepositorySessionService(repository_session, listing=listing)
+    user = SimpleNamespace(id=user_id, is_superuser=False)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        response = client.get("/sessions", params={"repository_id": str(repository_id), "skip": 5, "limit": 25})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 1
+    assert body["data"][0]["repository_id"] == str(repository_id)
+    assert service.list_calls == [{"user": user, "repository_id": repository_id, "skip": 5, "limit": 25}]
+
+
+def test_list_sessions_defaults_to_no_filter_and_standard_paging() -> None:
+    user_id = uuid.uuid4()
+    repository_session = RepositorySession(owner_id=user_id, repository_id=uuid.uuid4())
+    listing = RepositorySessionsPublic(data=[], count=0)
+    service = FakeRepositorySessionService(repository_session, listing=listing)
+    user = SimpleNamespace(id=user_id, is_superuser=False)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        response = client.get("/sessions")
+
+    assert response.status_code == 200
+    assert service.list_calls == [{"user": user, "repository_id": None, "skip": 0, "limit": 100}]
+
+
+def test_list_sessions_requires_authentication() -> None:
+    repository_session = RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4())
+    service = FakeRepositorySessionService(repository_session)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+
+    with TestClient(app) as client:
+        response = client.get("/sessions")
+
+    assert response.status_code == 401
+    assert service.list_calls == []
+
+
+def test_list_sessions_surfaces_repository_validation_error_from_the_service() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    repository_session = RepositorySession(owner_id=user.id, repository_id=uuid.uuid4())
+    service = FakeRepositorySessionService(
+        repository_session, list_raises=HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        response = client.get("/sessions", params={"repository_id": str(uuid.uuid4())})
+
+    assert response.status_code == 404
 
 
 def test_owner_can_read_session_history() -> None:

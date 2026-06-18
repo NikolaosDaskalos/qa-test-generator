@@ -59,6 +59,11 @@ class RepositorySessionPublic(BaseModel):
     updated_at: datetime
 
 
+class RepositorySessionsPublic(BaseModel):
+    data: list[RepositorySessionPublic]
+    count: int
+
+
 class SessionHistoryPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

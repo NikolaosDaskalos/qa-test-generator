@@ -14,7 +14,7 @@ from app.persistence.coding_run_store import CodingRunStore
 from app.persistence.repository_store import RepositoryStore
 from app.persistence.session_store import RepositorySessionStore
 from app.schemas.agent_stream import AgentStreamEvent, Result
-from app.schemas.session import HumanDecisionRequest, RepositorySessionCreate
+from app.schemas.session import HumanDecisionRequest, RepositorySessionCreate, RepositorySessionsPublic
 from app.services.repository_session_execution import RepositorySessionExecution
 
 
@@ -36,6 +36,29 @@ class RepositorySessionService:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository is not ready")
 
         return self.session_store.save(RepositorySession(owner_id=user.id, repository_id=repository.id, title=session_in.title))
+
+    def list_sessions(self, *, user: User, repository_id: uuid.UUID | None, skip: int, limit: int) -> RepositorySessionsPublic:
+        """List the caller's Repository Sessions, optionally filtered to one Repository.
+
+        Sessions are scoped by ownership with a superuser bypass. A supplied
+        ``repository_id`` is validated like a read — a missing Repository is a 404
+        and one the caller does not own is a 403 (superuser bypassed) — but the
+        readiness gate that guards session creation is deliberately not applied, so
+        a still-indexing or failed Repository's sessions remain listable.
+        """
+        if repository_id is not None:
+            self._assert_repository_readable(repository_id, user)
+        owner_id = None if user.is_superuser else user.id
+        sessions = self.session_store.get_page(skip=skip, limit=limit, owner_id=owner_id, repository_id=repository_id)
+        count = self.session_store.count(owner_id=owner_id, repository_id=repository_id)
+        return RepositorySessionsPublic(data=sessions, count=count)  # type: ignore[arg-type]
+
+    def _assert_repository_readable(self, repository_id: uuid.UUID, user: User) -> None:
+        repository = self.repository_store.get_by_id(repository_id)
+        if not repository:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+        if not user.is_superuser and repository.user_id != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
 
     def get_recent_history(self, *, repository_session_id: uuid.UUID, user: User) -> list[SessionHistory]:
         repository_session = self._get_accessible(repository_session_id, user)
