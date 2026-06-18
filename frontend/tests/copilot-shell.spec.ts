@@ -117,6 +117,357 @@ test("Chat is enabled only for the selected ready repository", async ({
   ).toBeEnabled()
 })
 
+test("Selecting a ready Repository does not create a Repository Session implicitly", async ({
+  page,
+}) => {
+  let createSessionRequested = false
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    createSessionRequested = true
+    await route.fulfill({ status: 500 })
+  })
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+
+  await expect(page.getByText("Start a new session")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Ask" })).toBeDisabled()
+  expect(createSessionRequested).toBe(false)
+})
+
+test("Repository tree expands only the active Repository and lists its sessions", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-one",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/one-api",
+            name: "one-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+          {
+            id: "repo-two",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/two-api",
+            name: "two-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "def456",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T10:00:00Z",
+            updated_at: "2026-06-17T10:05:00Z",
+          },
+        ],
+        count: 2,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    const url = new URL(route.request().url())
+    const repositoryId = url.searchParams.get("repository_id")
+    await route.fulfill({
+      json: {
+        data:
+          repositoryId === "repo-one"
+            ? [
+                {
+                  id: "session-one",
+                  title: "Auth questions",
+                  owner_id: "user-1",
+                  repository_id: "repo-one",
+                  created_at: "2026-06-17T09:00:00Z",
+                  updated_at: "2026-06-17T09:10:00Z",
+                },
+              ]
+            : [
+                {
+                  id: "session-two",
+                  title: "Billing questions",
+                  owner_id: "user-1",
+                  repository_id: "repo-two",
+                  created_at: "2026-06-17T10:00:00Z",
+                  updated_at: "2026-06-17T10:10:00Z",
+                },
+              ],
+        count: 1,
+      },
+    })
+  })
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /one-api/i }).click()
+
+  const repositoryRegion = page.getByRole("region", { name: "Repository" })
+  await expect(repositoryRegion.getByText("Auth questions")).toBeVisible()
+  await expect(repositoryRegion.getByText("Billing questions")).toHaveCount(0)
+  await expect(
+    repositoryRegion.getByRole("button", { name: "New Session" }),
+  ).toBeVisible()
+
+  await page.getByRole("button", { name: /two-api/i }).click()
+
+  await expect(repositoryRegion.getByText("Auth questions")).toHaveCount(0)
+  await expect(repositoryRegion.getByText("Billing questions")).toBeVisible()
+})
+
+test("Direct Repository Session URL restores the selected chat workspace", async ({
+  page,
+}) => {
+  let createSessionRequested = false
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-stored",
+            title: "Login questions",
+            owner_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    createSessionRequested = true
+    await route.fulfill({ status: 500 })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-stored/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-assistant",
+              session_id: "session-stored",
+              role: "assistant",
+              content: "Login routes are tested in the browser suite.",
+              citations: [{ source: "frontend/tests/login.spec.ts" }],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-stored")
+
+  await expect(page.getByText("ready-api selected")).toBeVisible()
+  await expect(
+    page.getByText("Login routes are tested in the browser suite."),
+  ).toBeVisible()
+  await expect(page.getByText("frontend/tests/login.spec.ts")).toBeVisible()
+  expect(createSessionRequested).toBe(false)
+})
+
+test("Root workspace reopens the last-used accessible Repository Session", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-stored",
+            title: "Stored questions",
+            owner_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-stored/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-assistant",
+              session_id: "session-stored",
+              role: "assistant",
+              content: "Stored history is visible after login.",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "repository-session:last",
+      JSON.stringify({
+        repositoryId: "repo-ready",
+        sessionId: "session-stored",
+      }),
+    )
+  })
+  await page.reload()
+
+  await expect(page.getByText("ready-api selected")).toBeVisible()
+  await expect(
+    page.getByText("Stored history is visible after login."),
+  ).toBeVisible()
+  await expect(page).toHaveURL(
+    /\/\?repository=repo-ready&session=session-stored$/,
+  )
+})
+
+test("Root workspace ignores a stale last-used Repository Session", async ({
+  page,
+}) => {
+  let historyRequested = false
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-stale/history",
+    async (route) => {
+      historyRequested = true
+      await route.fulfill({ status: 404 })
+    },
+  )
+
+  await page.goto("/")
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "repository-session:last",
+      JSON.stringify({
+        repositoryId: "repo-ready",
+        sessionId: "session-stale",
+      }),
+    )
+  })
+  await page.reload()
+
+  await expect(page.getByText("ready-api selected")).toBeVisible()
+  await expect(page.getByText("Start a new session")).toBeVisible()
+  await expect(page).toHaveURL(/\/\?repository=repo-ready$/)
+  expect(historyRequested).toBe(false)
+})
+
 test("User can ask a ready Repository question and see streamed answer citations", async ({
   page,
 }) => {
@@ -142,6 +493,9 @@ test("User can ask a ready Repository question and see streamed answer citations
         count: 1,
       },
     })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
   })
   await page.route("**/api/v1/sessions", async (route) => {
     expect(route.request().method()).toBe("POST")
@@ -189,6 +543,7 @@ test("User can ask a ready Repository question and see streamed answer citations
   await page.goto("/")
   await page.evaluate(() => localStorage.setItem("access_token", "test-token"))
   await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
   await page
     .getByRole("textbox", { name: "Ask about the selected repository" })
     .fill("Where is the login route tested?")
@@ -221,6 +576,23 @@ test("Selecting a ready Repository resumes stored Repository Session history", a
             failed_reason: null,
             created_at: "2026-06-17T09:00:00Z",
             updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-stored",
+            title: "Stored Repository Session",
+            owner_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:00:00Z",
           },
         ],
         count: 1,
@@ -272,6 +644,9 @@ test("Selecting a ready Repository resumes stored Repository Session history", a
     page.getByText("Login is tested in the browser spec."),
   ).toBeVisible()
   await expect(page.getByText("frontend/tests/login.spec.ts")).toBeVisible()
+  await expect(page).toHaveURL(
+    /\/\?repository=repo-ready&session=session-stored$/,
+  )
   expect(createSessionRequested).toBe(false)
 })
 
@@ -295,6 +670,23 @@ test("New Session creates a fresh Repository Session and clears chat", async ({
             failed_reason: null,
             created_at: "2026-06-17T09:00:00Z",
             updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-stored",
+            title: "Stored Repository Session",
+            owner_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:00:00Z",
           },
         ],
         count: 1,
@@ -349,6 +741,7 @@ test("New Session creates a fresh Repository Session and clears chat", async ({
 
   await expect(page.getByText("Previous answer.")).not.toBeVisible()
   await expect(page.getByText("Chat is ready for ready-api.")).toBeVisible()
+  await expect(page).toHaveURL(/\/\?repository=repo-ready&session=session-new$/)
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -411,6 +804,7 @@ test("Question stream transport errors are shown without crashing", async ({
 
   await page.goto("/")
   await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
   await page
     .getByRole("textbox", { name: "Ask about the selected repository" })
     .fill("Will this fail?")
@@ -447,6 +841,9 @@ test("User can request test generation and see the reviewed Test Patch", async (
         count: 1,
       },
     })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
   })
   await page.route("**/api/v1/sessions", async (route) => {
     await route.fulfill({
@@ -486,6 +883,7 @@ test("User can request test generation and see the reviewed Test Patch", async (
 
   await page.goto("/")
   await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
   await page
     .getByRole("textbox", { name: "Ask about the selected repository" })
     .fill("Add tests for login")
@@ -544,6 +942,9 @@ test("User can approve a reviewed Test Patch and see the pushed branch", async (
       },
     })
   })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
   await page.route("**/api/v1/sessions", async (route) => {
     await route.fulfill({
       json: {
@@ -595,6 +996,7 @@ test("User can approve a reviewed Test Patch and see the pushed branch", async (
 
   await page.goto("/")
   await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
   await page
     .getByRole("textbox", { name: "Ask about the selected repository" })
     .fill("Add tests for login")
@@ -648,6 +1050,9 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
       },
     })
   })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
   await page.route("**/api/v1/sessions", async (route) => {
     await route.fulfill({
       json: {
@@ -698,6 +1103,7 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
 
   await page.goto("/")
   await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
   await page
     .getByRole("textbox", { name: "Ask about the selected repository" })
     .fill("Add tests for login")
@@ -750,6 +1156,9 @@ test("Failed test generation renders the failed stage and sanitized reason", asy
       },
     })
   })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
   await page.route("**/api/v1/sessions", async (route) => {
     await route.fulfill({
       json: {
@@ -785,6 +1194,7 @@ test("Failed test generation renders the failed stage and sanitized reason", asy
 
   await page.goto("/")
   await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
   await page
     .getByRole("textbox", { name: "Ask about the selected repository" })
     .fill("Add tests outside the test root")
@@ -829,6 +1239,9 @@ test("Repository questions and test generation coexist in one chat history", asy
         count: 1,
       },
     })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
   })
   await page.route("**/api/v1/sessions", async (route) => {
     await route.fulfill({
@@ -877,6 +1290,7 @@ test("Repository questions and test generation coexist in one chat history", asy
 
   await page.goto("/")
   await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
   await page
     .getByRole("textbox", { name: "Ask about the selected repository" })
     .fill("Where is the login route?")

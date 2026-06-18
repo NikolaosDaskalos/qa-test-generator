@@ -73,8 +73,13 @@ type RunDecisionView =
 
 export const Route = createFileRoute("/_layout/")({
   component: CopilotShell,
-  validateSearch: (search: Record<string, unknown>): { selected?: string } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { repository?: string; selected?: string; session?: string } => ({
+    repository:
+      typeof search.repository === "string" ? search.repository : undefined,
     selected: typeof search.selected === "string" ? search.selected : undefined,
+    session: typeof search.session === "string" ? search.session : undefined,
   }),
   head: () => ({
     meta: [
@@ -87,7 +92,13 @@ export const Route = createFileRoute("/_layout/")({
 
 function CopilotShell() {
   const queryClient = useQueryClient()
-  const { selected: selectedRepositoryId } = Route.useSearch()
+  const navigate = Route.useNavigate()
+  const {
+    repository: durableRepositoryId,
+    selected: legacyRepositoryId,
+    session: selectedSessionId,
+  } = Route.useSearch()
+  const selectedRepositoryId = durableRepositoryId ?? legacyRepositoryId
   const [activeRepository, setActiveRepository] =
     useState<RepositoryPublic | null>(null)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -139,6 +150,40 @@ function CopilotShell() {
       setActiveRepository(requested)
     }
   }, [selectedRepositoryId, repositories])
+
+  useEffect(() => {
+    if (selectedRepositoryId || repositoriesQuery.isLoading) {
+      return
+    }
+
+    const lastSession = readLastRepositorySession()
+    if (!lastSession) {
+      return
+    }
+
+    const requested = repositories.find(
+      (repository) => repository.id === lastSession.repositoryId,
+    )
+    if (!requested) {
+      localStorage.removeItem(getLastRepositorySessionStorageKey())
+      return
+    }
+
+    setActiveRepository(requested)
+    navigate({
+      to: "/",
+      search: {
+        repository: lastSession.repositoryId,
+        session: lastSession.sessionId,
+      },
+      replace: true,
+    })
+  }, [
+    navigate,
+    repositories,
+    repositoriesQuery.isLoading,
+    selectedRepositoryId,
+  ])
   const sessionsQuery = useQuery({
     queryKey: ["sessions", activeRepository?.id],
     queryFn: () =>
@@ -161,6 +206,17 @@ function CopilotShell() {
       getRepositorySessionStorageKey(activeRepository.id),
       sessionId,
     )
+    localStorage.setItem(
+      getLastRepositorySessionStorageKey(),
+      JSON.stringify({
+        repositoryId: activeRepository.id,
+        sessionId,
+      }),
+    )
+    navigate({
+      to: "/",
+      search: { repository: activeRepository.id, session: sessionId },
+    })
     const history = await SessionsService.readRepositorySessionHistory({
       repositorySessionId: sessionId,
     })
@@ -191,30 +247,92 @@ function CopilotShell() {
 
   useEffect(() => {
     if (!activeRepository || activeRepository.status !== "ready") {
-      setActiveSessionId(null)
-      setChatMessages([])
+      setActiveSessionId((current) => (current === null ? current : null))
+      setChatMessages((messages) => (messages.length === 0 ? messages : []))
+      return
+    }
+
+    if (isCreatingSession) {
+      return
+    }
+
+    if (sessionsQuery.isLoading) {
       return
     }
 
     const storedSessionId = localStorage.getItem(
       getRepositorySessionStorageKey(activeRepository.id),
     )
-    if (storedSessionId) {
-      setActiveSessionId(storedSessionId)
+    const nextSessionId = selectedSessionId ?? storedSessionId
+    if (nextSessionId) {
+      if (activeSessionId === nextSessionId) {
+        return
+      }
+
+      const sessionIsAccessible = sessions.some(
+        (session) => session.id === nextSessionId,
+      )
+      if (!sessionIsAccessible) {
+        if (storedSessionId === nextSessionId) {
+          localStorage.removeItem(
+            getRepositorySessionStorageKey(activeRepository.id),
+          )
+        }
+        const lastSession = readLastRepositorySession()
+        if (
+          lastSession?.repositoryId === activeRepository.id &&
+          lastSession.sessionId === nextSessionId
+        ) {
+          localStorage.removeItem(getLastRepositorySessionStorageKey())
+        }
+        setActiveSessionId(null)
+        setChatMessages([])
+        if (selectedSessionId) {
+          navigate({
+            to: "/",
+            search: { repository: activeRepository.id },
+            replace: true,
+          })
+        }
+        return
+      }
+
+      localStorage.setItem(
+        getRepositorySessionStorageKey(activeRepository.id),
+        nextSessionId,
+      )
+      localStorage.setItem(
+        getLastRepositorySessionStorageKey(),
+        JSON.stringify({
+          repositoryId: activeRepository.id,
+          sessionId: nextSessionId,
+        }),
+      )
+      setActiveSessionId(nextSessionId)
+      if (!selectedSessionId) {
+        navigate({
+          to: "/",
+          search: { repository: activeRepository.id, session: nextSessionId },
+          replace: true,
+        })
+      }
       SessionsService.readRepositorySessionHistory({
-        repositorySessionId: storedSessionId,
+        repositorySessionId: nextSessionId,
       }).then((history) => setChatMessages(toChatMessages(history.data)))
       return
     }
 
-    createRepositorySession({
-      repositoryId: activeRepository.id,
-      queryClient,
-      setActiveSessionId,
-      setChatMessages,
-      setIsCreatingSession,
-    })
-  }, [activeRepository, queryClient])
+    setActiveSessionId(null)
+    setChatMessages([])
+  }, [
+    activeRepository,
+    activeSessionId,
+    isCreatingSession,
+    navigate,
+    selectedSessionId,
+    sessions,
+    sessionsQuery.isLoading,
+  ])
 
   if (!repositoriesQuery.isLoading && repositories.length === 0) {
     return <RepositoryEmptyState />
@@ -253,21 +371,37 @@ function CopilotShell() {
           </div>
           <RepositorySelector
             activeRepository={activeRepository}
+            activeSessionId={activeSessionId}
+            isCreatingSession={isCreatingSession}
+            isSessionsLoading={sessionsQuery.isLoading}
             repositories={repositories}
+            sessions={sessions}
+            onCreateSession={() => {
+              if (!activeRepository) {
+                return
+              }
+              setStageStatus([])
+              setStreamError(null)
+              createRepositorySession({
+                repositoryId: activeRepository.id,
+                navigate,
+                queryClient,
+                setActiveSessionId,
+                setChatMessages,
+                setIsCreatingSession,
+              })
+            }}
             onSelectRepository={(repository) => {
               setActiveRepository(repository)
               setStageStatus([])
               setStreamError(null)
+              navigate({
+                to: "/",
+                search: { repository: repository.id },
+              })
             }}
+            onSelectSession={handleSelectSession}
           />
-          {isRepositoryReady ? (
-            <SessionList
-              sessions={sessions}
-              activeSessionId={activeSessionId}
-              isLoading={sessionsQuery.isLoading}
-              onSelectSession={handleSelectSession}
-            />
-          ) : null}
         </section>
 
         {activeRepository && activeRepository.status !== "ready" ? (
@@ -290,35 +424,14 @@ function CopilotShell() {
                 >
                   Update token
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={
-                    activeRepository?.status !== "ready" || isCreatingSession
-                  }
-                  onClick={() => {
-                    if (!activeRepository) {
-                      return
-                    }
-                    setStageStatus([])
-                    setStreamError(null)
-                    createRepositorySession({
-                      repositoryId: activeRepository.id,
-                      queryClient,
-                      setActiveSessionId,
-                      setChatMessages,
-                      setIsCreatingSession,
-                    })
-                  }}
-                >
-                  New Session
-                </Button>
               </div>
             </div>
             <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6 text-sm">
               {chatMessages.length === 0 ? (
                 <div className="flex flex-1 items-center justify-center text-center text-muted-foreground">
-                  {getChatStatusMessage(activeRepository)}
+                  {activeSessionId && activeRepository?.status === "ready"
+                    ? `Chat is ready for ${activeRepository.name}.`
+                    : getChatStatusMessage(activeRepository)}
                 </div>
               ) : (
                 chatMessages.map((message) => (
@@ -587,12 +700,24 @@ function RepositoryEmptyState() {
 
 function RepositorySelector({
   activeRepository,
+  activeSessionId,
+  isCreatingSession,
+  isSessionsLoading,
+  sessions,
   repositories,
+  onCreateSession,
   onSelectRepository,
+  onSelectSession,
 }: {
   activeRepository: RepositoryPublic | null
+  activeSessionId: string | null
+  isCreatingSession: boolean
+  isSessionsLoading: boolean
+  sessions: RepositorySessionPublic[]
   repositories: RepositoryPublic[]
+  onCreateSession: () => void
   onSelectRepository: (repository: RepositoryPublic) => void
+  onSelectSession: (sessionId: string) => void
 }) {
   if (repositories.length === 0) {
     return (
@@ -604,31 +729,49 @@ function RepositorySelector({
 
   return (
     <div className="flex flex-col gap-2">
-      {repositories.map((repository) => (
-        <Button
-          key={repository.id}
-          type="button"
-          variant="outline"
-          aria-pressed={activeRepository?.id === repository.id}
-          className="h-auto justify-start p-3 text-left"
-          onClick={() => onSelectRepository(repository)}
-        >
-          <span className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="flex items-center justify-between gap-2">
-              <span className="truncate font-medium">{repository.name}</span>
-              <Badge variant="secondary">{repository.status}</Badge>
-            </span>
-            <span className="truncate text-xs text-muted-foreground">
-              {repository.owner}/{repository.name}
-            </span>
-            {repository.status === "failed" && repository.failed_reason ? (
-              <span className="text-xs text-destructive">
-                {repository.failed_reason}
+      {repositories.map((repository) => {
+        const isExpanded = activeRepository?.id === repository.id
+
+        return (
+          <div key={repository.id} className="grid gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              aria-expanded={isExpanded}
+              aria-pressed={isExpanded}
+              className="h-auto justify-start p-3 text-left"
+              onClick={() => onSelectRepository(repository)}
+            >
+              <span className="flex min-w-0 flex-1 flex-col gap-1">
+                <span className="flex items-center justify-between gap-2">
+                  <span className="truncate font-medium">
+                    {repository.name}
+                  </span>
+                  <Badge variant="secondary">{repository.status}</Badge>
+                </span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {repository.owner}/{repository.name}
+                </span>
+                {repository.status === "failed" && repository.failed_reason ? (
+                  <span className="text-xs text-destructive">
+                    {repository.failed_reason}
+                  </span>
+                ) : null}
               </span>
+            </Button>
+            {isExpanded && repository.status === "ready" ? (
+              <SessionList
+                activeSessionId={activeSessionId}
+                isCreatingSession={isCreatingSession}
+                isLoading={isSessionsLoading}
+                sessions={sessions}
+                onCreateSession={onCreateSession}
+                onSelectSession={onSelectSession}
+              />
             ) : null}
-          </span>
-        </Button>
-      ))}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -636,17 +779,32 @@ function RepositorySelector({
 function SessionList({
   sessions,
   activeSessionId,
+  isCreatingSession,
   isLoading,
+  onCreateSession,
   onSelectSession,
 }: {
   sessions: RepositorySessionPublic[]
   activeSessionId: string | null
+  isCreatingSession: boolean
   isLoading: boolean
+  onCreateSession: () => void
   onSelectSession: (sessionId: string) => void
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <h3 className="text-sm font-semibold">Sessions</h3>
+    <div className="ml-3 flex flex-col gap-2 border-l pl-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">Sessions</h3>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={isCreatingSession}
+          onClick={onCreateSession}
+        >
+          New Session
+        </Button>
+      </div>
       {isLoading ? (
         <p className="text-xs text-muted-foreground">Loading sessions...</p>
       ) : sessions.length === 0 ? (
@@ -947,7 +1105,7 @@ function getChatStatusMessage(repository: RepositoryPublic | null) {
   }
 
   if (repository.status === "ready") {
-    return `Chat is ready for ${repository.name}.`
+    return "Start a new session"
   }
 
   if (repository.status === "failed") {
@@ -965,6 +1123,41 @@ function getRepositorySessionStorageKey(repositoryId: string) {
   return `repository-session:${repositoryId}`
 }
 
+function getLastRepositorySessionStorageKey() {
+  return "repository-session:last"
+}
+
+function readLastRepositorySession(): {
+  repositoryId: string
+  sessionId: string
+} | null {
+  const value = localStorage.getItem(getLastRepositorySessionStorageKey())
+  if (!value) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(value) as {
+      repositoryId?: unknown
+      sessionId?: unknown
+    }
+
+    if (
+      typeof parsed.repositoryId === "string" &&
+      typeof parsed.sessionId === "string"
+    ) {
+      return {
+        repositoryId: parsed.repositoryId,
+        sessionId: parsed.sessionId,
+      }
+    }
+  } catch {
+    localStorage.removeItem(getLastRepositorySessionStorageKey())
+  }
+
+  return null
+}
+
 function toChatMessages(history: SessionHistoryPublic[]): ChatMessage[] {
   return history.map((message) => ({
     id: message.id,
@@ -975,12 +1168,14 @@ function toChatMessages(history: SessionHistoryPublic[]): ChatMessage[] {
 }
 
 async function createRepositorySession({
+  navigate,
   repositoryId,
   queryClient,
   setActiveSessionId,
   setChatMessages,
   setIsCreatingSession,
 }: {
+  navigate: ReturnType<typeof Route.useNavigate>
   repositoryId: string
   queryClient: ReturnType<typeof useQueryClient>
   setActiveSessionId: React.Dispatch<React.SetStateAction<string | null>>
@@ -998,8 +1193,19 @@ async function createRepositorySession({
       getRepositorySessionStorageKey(repositoryId),
       sessionId,
     )
+    localStorage.setItem(
+      getLastRepositorySessionStorageKey(),
+      JSON.stringify({
+        repositoryId,
+        sessionId,
+      }),
+    )
     setActiveSessionId(sessionId)
     setChatMessages([])
+    navigate({
+      to: "/",
+      search: { repository: repositoryId, session: sessionId },
+    })
 
     const history = await SessionsService.readRepositorySessionHistory({
       repositorySessionId: sessionId,
