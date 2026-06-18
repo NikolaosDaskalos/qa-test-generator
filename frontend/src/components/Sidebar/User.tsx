@@ -1,4 +1,5 @@
-import { ChevronsUpDown, LogOut } from "lucide-react"
+import { Link as RouterLink } from "@tanstack/react-router"
+import { ChevronsUpDown, LogOut, Settings } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -43,7 +44,10 @@ export function User() {
   const { logout, user } = useAuth()
   const { isMobile, setOpenMobile } = useSidebar()
 
-  if (!user) return null
+  // Render the menu even when the user hasn't loaded (e.g. an expired token
+  // that hasn't been rejected yet) so the Log Out action is always reachable.
+  const fullName = user?.full_name || "User"
+  const email = user?.email
 
   const handleMenuClick = () => {
     if (isMobile) {
@@ -64,7 +68,7 @@ export function User() {
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
               data-testid="user-menu"
             >
-              <UserInfo fullName={user?.full_name} email={user?.email} />
+              <UserInfo fullName={fullName} email={email} />
               <ChevronsUpDown className="ml-auto size-4 text-muted-foreground" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
@@ -75,9 +79,15 @@ export function User() {
             sideOffset={4}
           >
             <DropdownMenuLabel className="p-0 font-normal">
-              <UserInfo fullName={user?.full_name} email={user?.email} />
+              <UserInfo fullName={fullName} email={email} />
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <RouterLink to="/settings" onClick={handleMenuClick}>
+              <DropdownMenuItem>
+                <Settings />
+                User Settings
+              </DropdownMenuItem>
+            </RouterLink>
             <DropdownMenuItem
               onClick={() => {
                 handleMenuClick()
