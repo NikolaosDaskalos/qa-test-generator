@@ -144,7 +144,7 @@ def test_count_totals_all_matches_independent_of_the_page_window() -> None:
     assert total == 3
 
 
-def test_recent_history_returns_latest_six_messages_in_chronological_order() -> None:
+def test_recent_history_returns_latest_messages_in_chronological_order() -> None:
     engine = _engine()
     owner_id = uuid.uuid4()
     repository_id = uuid.uuid4()
@@ -165,6 +165,8 @@ def test_recent_history_returns_latest_six_messages_in_chronological_order() -> 
         messages = store.get_recent_history(repository_session_id)
 
     assert [(message.role, message.content) for message in messages] == [
+        (SessionMessageRole.user, "question 1"),
+        (SessionMessageRole.assistant, "answer 1"),
         (SessionMessageRole.user, "question 2"),
         (SessionMessageRole.assistant, "answer 2"),
         (SessionMessageRole.user, "question 3"),
@@ -203,6 +205,118 @@ def test_append_exchange_retains_assistant_citations_structurally() -> None:
     assert assistant_message.citations == [{"source": "app/auth.py"}, {"source": "app/login.py"}]
     # The user message carries no citations.
     assert user_message.citations == []
+
+
+def test_first_user_exchange_titles_session_and_updates_activity() -> None:
+    engine = _engine()
+    owner_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    repository_session_id = uuid.uuid4()
+    created_at = datetime(2026, 6, 18, 9, 0, tzinfo=UTC)
+
+    with Session(engine) as db:
+        db.add(User(id=owner_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(
+            Repository(id=repository_id, user_id=owner_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+        )
+        db.add(
+            RepositorySession(
+                id=repository_session_id,
+                owner_id=owner_id,
+                repository_id=repository_id,
+                title="New session",
+                created_at=created_at,
+                updated_at=created_at,
+            )
+        )
+        db.commit()
+        store = RepositorySessionStore(db)
+
+        store.append_exchange(
+            repository_session_id,
+            user_message="  Where   is the login route tested, and what assertions cover it in enough detail to make this title too long?  ",
+            assistant_message="Login is route-tested.",
+        )
+
+        reloaded = store.get_by_id(repository_session_id)
+
+    assert reloaded is not None
+    assert reloaded.title == "Where is the login route tested, and what assertions cover"
+    assert len(reloaded.title) <= 60
+    updated_at = reloaded.updated_at if reloaded.updated_at.tzinfo else reloaded.updated_at.replace(tzinfo=UTC)
+    assert updated_at > created_at
+
+
+def test_later_exchange_updates_activity_without_overwriting_derived_title() -> None:
+    engine = _engine()
+    owner_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    repository_session_id = uuid.uuid4()
+    previous_activity = datetime(2026, 6, 18, 9, 0, tzinfo=UTC)
+
+    with Session(engine) as db:
+        db.add(User(id=owner_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(
+            Repository(id=repository_id, user_id=owner_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+        )
+        db.add(
+            RepositorySession(
+                id=repository_session_id,
+                owner_id=owner_id,
+                repository_id=repository_id,
+                title="Where is login tested?",
+                updated_at=previous_activity,
+            )
+        )
+        db.commit()
+        store = RepositorySessionStore(db)
+
+        store.append_exchange(
+            repository_session_id,
+            user_message="Generate pytest coverage for password reset.",
+            assistant_message="I will start a Coding Run.",
+        )
+
+        reloaded = store.get_by_id(repository_session_id)
+
+    assert reloaded is not None
+    assert reloaded.title == "Where is login tested?"
+    updated_at = reloaded.updated_at if reloaded.updated_at.tzinfo else reloaded.updated_at.replace(tzinfo=UTC)
+    assert updated_at > previous_activity
+
+
+def test_record_activity_updates_time_without_changing_title() -> None:
+    engine = _engine()
+    owner_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    repository_session_id = uuid.uuid4()
+    previous_activity = datetime(2026, 6, 18, 9, 0, tzinfo=UTC)
+
+    with Session(engine) as db:
+        db.add(User(id=owner_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(
+            Repository(id=repository_id, user_id=owner_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+        )
+        db.add(
+            RepositorySession(
+                id=repository_session_id,
+                owner_id=owner_id,
+                repository_id=repository_id,
+                title="Where is login tested?",
+                updated_at=previous_activity,
+            )
+        )
+        db.commit()
+        store = RepositorySessionStore(db)
+
+        store.record_activity(repository_session_id)
+
+        reloaded = store.get_by_id(repository_session_id)
+
+    assert reloaded is not None
+    assert reloaded.title == "Where is login tested?"
+    updated_at = reloaded.updated_at if reloaded.updated_at.tzinfo else reloaded.updated_at.replace(tzinfo=UTC)
+    assert updated_at > previous_activity
 
 
 def test_append_exchange_locks_repository_session_before_allocating_positions() -> None:

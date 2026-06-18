@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.enums.coding_run import CodingRunStage, CodingRunStatus
 from app.enums.session import SessionMessageRole
+from app.models.session import NEW_SESSION_TITLE
 from app.schemas.agent_stream import REVIEW_DISCLAIMER, Citation
 from app.schemas.generation import ExternalReference, GeneratedFile
 from app.schemas.review import ReviewFinding
@@ -12,7 +13,7 @@ from app.schemas.review import ReviewFinding
 
 class RepositorySessionCreate(BaseModel):
     repository_id: uuid.UUID
-    title: str = Field(default="New Repository Session", min_length=1, max_length=255)
+    title: str = Field(default=NEW_SESSION_TITLE, min_length=1, max_length=255)
 
 
 class HumanDecisionRequest(BaseModel):

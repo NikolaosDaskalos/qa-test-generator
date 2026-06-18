@@ -13,7 +13,7 @@ from app.models.user import User
 from app.persistence.coding_run_store import CodingRunStore
 from app.persistence.repository_store import RepositoryStore
 from app.persistence.session_store import RepositorySessionStore
-from app.schemas.agent_stream import AgentStreamEvent, Result
+from app.schemas.agent_stream import AgentStreamEvent, Result, RunApproved, RunRejected
 from app.schemas.session import HumanDecisionRequest, RepositorySessionCreate, RepositorySessionsPublic
 from app.services.repository_session_execution import RepositorySessionExecution
 
@@ -35,7 +35,7 @@ class RepositorySessionService:
         if repository.status != RepositoryStatus.ready:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository is not ready")
 
-        return self.session_store.save(RepositorySession(owner_id=user.id, repository_id=repository.id, title=session_in.title))
+        return self.session_store.save(RepositorySession(owner_id=user.id, repository_id=repository.id))
 
     def list_sessions(self, *, user: User, repository_id: uuid.UUID | None, skip: int, limit: int) -> RepositorySessionsPublic:
         """List the caller's Repository Sessions, optionally filtered to one Repository.
@@ -104,6 +104,7 @@ class RepositorySessionService:
             return self._resume_decision(repository_session_id=repository_session_id, user=user, decision=decision, graph=graph)
 
         repository_session = self._get_accessible(repository_session_id, user)
+        self.session_store.record_user_activity(repository_session.id, user_message=question)
         repository = self.repository_store.get_by_id(repository_session.repository_id)
         context = RepositorySessionExecution.assemble(
             repository_session=repository_session, repository=repository, history=self.session_store.get_recent_history(repository_session.id)
@@ -150,7 +151,10 @@ class RepositorySessionService:
         """Resume a paused Coding Run and relay node-emitted terminal events."""
         config = {"configurable": {"thread_id": run.thread_id}}
         command = Command(resume={"approved": decision.approved, "feedback": decision.feedback})
-        yield from map_graph_stream(graph.stream(command, config=config, stream_mode=["custom", "messages"]))
+        for event in map_graph_stream(graph.stream(command, config=config, stream_mode=["custom", "messages"])):
+            if isinstance(event, RunApproved | RunRejected):
+                self.session_store.record_activity(run.repository_session_id)
+            yield event
 
     @staticmethod
     def _assert_checkpoint_awaits_decision(run: CodingRun, graph: Any) -> None:

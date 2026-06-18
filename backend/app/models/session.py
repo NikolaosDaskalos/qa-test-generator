@@ -17,6 +17,11 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
+NEW_SESSION_TITLE = "New session"
+LEGACY_NEW_SESSION_TITLE = "New Repository Session"
+MAX_DERIVED_SESSION_TITLE_LENGTH = 60
+
+
 class CitationData(TypedDict):
     """A Repository source retained alongside a persisted assistant message."""
 
@@ -27,7 +32,7 @@ class RepositorySession(SQLModel, table=True):
     __tablename__ = "repository_session"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    title: str = Field(default="New Repository Session", min_length=1, max_length=255)
+    title: str = Field(default=NEW_SESSION_TITLE, min_length=1, max_length=255)
     owner_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, index=True, ondelete="CASCADE")
     repository_id: uuid.UUID = Field(foreign_key="repository.id", nullable=False, index=True, ondelete="CASCADE")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), sa_type=DateTime(timezone=True))  # type: ignore

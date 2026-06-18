@@ -30,6 +30,7 @@ class FakeSessionStore:
     def __init__(self, repository_session: RepositorySession) -> None:
         self.repository_session = repository_session
         self.appended = []
+        self.activity = []
 
     def get_by_id(self, repository_session_id):
         return self.repository_session if self.repository_session.id == repository_session_id else None
@@ -41,6 +42,12 @@ class FakeSessionStore:
         self.appended.append((repository_session_id, user_message, assistant_message, assistant_citations))
         assistant = SessionHistory(id=uuid.uuid4(), session_id=repository_session_id, role="assistant", content=assistant_message, position=2)
         return SimpleNamespace(), assistant
+
+    def record_user_activity(self, repository_session_id, *, user_message):
+        self.activity.append((repository_session_id, user_message))
+
+    def record_activity(self, repository_session_id):
+        self.activity.append((repository_session_id, None))
 
 
 class FakeGraph:
@@ -129,6 +136,7 @@ def test_stream_session_emits_run_failure_terminal_for_rejected_task():
     assert terminal.coding_run_id == run_id
     # A rejected task never persists a session exchange.
     assert session_store.appended == []
+    assert session_store.activity == [(repository_session.id, "refactor")]
 
 
 
@@ -220,6 +228,7 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
     assert config["configurable"]["thread_id"] == "t-paused"
     # Resuming a decision never persists a session answer exchange.
     assert session_store.appended == []
+    assert session_store.activity == [(repository_session.id, None)]
 
 
 def test_stream_session_relays_resume_terminal_without_scanning_stale_final_state():

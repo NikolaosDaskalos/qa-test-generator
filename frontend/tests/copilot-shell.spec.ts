@@ -505,7 +505,7 @@ test("User can ask a ready Repository question and see streamed answer citations
     await route.fulfill({
       json: {
         id: "session-ready",
-        title: "New Repository Session",
+        title: "New session",
         owner_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
@@ -552,6 +552,108 @@ test("User can ask a ready Repository question and see streamed answer citations
   await expect(page.getByText("retrieving")).toBeVisible()
   await expect(page.getByText("Login is tested.")).toBeVisible()
   await expect(page.getByText("frontend/tests/login.spec.ts")).toBeVisible()
+})
+
+test("First Repository Session request refreshes the sidebar title", async ({
+  page,
+}) => {
+  let sessionListRequests = 0
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    sessionListRequests += 1
+    await route.fulfill({
+      json:
+        sessionListRequests === 1
+          ? { data: [], count: 0 }
+          : {
+              data: [
+                {
+                  id: "session-ready",
+                  title:
+                    sessionListRequests === 2
+                      ? "New session"
+                      : "Where is the login route tested?",
+                  owner_id: "user-1",
+                  repository_id: "repo-ready",
+                  created_at: "2026-06-17T09:00:00Z",
+                  updated_at:
+                    sessionListRequests === 2
+                      ? "2026-06-17T09:00:00Z"
+                      : "2026-06-17T09:10:00Z",
+                },
+              ],
+              count: 1,
+            },
+    })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    expect(route.request().method()).toBe("POST")
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        owner_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"stage","stage":"retrieving"}\n\n',
+          'data: {"type":"result","answer":"Login is tested.","citations":[]}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+  await expect(page.getByRole("button", { name: /New session/i })).toBeVisible()
+
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Where is the login route tested?")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(
+    page.getByRole("button", { name: /Where is the login route tested?/i }),
+  ).toBeVisible()
 })
 
 test("Selecting a ready Repository resumes stored Repository Session history", async ({
@@ -718,7 +820,7 @@ test("New Session creates a fresh Repository Session and clears chat", async ({
     await route.fulfill({
       json: {
         id: "session-new",
-        title: "New Repository Session",
+        title: "New session",
         owner_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:10:00Z",
@@ -781,7 +883,7 @@ test("Question stream transport errors are shown without crashing", async ({
     await route.fulfill({
       json: {
         id: "session-ready",
-        title: "New Repository Session",
+        title: "New session",
         owner_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
@@ -849,7 +951,7 @@ test("User can request test generation and see the reviewed Test Patch", async (
     await route.fulfill({
       json: {
         id: "session-ready",
-        title: "New Repository Session",
+        title: "New session",
         owner_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
@@ -949,7 +1051,7 @@ test("User can approve a reviewed Test Patch and see the pushed branch", async (
     await route.fulfill({
       json: {
         id: "session-ready",
-        title: "New Repository Session",
+        title: "New session",
         owner_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
@@ -1057,7 +1159,7 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
     await route.fulfill({
       json: {
         id: "session-ready",
-        title: "New Repository Session",
+        title: "New session",
         owner_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
@@ -1163,7 +1265,7 @@ test("Failed test generation renders the failed stage and sanitized reason", asy
     await route.fulfill({
       json: {
         id: "session-ready",
-        title: "New Repository Session",
+        title: "New session",
         owner_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
@@ -1247,7 +1349,7 @@ test("Repository questions and test generation coexist in one chat history", asy
     await route.fulfill({
       json: {
         id: "session-ready",
-        title: "New Repository Session",
+        title: "New session",
         owner_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",

@@ -175,6 +175,21 @@ def test_user_cannot_create_session_until_repository_is_ready() -> None:
     assert session_store.saved == []
 
 
+def test_create_session_uses_blank_placeholder_title() -> None:
+    owner_id = uuid.uuid4()
+    repository = _repository(owner_id)
+    session_store = FakeRepositorySessionStore()
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+
+    created = service.create_session(
+        session_in=RepositorySessionCreate(repository_id=repository.id, title="Client supplied title"),
+        user=_user(owner_id),
+    )
+
+    assert created.title == "New session"
+    assert session_store.saved[0].title == "New session"
+
+
 def test_user_cannot_read_another_users_session_history() -> None:
     repository_session = RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4())
     service = RepositorySessionService(FakeRepositorySessionStore(repository_session), FakeRepositoryStore(None))

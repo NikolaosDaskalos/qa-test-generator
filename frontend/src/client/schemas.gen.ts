@@ -488,7 +488,7 @@ export const RepositorySessionCreateSchema = {
             maxLength: 255,
             minLength: 1,
             title: 'Title',
-            default: 'New Repository Session'
+            default: 'New session'
         }
     },
     type: 'object',

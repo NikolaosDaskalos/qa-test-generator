@@ -456,10 +456,12 @@ function CopilotShell() {
                         message={message}
                         review={message.review}
                         onDecision={(decision) => {
-                          if (!activeSessionId) {
+                          if (!activeSessionId || !activeRepository) {
                             return
                           }
                           submitDecision({
+                            queryClient,
+                            repositoryId: activeRepository.id,
                             repositorySessionId: activeSessionId,
                             decision,
                             setChatMessages,
@@ -501,10 +503,12 @@ function CopilotShell() {
               className="flex gap-3 border-t p-4"
               onSubmit={(event) => {
                 event.preventDefault()
-                if (!activeSessionId || !question.trim()) {
+                if (!activeSessionId || !activeRepository || !question.trim()) {
                   return
                 }
                 submitQuestion({
+                  queryClient,
+                  repositoryId: activeRepository.id,
                   repositorySessionId: activeSessionId,
                   question: question.trim(),
                   setChatMessages,
@@ -1218,6 +1222,8 @@ async function createRepositorySession({
 }
 
 async function submitQuestion({
+  queryClient,
+  repositoryId,
   repositorySessionId,
   question,
   setChatMessages,
@@ -1225,6 +1231,8 @@ async function submitQuestion({
   setStageStatus,
   setStreamError,
 }: {
+  queryClient: ReturnType<typeof useQueryClient>
+  repositoryId: string
   repositorySessionId: string
   question: string
   setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
@@ -1253,96 +1261,102 @@ async function submitQuestion({
     },
   ])
 
-  for await (const event of askRepositoryQuestionStream({
-    repositorySessionId,
-    question,
-  })) {
-    if (event.type === "stage") {
-      setStageStatus((stages) =>
-        stages.includes(event.stage) ? stages : [...stages, event.stage],
-      )
-    }
+  try {
+    for await (const event of askRepositoryQuestionStream({
+      repositorySessionId,
+      question,
+    })) {
+      if (event.type === "stage") {
+        setStageStatus((stages) =>
+          stages.includes(event.stage) ? stages : [...stages, event.stage],
+        )
+      }
 
-    if (event.type === "token") {
-      setChatMessages((messages) =>
-        messages.map((message) =>
-          message.id === assistantMessageId
-            ? { ...message, content: `${message.content}${event.content}` }
-            : message,
-        ),
-      )
-    }
+      if (event.type === "token") {
+        setChatMessages((messages) =>
+          messages.map((message) =>
+            message.id === assistantMessageId
+              ? { ...message, content: `${message.content}${event.content}` }
+              : message,
+          ),
+        )
+      }
 
-    if (event.type === "result") {
-      setChatMessages((messages) =>
-        messages.map((message) =>
-          message.id === assistantMessageId
-            ? {
-                ...message,
-                content: event.answer,
-                citations: event.citations,
-              }
-            : message,
-        ),
-      )
-    }
+      if (event.type === "result") {
+        setChatMessages((messages) =>
+          messages.map((message) =>
+            message.id === assistantMessageId
+              ? {
+                  ...message,
+                  content: event.answer,
+                  citations: event.citations,
+                }
+              : message,
+          ),
+        )
+      }
 
-    if (event.type === "run_started") {
-      setChatMessages((messages) =>
-        messages.map((message) =>
-          message.id === assistantMessageId
-            ? { ...message, codingRunId: event.coding_run_id }
-            : message,
-        ),
-      )
-    }
+      if (event.type === "run_started") {
+        setChatMessages((messages) =>
+          messages.map((message) =>
+            message.id === assistantMessageId
+              ? { ...message, codingRunId: event.coding_run_id }
+              : message,
+          ),
+        )
+      }
 
-    if (event.type === "review_result" && isReviewResultEvent(event)) {
-      setChatMessages((messages) =>
-        messages.map((message) =>
-          message.id === assistantMessageId
-            ? {
-                ...message,
-                codingRunId: event.coding_run_id,
-                review: {
-                  accepted: event.accepted,
-                  score: event.score,
-                  threshold: event.threshold,
-                  findings: event.findings,
-                  diff: event.diff,
-                  disclaimer: event.disclaimer,
-                },
-              }
-            : message,
-        ),
-      )
-    }
+      if (event.type === "review_result" && isReviewResultEvent(event)) {
+        setChatMessages((messages) =>
+          messages.map((message) =>
+            message.id === assistantMessageId
+              ? {
+                  ...message,
+                  codingRunId: event.coding_run_id,
+                  review: {
+                    accepted: event.accepted,
+                    score: event.score,
+                    threshold: event.threshold,
+                    findings: event.findings,
+                    diff: event.diff,
+                    disclaimer: event.disclaimer,
+                  },
+                }
+              : message,
+          ),
+        )
+      }
 
-    if (event.type === "run_failure" && isRunFailureEvent(event)) {
-      setChatMessages((messages) =>
-        messages.map((message) =>
-          message.id === assistantMessageId
-            ? {
-                ...message,
-                codingRunId: event.coding_run_id ?? undefined,
-                failure: {
-                  failedStage: event.failed_stage,
-                  reason: event.reason,
-                },
-              }
-            : message,
-        ),
-      )
-    }
+      if (event.type === "run_failure" && isRunFailureEvent(event)) {
+        setChatMessages((messages) =>
+          messages.map((message) =>
+            message.id === assistantMessageId
+              ? {
+                  ...message,
+                  codingRunId: event.coding_run_id ?? undefined,
+                  failure: {
+                    failedStage: event.failed_stage,
+                    reason: event.reason,
+                  },
+                }
+              : message,
+          ),
+        )
+      }
 
-    if (event.type === "transport_error") {
-      setStageStatus([])
-      setStreamError(event.message)
+      if (event.type === "transport_error") {
+        setStageStatus([])
+        setStreamError(event.message)
+      }
     }
+  } finally {
+    queryClient.invalidateQueries({ queryKey: ["sessions", repositoryId] })
   }
 }
 
 async function submitDecision({
+  queryClient,
+  repositoryId,
   repositorySessionId,
   decision,
   setChatMessages,
@@ -1350,6 +1364,8 @@ async function submitDecision({
   setStageStatus,
   setStreamError,
 }: {
+  queryClient: ReturnType<typeof useQueryClient>
+  repositoryId: string
   repositorySessionId: string
   decision: HumanDecisionRequest
   setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
@@ -1415,6 +1431,7 @@ async function submitDecision({
       }
     }
   } finally {
+    queryClient.invalidateQueries({ queryKey: ["sessions", repositoryId] })
     setPendingDecisionRunId(null)
   }
 }

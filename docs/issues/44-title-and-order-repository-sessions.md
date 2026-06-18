@@ -1,6 +1,6 @@
 # Automatically title and order Repository Sessions by activity
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 21, 95-97
 
@@ -12,14 +12,14 @@ Treat user messages and resolved Coding Run decisions as Repository Session acti
 
 ## Acceptance criteria
 
-- [ ] A newly created Repository Session is persisted and displayed as “New session.”
-- [ ] Its first non-empty user request produces a deterministic, normalized title of at most 60 display characters without an LLM call.
-- [ ] Later requests do not overwrite the derived title.
-- [ ] Sending a user request updates Repository Session activity and moves it to the top of its Repository’s session list.
-- [ ] Resolving a Coding Run approval or rejection updates Repository Session activity without changing an established title.
-- [ ] Repository Sessions are returned and rendered newest-activity-first with deterministic tie-breaking.
-- [ ] Reloading or directly opening the session URL preserves the title and ordering.
-- [ ] Repository question, Test-Generation Task, decision, and stable-title behavior are covered across persistence, API, and UI tests.
+- [x] A newly created Repository Session is persisted and displayed as “New session.”
+- [x] Its first non-empty user request produces a deterministic, normalized title of at most 60 display characters without an LLM call.
+- [x] Later requests do not overwrite the derived title.
+- [x] Sending a user request updates Repository Session activity and moves it to the top of its Repository’s session list.
+- [x] Resolving a Coding Run approval or rejection updates Repository Session activity without changing an established title.
+- [x] Repository Sessions are returned and rendered newest-activity-first with deterministic tie-breaking.
+- [x] Reloading or directly opening the session URL preserves the title and ordering.
+- [x] Repository question, Test-Generation Task, decision, and stable-title behavior are covered across persistence, API, and UI tests.
 
 ## Blocked by
 
