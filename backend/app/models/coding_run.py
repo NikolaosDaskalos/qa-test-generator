@@ -1,4 +1,4 @@
-"""The ``CodingRun`` table: the durable record of one Test-Generation Task."""
+"""The ``CodingRun`` table: the durable record of one Code Generation Task."""
 
 import uuid
 from datetime import UTC, datetime
@@ -14,11 +14,11 @@ if TYPE_CHECKING:
 
 
 class CodingRun(SQLModel, table=True):
-    """A persisted Test-Generation Task: the durable domain record of one run.
+    """A persisted Code Generation Task: the durable domain record of one run.
 
     The graph checkpoint (keyed by ``thread_id``) holds in-flight state; this row
     is the record of truth for ownership, lifecycle state, failure, and the
-    revision count later stages depend on. The owning Repository is reached
+    legacy ``revision_count`` column retained for persisted compatibility. The owning Repository is reached
     through the Repository Session (immutably bound to one Repository), so it is
     not duplicated here.
     """

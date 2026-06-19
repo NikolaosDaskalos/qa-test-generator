@@ -1,4 +1,4 @@
-"""The ``test_generation`` planner node.
+"""The ``code_generation`` planner node.
 
 The planner validates that the request is about adding or improving tests and,
 when it is, emits the Retrieval Requests the run should use to gather Repository
@@ -31,7 +31,7 @@ class PlannerOutput(BaseModel):
 
 
 def build_plan_node(planner_llm, recorder):
-    """Build the planner node, the test-generation branch entry point.
+    """Build the planner node, the code-generation branch entry point.
 
     Planning owns the Coding Run's birth: it creates the queued run (minting
     ``coding_run_id``), advances it into the planning stage, and emits the

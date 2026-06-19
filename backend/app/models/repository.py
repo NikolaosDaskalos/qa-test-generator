@@ -17,7 +17,7 @@ class Repository(SQLModel, table=True):
     """A Git repository registered by a user, unique per ``(user_id, repository_url)``.
 
     Holds the access token (encrypted at rest) and the SHA of the commit that was
-    indexed, so retrieval and test generation work against a known checkout.
+    indexed, so retrieval and code generation work against a known checkout.
     """
 
     __tablename__ = "repository"

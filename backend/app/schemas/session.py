@@ -35,7 +35,7 @@ class HumanDecisionRequest(BaseModel):
 class RepositoryQuestionRequest(BaseModel):
     """One turn on a session stream: a new question or a decision resuming a paused run.
 
-    The same entry point both asks a repository-grounded/test-generation question and
+    The same entry point both asks a repository-grounded/code-generation question and
     delivers the owner's human-in-the-loop decision, so exactly one of ``question`` or
     ``decision`` must be present — never both, never neither.
     """

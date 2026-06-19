@@ -11,7 +11,7 @@ Demonstrate repository-grounded RAG and a bounded LangGraph code-generation work
 3. The user creates a repository session bound permanently to that repository.
 4. The user asks codebase questions and receives repository-grounded answers with file citations.
 5. The user submits a free-text Code Generation Task.
-6. A LangGraph workflow plans, retrieves Repository Documents, generates complete test files, reviews them, and may revise once.
+6. A LangGraph workflow plans, retrieves Repository Documents, generates complete test files, reviews them, and uses bounded Generation Retries when needed.
 7. The backend streams progress and the final diff through server-sent events.
 8. The user rejects the patch or approves a commit and push to a new non-default branch.
 
@@ -76,9 +76,9 @@ plan
   -> retrieve repository context
   -> generate test patch
   -> review patch
-  -> revise once when rejected
+  -> retry generation while below threshold and Generation Retries remain
   -> review patch
-  -> await human approval or fail
+  -> await human approval
 ```
 
 The planner emits Retrieval Requests and optional candidate paths. Candidate paths are hints only; the backend validates them and retrieval supplies the actual Repository Documents. The LLM receives no unrestricted filesystem tool.
@@ -155,7 +155,7 @@ rejected
 failed
 ```
 
-Only `awaiting_approval` may transition to `approved` or `rejected`. A second reviewer rejection transitions to `failed`. Approval performs commit and push; failure during either operation transitions to `failed`.
+Only `awaiting_approval` may transition to `approved` or `rejected`. Exhausting Generation Retries escalates the best Patch Review to the owner rather than failing the run. Approval performs commit and push; failure during either operation transitions to `failed`.
 
 Persist failures as:
 

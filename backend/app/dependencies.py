@@ -15,8 +15,8 @@ from pydantic import SecretStr, ValidationError
 from sqlmodel import Session
 
 from app.agent import build_graph
-from app.agent.agents.generator import ReActTestGenerator
-from app.agent.agents.reviewer import ReActPatchReviewer
+from app.agent.agents.code_generator import CodeGenerator
+from app.agent.agents.code_reviewer import CodeReviewer
 from app.core import WeaviateResources, engine, get_weaviate_resources, security, settings
 from app.models import User
 from app.persistence import CodingRunStore, RepositoryDocumentStore, RepositorySessionStore, RepositoryStore
@@ -198,7 +198,7 @@ def get_session_graph(
 
     Classifier and planner reuse the chat model via structured output; retrieval
     and generation reuse the repository-scoped components; the Coding Run recorder
-    persists the test-generation lifecycle. The durable
+    persists the code-generation lifecycle. The durable
     ``PostgresSaver`` checkpointer is the process-wide singleton opened in the
     application lifespan; only the (in-memory) graph wiring is rebuilt per request.
     """
@@ -207,8 +207,8 @@ def get_session_graph(
         retriever=document_retriever,
         llm=chat_model,
         planner_llm=chat_model,
-        generator=ReActTestGenerator(strong_chat_model),
-        reviewer=ReActPatchReviewer(strongest_chat_model),
+        code_generator=CodeGenerator(strong_chat_model),
+        code_reviewer=CodeReviewer(strongest_chat_model),
         run_recorder=CodingRunRecorder(coding_run_store),
         publisher_factory=build_patch_publisher_factory(repository_store),
         checkpointer=request.app.state.session_checkpointer,

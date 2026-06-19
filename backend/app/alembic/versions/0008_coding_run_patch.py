@@ -1,7 +1,7 @@
 """Persist the generated Test Patch on a Coding Run.
 
 Adds the generation branch, canonical diff, generated file proposals, and
-collected External References produced by the test-generation path.
+collected External References produced by the code-generation path.
 
 Revision ID: 0008_coding_run_patch
 Revises: 0007_coding_run

@@ -1,4 +1,4 @@
-"""The ``test_generation`` generic retrieve node.
+"""Nodes for the ``code_generation`` workflow.
 
 This node executes the planner's Retrieval Requests under the session's Repository
 identity. Each request's untrusted candidate paths are confined to the checkout
@@ -18,9 +18,9 @@ from app.core import settings
 from app.enums import CodingRunStage
 from app.schemas import ReviewFinding, ReviewResult, RunFailure, RunNoChanges, Stage
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
+from app.services.coding_runs.generation_retries import can_retry_generation, is_generation_retry, spend_generation_retry
 from app.services.coding_runs.patch_builder import PatchBuilder, PatchBuildRequest
 from app.services.coding_runs.repository_document_partitioner import RepositoryDocumentPartitioner, RepositoryDocumentPartitionRequest
-from app.services.coding_runs.revision_budget import can_revise, is_revision_attempt, spend_revision
 from app.services.coding_runs.test_file_validation import verify_test_file_boundary
 from app.streaming import emit
 
@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 
 # User-safe reasons for a generating-stage failure; never raw exception text.
 BRANCH_PREPARATION_FAILED = "Could not prepare a clean branch to generate tests on."
-GENERATION_FAILED = "The test generator could not produce a valid proposal."
-REVISION_FAILED = "The test generator could not revise its proposal."
+GENERATION_FAILED = "The code generator could not produce a valid proposal."
+REVISION_FAILED = "The code generator could not revise its proposal."
 # User-safe reasons for a reviewing-stage failure; never raw exception text.
-REVIEW_FAILED = "The patch reviewer could not complete its assessment."
+REVIEW_FAILED = "The Code Reviewer could not complete its assessment."
 # The prompt the human-in-the-loop interrupt surfaces while awaiting the owner's decision.
 AWAITING_DECISION_MESSAGE = "Review the generated Test Patch and approve or reject it."
 # An empty proposal scores zero deterministically; the backend, not the model, owns this.
@@ -70,10 +70,10 @@ def build_gather_documents_node(retriever, recorder):
 
 def _generating_failure(reason: str) -> dict:
     """Plain generating-stage failure state for the merged node's exception arms."""
-    return fail_state(RunFailure(failed_stage=CodingRunStage.generating, reason=reason), trace="generate_tests")
+    return fail_state(RunFailure(failed_stage=CodingRunStage.generating, reason=reason), trace="generate_code")
 
 
-def build_generate_tests_node(generator, workspace_factory, recorder):
+def build_generate_code_node(code_generator, workspace_factory, recorder):
     """Build the single node that runs the whole generating stage end-to-end.
 
     The node distinguishes its two passes by whether a prior ``review_result`` is on
@@ -81,16 +81,15 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
     whenever the post-review router routes a below-threshold patch back here. On the
     first pass it advances the run into generating, restores a clean generation branch
     at the indexed commit (the backend — never the model — owns this), and calls the
-    generator's initial generation. On a revision pass it skips branch preparation (the
-    branch already exists), calls the generator's revision with the prior proposal, the
-    reviewed canonical diff, and the reviewer's findings, and spends one unit of the
-    Revision Budget so the post-review router admits only as many revisions as the
-    budget allows before escalating to human review. The generator may call only the
+    Code Generator's initial generation. On a retry pass it skips branch preparation (the
+    branch already exists), calls the Code Generator's revision with the prior proposal,
+    the reviewed canonical diff, and the Code Reviewer's findings, and spends one
+    Generation Retry. The Code Generator may call only the
     bounded ``web_search`` tool — no shell or filesystem access.
 
     Either pass then validates, writes, and derives the canonical Test Patch through the
     deep ``PatchBuilder`` (a revision resets the prior patch first via the now-spent
-    ``is_revision_attempt`` signal). The node returns plain state — never a ``Command`` —
+    ``is_generation_retry`` signal). The node returns plain state — never a ``Command`` —
     leaving routing to ``build_generate_router``. Any generating-stage failure (branch
     preparation, generation, revision, or patch validation/build) is folded onto state
     as a user-safe ``RunFailure`` instead of escaping.
@@ -98,16 +97,16 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
 
     builder = PatchBuilder(workspace_factory=workspace_factory, recorder=recorder)
 
-    def generate_tests(state) -> dict:
+    def generate_code(state) -> dict:
         review: ReviewResult | None = state.get("review_result")
         # A prior review on state means the router routed a below-threshold patch back
-        # here for one more Revision Attempt; its absence is the first generation pass.
-        is_revision = review is not None
+        # here for one more Generation Retry; its absence is the first generation pass.
+        is_retry = review is not None
 
-        if is_revision:
+        if is_retry:
             emit(Stage(stage="revising"))
             try:
-                proposal = generator.revise(
+                proposal = code_generator.revise(
                     task=state["question"],
                     source_documents=state.get("source_documents") or [],
                     test_documents=state.get("test_documents") or [],
@@ -120,7 +119,7 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
                 return _generating_failure(REVISION_FAILED)
             generation_branch = state.get("generation_branch")
             external_references = proposal.external_references or state.get("external_references") or []
-            budget_update = spend_revision(state)
+            budget_update = spend_generation_retry(state)
         else:
             recorder.begin_generating(state["coding_run_id"])
             try:
@@ -131,11 +130,11 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
                 return _generating_failure(BRANCH_PREPARATION_FAILED)
             emit(Stage(stage="generating"))
             try:
-                proposal = generator.generate(
+                proposal = code_generator.generate(
                     task=state["question"], source_documents=state.get("source_documents") or [], test_documents=state.get("test_documents") or []
                 )
             except Exception:
-                logger.exception("Test generation failed")
+                logger.exception("Code generation failed")
                 return _generating_failure(GENERATION_FAILED)
             external_references = proposal.external_references
             budget_update = {}
@@ -144,14 +143,14 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
             PatchBuildRequest(
                 generated_files=proposal.generated_files,
                 checkout_root=state.get("checkout_root"),
-                is_revision_attempt=is_revision,
+                is_generation_retry=is_retry,
                 generation_branch=generation_branch,
                 coding_run_id=state.get("coding_run_id"),
                 external_references=external_references,
             )
         )
         if outcome.failure is not None:
-            return fail_state(outcome.failure, trace="generate_tests")
+            return fail_state(outcome.failure, trace="generate_code")
         patch_result = outcome.patch_result
         return {
             "generation_branch": generation_branch,
@@ -160,14 +159,14 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
             "patch_result": patch_result,
             "diff": patch_result.diff,
             **budget_update,
-            "trace": ["generate_tests"],
+            "trace": ["generate_code"],
         }
 
-    return generate_tests
+    return generate_code
 
 
 def build_generate_router():
-    """Build the router that drives the conditional edge off ``generate_tests``.
+    """Build the router that drives the conditional edge off ``generate_code``.
 
     Reading only the state the node wrote, it routes any generating-stage failure
     (branch preparation, generation, revision, or patch validation/build) to the
@@ -191,23 +190,23 @@ def _is_empty_patch(state) -> bool:
     return not (state.get("diff") or "").strip()
 
 
-def _post_review_route(review: ReviewResult | None, state, max_revision_attempts: int | None) -> Literal["revise", "escalate", "already_covered"]:
+def _post_review_route(review: ReviewResult | None, state, max_generation_retries: int | None) -> Literal["revise", "escalate", "already_covered"]:
     """The post-review destination for a non-failed run.
 
-    An empty proposal is never escalated to the owner: it is retried while the Revision
-    Budget allows and, once that budget is spent, reported as the existing tests already
-    covering the request (``already_covered``). A non-empty patch escalates to the owner's
-    decision when it is accepted or its budget is spent, and is otherwise revised.
+    An empty proposal is never escalated to the owner: it is retried while Generation
+    Retries remain and, once exhausted, reported as the existing tests already covering
+    the request (``already_covered``). A non-empty patch escalates to the owner's decision
+    when it is accepted or Generation Retries are exhausted, and is otherwise revised.
     """
-    budget = can_revise(state, limit=max_revision_attempts)
+    retry_available = can_retry_generation(state, limit=max_generation_retries)
     if _is_empty_patch(state):
-        return "revise" if budget else "already_covered"
-    if review is not None and not review.accepted and budget:
+        return "revise" if retry_available else "already_covered"
+    if review is not None and not review.accepted and retry_available:
         return "revise"
     return "escalate"
 
 
-def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None, max_revision_attempts: int | None = None):
+def build_review_patch_node(code_reviewer, recorder, *, threshold: int | None = None, max_generation_retries: int | None = None):
     """Build the node that statically reviews a generated Test Patch before approval.
 
     Review is document-grounded static assessment only: the reviewer never executes
@@ -223,9 +222,9 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None,
     The node returns plain state — never a ``Command`` — leaving post-review routing
     to an explicit conditional edge (see ``build_review_router``). It does emit the
     terminal ``ReviewResult`` whenever the run escalates to the owner (an accepted
-    patch, or a below-threshold one with the Revision Budget — bounded by
-    ``max_revision_attempts`` — exhausted), so the escalated patch surfaces its score
-    on the Agent Stream; a patch bound for one more Revision Attempt stays quiet until
+    patch, or a below-threshold one with the Generation Retries — bounded by
+    ``max_generation_retries`` — exhausted), so the escalated patch surfaces its score
+    on the Agent Stream; a patch bound for one more Generation Retry stays quiet until
     its re-review.
     """
 
@@ -234,9 +233,9 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None,
     def review_patch(state) -> dict:
         coding_run_id = state.get("coding_run_id")
         recorder.begin_reviewing(coding_run_id)
-        # A second pass over this node is the review of a Revision Attempt; surface it
+        # A second pass over this node is the review of a Generation Retry; surface it
         # as a distinct stage marker so the Agent Stream tells the two reviews apart.
-        emit(Stage(stage="re_reviewing" if is_revision_attempt(state) else "reviewing"))
+        emit(Stage(stage="re_reviewing" if is_generation_retry(state) else "reviewing"))
         diff = state.get("diff") or ""
         generated_files = state.get("generated_files") or []
 
@@ -252,7 +251,7 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None,
             # response parsing, or web_search loop is a reviewing-stage Run Failure, not
             # an escaping exception that would leave the run stuck in ``reviewing``.
             try:
-                review = reviewer.review(
+                review = code_reviewer.review(
                     task=state["question"],
                     source_documents=state.get("source_documents") or [],
                     test_documents=state.get("test_documents") or [],
@@ -278,23 +277,23 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None,
         review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, score=score, threshold=pass_threshold, findings=findings, diff=diff)
         # The terminal ReviewResult rides the stream only when the run escalates to the
         # owner; a patch bound for revision or reported as already-covered stays quiet.
-        if _post_review_route(review_result, state, max_revision_attempts) == "escalate":
+        if _post_review_route(review_result, state, max_generation_retries) == "escalate":
             emit(review_result)
         return {"review_result": review_result, "trace": ["review_patch"]}
 
     return review_patch
 
 
-def build_review_router(max_revision_attempts: int | None = None):
+def build_review_router(max_generation_retries: int | None = None):
     """Build the post-review router that drives the conditional edge off ``review_patch``.
 
     Reading only the verdict ``review_patch`` wrote to state, it routes the four
     non-trivial outcomes: a reviewing-stage Run Failure routes to the failure sink; a
-    below-threshold (or empty) patch with Revision Budget remaining routes back to
-    ``generate_tests`` for one more Revision Attempt; an accepted patch, or a non-empty
-    below-threshold one whose budget is exhausted, routes to the owner's human decision;
-    and an empty proposal whose budget is exhausted routes to the no-changes terminal
-    rather than escalating nothing to the owner. Exhausting the budget escalates or
+    below-threshold (or empty) patch with Generation Retries remaining routes back to
+    ``generate_code`` for one more Generation Retry; an accepted patch, or a non-empty
+    below-threshold one with no Generation Retries remaining routes to the owner's human
+    decision; and an empty proposal with no retries remaining routes to the no-changes
+    terminal rather than escalating nothing to the owner. Exhaustion escalates or
     reports — it never fails. The router has no side effects; ``review_patch`` already
     emitted the terminal ``ReviewResult`` on the escalation path.
     """
@@ -302,7 +301,7 @@ def build_review_router(max_revision_attempts: int | None = None):
     def route_after_review(state) -> Literal["revise", "escalate", "already_covered", "failed"]:
         if state.get("failure") is not None:
             return "failed"
-        return _post_review_route(state.get("review_result"), state, max_revision_attempts)
+        return _post_review_route(state.get("review_result"), state, max_generation_retries)
 
     return route_after_review
 
@@ -311,7 +310,7 @@ def build_report_no_changes_node(recorder):
     """Build the terminal node for a run that proposed no test changes across all attempts.
 
     The post-review router routes here when the proposal is still empty after the
-    Revision Budget is spent. Rather than escalate an empty patch to the owner, the run
+    Generation Retries are spent. Rather than escalate an empty patch to the owner, the run
     is recorded as succeeded and a ready-to-show ``RunNoChanges`` is emitted, reporting
     that the existing tests already cover the requested cases.
     """
@@ -330,7 +329,7 @@ def build_await_decision_node():
     """Build the human-in-the-loop node that suspends a run for the owner's decision.
 
     The post-review router routes here both for an accepted Patch Review and for a
-    below-threshold patch whose Revision Budget is exhausted, so the graph pauses via
+    below-threshold patch whose Generation Retries is exhausted, so the graph pauses via
     ``interrupt`` surfacing the Coding Run, the assessed canonical diff, the review
     ``score`` and ``threshold``, whether the backend accepted it, and the findings —
     enough for the owner to judge an escalated below-threshold patch. The graph is

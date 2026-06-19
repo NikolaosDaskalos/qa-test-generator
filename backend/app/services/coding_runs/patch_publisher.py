@@ -1,6 +1,6 @@
 """The port the graph uses to publish an approved Test Patch.
 
-Approval is the one test-generation step that needs the network and the
+Approval is the one code-generation step that needs the network and the
 Repository Credential, so the graph stays free of both: the ``approve_patch``
 node calls this thin port to commit the reviewed patch on its unique non-default
 branch and push it with the credential. ``GitPatchPublisher`` is the production

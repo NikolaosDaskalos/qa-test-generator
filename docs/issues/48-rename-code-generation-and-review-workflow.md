@@ -1,6 +1,6 @@
 # Rename the code-generation and review workflow
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 30-55, 67-72, 102-103
 
@@ -12,13 +12,13 @@ Use general code-generation names for the workflow and agent roles while retaini
 
 ## Acceptance criteria
 
-- [ ] The inferred request intent and graph branch use code-generation terminology instead of test-generation terminology across backend and frontend contracts.
-- [ ] The code generator and `CodeReviewer` replace test-generator and patch-reviewer class, dependency, prompt, fake, and test names.
-- [ ] Patch Review remains the canonical scored assessment produced by the Code Reviewer.
-- [ ] Generation Retries replace Revision Budget and Review Retry terminology in configuration, state, policy modules, functions, events, documentation strings, and tests.
-- [ ] The configured retry default, score threshold, hard Test File restriction, escalation behavior, and human decision flow do not change.
-- [ ] Agent Stream payload behavior and persisted Coding Run compatibility remain unchanged except for internal or descriptive terminology.
-- [ ] Generated frontend contracts, UI copy, backend tests, and frontend tests use the canonical names.
+- [x] The inferred request intent and graph branch use code-generation terminology instead of test-generation terminology across backend and frontend contracts.
+- [x] The code generator and `CodeReviewer` replace test-generator and patch-reviewer class, dependency, prompt, fake, and test names.
+- [x] Patch Review remains the canonical scored assessment produced by the Code Reviewer.
+- [x] Generation Retries replace Revision Budget and Review Retry terminology in configuration, state, policy modules, functions, events, documentation strings, and tests.
+- [x] The configured retry default, score threshold, hard Test File restriction, escalation behavior, and human decision flow do not change.
+- [x] Agent Stream payload behavior and persisted Coding Run compatibility remain unchanged except for internal or descriptive terminology.
+- [x] Generated frontend contracts, UI copy, backend tests, and frontend tests use the canonical names.
 
 ## Blocked by
 

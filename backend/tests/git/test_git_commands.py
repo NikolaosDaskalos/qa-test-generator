@@ -127,7 +127,7 @@ def test_push_allows_a_non_default_branch(monkeypatch) -> None:
     def fake_run(*args: str, **_kwargs) -> GitResult:
         calls.append(args)
         if args == ("git", "branch", "--show-current"):
-            return GitResult(stdout="feature/test-generation", stderr="")
+            return GitResult(stdout="feature/code-generation", stderr="")
         return GitResult(stdout="pushed", stderr="")
 
     monkeypatch.setattr(git, "get_default_branch", lambda: "trunk")

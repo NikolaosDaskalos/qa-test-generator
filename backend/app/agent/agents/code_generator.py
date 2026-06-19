@@ -1,4 +1,4 @@
-"""The bounded ReAct test generator.
+"""The bounded ReAct code generator.
 
 The generator is a ReAct agent whose **only** tool is ``web_search`` — no shell,
 no filesystem. It looks up a test framework's current syntax and best practices,
@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.agent.agents.middleware import build_tool_call_limit_middleware
 from app.agent.agents.tools import web_search
-from app.prompts.prompts import GENERATOR_SYSTEM_PROMPT
+from app.prompts.prompts import CODE_GENERATOR_SYSTEM_PROMPT
 from app.prompts.rendering import format_files, format_repository_documents
 from app.schemas import ExternalReference, GeneratedFile, GenerationProposal
 
@@ -37,12 +37,16 @@ class _GeneratorResponse(BaseModel):
     generated_files: list[GeneratedFile] = Field(default_factory=list, description="Complete proposed test files, each a path and its full contents.")
 
 
-class ReActTestGenerator:
-    """Production ``TestGenerator``: one web-backed agent for both generation and revision."""
+class CodeGenerator:
+    """Production ``CodeGenerator``: one web-backed agent for both generation and revision."""
 
     def __init__(self, llm) -> None:
         self._agent = create_agent(
-            llm, tools=[web_search], system_prompt=GENERATOR_SYSTEM_PROMPT, response_format=_GeneratorResponse, middleware=[build_tool_call_limit_middleware()]
+            llm,
+            tools=[web_search],
+            system_prompt=CODE_GENERATOR_SYSTEM_PROMPT,
+            response_format=_GeneratorResponse,
+            middleware=[build_tool_call_limit_middleware()],
         )
 
     def generate(self, *, task: str, source_documents: list, test_documents: list) -> GenerationProposal:

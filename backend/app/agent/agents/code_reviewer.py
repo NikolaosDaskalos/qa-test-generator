@@ -1,4 +1,4 @@
-"""The bounded ReAct Patch Reviewer.
+"""The bounded ReAct Code Reviewer.
 
 The reviewer is a ReAct agent whose **only** tool is ``web_search`` — no shell, no
 filesystem, and it never executes the generated tests or installs dependencies.
@@ -18,19 +18,19 @@ from langchain_core.messages import HumanMessage
 
 from app.agent.agents.middleware import build_tool_call_limit_middleware
 from app.agent.agents.tools import web_search
-from app.prompts.prompts import REVIEWER_SYSTEM_PROMPT
+from app.prompts.prompts import CODE_REVIEWER_SYSTEM_PROMPT
 from app.prompts.rendering import format_files, format_repository_documents
 from app.schemas import PatchReview
 
 logger = logging.getLogger(__name__)
 
 
-class ReActPatchReviewer:
-    """Production ``PatchReviewer``: a bounded ``create_agent`` loop over ``web_search``."""
+class CodeReviewer:
+    """Production ``CodeReviewer``: a bounded ``create_agent`` loop over ``web_search``."""
 
     def __init__(self, llm, *, agent=None) -> None:
         self._agent = agent or create_agent(
-            llm, tools=[web_search], system_prompt=REVIEWER_SYSTEM_PROMPT, response_format=PatchReview, middleware=[build_tool_call_limit_middleware()]
+            llm, tools=[web_search], system_prompt=CODE_REVIEWER_SYSTEM_PROMPT, response_format=PatchReview, middleware=[build_tool_call_limit_middleware()]
         )
 
     def review(self, *, task: str, source_documents: list, test_documents: list, generated_files: list, diff: str) -> PatchReview:

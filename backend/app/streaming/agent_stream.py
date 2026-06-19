@@ -5,7 +5,7 @@ generating node's token chunks ride the ``messages`` stream. ``emit`` is the onl
 way nodes publish a custom marker; ``map_graph_stream`` is the only adapter that
 folds both modes back onto the typed ``AgentStreamEvent`` union.
 
-Test-generation terminal domain events are emitted by the graph node that
+Code-generation terminal domain events are emitted by the graph node that
 produces them and are forwarded like any other custom marker. This supersedes
 ADR-0002's earlier "caller decides from final state" stream contract. Repository
 question ``Result`` events remain assembled by the session service after

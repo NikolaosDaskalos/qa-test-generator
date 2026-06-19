@@ -1,7 +1,7 @@
 """The closed, typed event vocabulary for the Agent Stream.
 
 These Pydantic models are the single source of truth for what a Repository
-question or Test-Generation Task may report. Each event carries a literal
+question or Code Generation Task may report. Each event carries a literal
 ``type`` discriminant so the union is exhaustively matchable. Only the SSE
 adapter serializes them to the wire (via ``model_dump_json``); no other module
 knows the wire format.
@@ -32,7 +32,7 @@ class Citation(BaseModel):
 
 
 class Stage(BaseModel):
-    """Ordered progress marker for a Repository question or Test-Generation Task."""
+    """Ordered progress marker for a Repository question or Code Generation Task."""
 
     type: Literal["stage"] = "stage"
     stage: Literal["classifying", "planning", "retrieving", "researching", "generating", "reviewing", "revising", "re_reviewing"]
@@ -56,14 +56,14 @@ class Result(BaseModel):
 
 
 class RunStarted(BaseModel):
-    """Identifies the persisted Coding Run backing a Test-Generation Task stream."""
+    """Identifies the persisted Coding Run backing a Code Generation Task stream."""
 
     type: Literal["run_started"] = "run_started"
     coding_run_id: uuid.UUID
 
 
 class RunFailure(BaseModel):
-    """The terminal event for a Test-Generation Task that fails a bounded stage.
+    """The terminal event for a Code Generation Task that fails a bounded stage.
 
     ``failed_stage`` names where the run stopped and ``reason`` is a sanitized,
     user-safe explanation — never raw exception text or model output. The
@@ -77,7 +77,7 @@ class RunFailure(BaseModel):
 
 
 class PatchResult(BaseModel):
-    """The internal state record for a Test-Generation Task that produced a Test Patch.
+    """The internal state record for a Code Generation Task that produced a Test Patch.
 
     Carries the canonical unified diff derived by Git, the complete generated file
     proposals, and the External References consulted while writing them. The
@@ -94,7 +94,7 @@ class PatchResult(BaseModel):
 
 
 class ReviewResult(BaseModel):
-    """The terminal event for a Test-Generation Task that completed Patch Review.
+    """The terminal event for a Code Generation Task that completed Patch Review.
 
     A review is a scored, deliberate decision, not an error: ``score`` (0–10) is the
     reviewer's quality rating and ``threshold`` the pass bar the backend judged it
@@ -154,7 +154,7 @@ class RunApproved(BaseModel):
 class RunNoChanges(BaseModel):
     """The terminal event when the generator proposes no test changes across all attempts.
 
-    A deliberate, benign outcome — not an error: after the Revision Budget is spent the
+    A deliberate, benign outcome — not an error: after the Generation Retries is spent the
     proposal is still empty, which the system reports as the existing tests already
     covering the requested cases. Carries the persisted Coding Run and a ready-to-show
     ``message``; no diff, since there is nothing to apply.

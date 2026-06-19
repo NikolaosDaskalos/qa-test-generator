@@ -29,7 +29,7 @@ class RepositorySessionExecution:
         )
 
     def graph_input(self, question: str) -> dict[str, Any]:
-        """Build the graph input dict for one answering/test-generation turn."""
+        """Build the graph input dict for one answering/code-generation turn."""
         return {
             "messages": [*self._to_messages(), HumanMessage(content=question)],
             "question": question,

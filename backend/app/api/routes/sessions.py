@@ -59,7 +59,7 @@ def ask_repository_question(
 ) -> StreamingResponse:
     """Infer the Request Intent and stream the routed Agent Stream for an owned session.
 
-    The same entry point serves a repository-grounded answer, a Test-Generation Task,
+    The same entry point serves a repository-grounded answer, a Code Generation Task,
     and the owner's human-in-the-loop decision on a reviewed patch; the unified graph's
     ``classify`` node decides the first two, while a ``decision`` resumes the suspended
     run that produced the patch. A fresh question gets its own checkpointer ``thread_id``;

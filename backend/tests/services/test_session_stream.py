@@ -120,7 +120,7 @@ def test_stream_session_emits_run_failure_terminal_for_rejected_task():
     run_id = uuid.uuid4()
     failure = RunFailure(coding_run_id=run_id, failed_stage="planning", reason="Out of scope")
     items = [("custom", Stage(stage="classifying")), ("custom", Stage(stage="planning")), ("custom", failure)]
-    final = {"intent": "test_generation"}
+    final = {"intent": "code_generation"}
     graph = FakeGraph(items, final)
 
     events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="refactor", graph=graph, thread_id="t-2"))
@@ -147,7 +147,7 @@ def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
     )
     items = [("custom", Stage(stage="reviewing")), ("custom", review)]
-    final = {"intent": "test_generation"}
+    final = {"intent": "code_generation"}
     graph = FakeGraph(items, final)
 
     events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-rev"))
@@ -164,7 +164,7 @@ def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
 def test_stream_session_passes_the_indexed_commit_to_the_graph():
     user = _user()
     service, _store, repository_session = _wiring(user, indexed_commit_sha="a" * 40)
-    graph = FakeGraph([], {"intent": "test_generation"})
+    graph = FakeGraph([], {"intent": "code_generation"})
 
     list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-4"))
 
@@ -203,7 +203,7 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
     )
     review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=rejection.findings, diff=rejection.diff)
     items = [("custom", Stage(stage="reviewing")), ("custom", rejection)]
-    final = {"intent": "test_generation", "review_result": review, "rejection_result": rejection}
+    final = {"intent": "code_generation", "review_result": review, "rejection_result": rejection}
     graph = FakeGraph(items, final, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
@@ -237,7 +237,7 @@ def test_stream_session_relays_resume_terminal_without_scanning_stale_final_stat
     )
     stale_review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=rejection.findings, diff=rejection.diff)
     items = [("custom", rejection)]
-    graph = FakeGraph(items, {"intent": "test_generation", "review_result": stale_review}, next_nodes=("await_decision",))
+    graph = FakeGraph(items, {"intent": "code_generation", "review_result": stale_review}, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
     events = list(
@@ -255,7 +255,7 @@ def test_stream_session_emits_run_approved_terminal_for_an_approved_decision():
     service.coding_run_store = FakeCodingRunStore(run)
     approval = RunApproved(coding_run_id=run.id, branch="qa-tests/abc123", diff="diff --git a/tests/test_x.py b/tests/test_x.py")
     review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=[], diff=approval.diff)
-    graph = FakeGraph([("custom", approval)], {"intent": "test_generation", "review_result": review}, next_nodes=("await_decision",))
+    graph = FakeGraph([("custom", approval)], {"intent": "code_generation", "review_result": review}, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=True)
 
     events = list(
@@ -282,7 +282,7 @@ def test_stream_session_rejects_a_decision_when_the_checkpoint_is_not_paused_at_
         findings=[ReviewFinding(category="coverage", detail="covers the behavior")],
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
     )
-    graph = FakeGraph([], {"intent": "test_generation", "review_result": stale_review}, next_nodes=())
+    graph = FakeGraph([], {"intent": "code_generation", "review_result": stale_review}, next_nodes=())
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
     with pytest.raises(HTTPException) as exc:

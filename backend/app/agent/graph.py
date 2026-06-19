@@ -2,7 +2,7 @@
 
 A single ``StateGraph`` over one shared state object infers the Request Intent in
 a ``classify`` node and routes to one of two branches: ``repository_question``
-(retrieval-grounded answer) or ``test_generation`` (a bounded plan/retrieve run).
+(retrieval-grounded answer) or ``code_generation`` (a bounded plan/retrieve run).
 The graph is compiled with a checkpointer (the durable ``PostgresSaver`` in
 production, an ephemeral ``MemorySaver`` in tests) so a per-run ``thread_id``
 carries in-flight state, leaving room for later human-in-the-loop interrupts
@@ -19,33 +19,33 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
-from app.agent.nodes.planner import build_plan_node
-from app.agent.nodes.repository_question import build_generate_node, build_retrieve_node
-from app.agent.nodes.test_generation import (
+from app.agent.nodes.code_generation import (
     build_approval_router,
     build_approve_patch_node,
     build_await_decision_node,
     build_discard_patch_node,
     build_gather_documents_node,
+    build_generate_code_node,
     build_generate_router,
-    build_generate_tests_node,
     build_report_no_changes_node,
     build_review_patch_node,
     build_review_router,
 )
+from app.agent.nodes.planner import build_plan_node
+from app.agent.nodes.repository_question import build_generate_node, build_retrieve_node
 from app.schemas import Citation, PatchResult, RetrievalRequest, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
 from app.services.coding_runs.patch_publisher import NullPatchPublisher
 from app.services.coding_runs.recorder import NullRunRecorder
 from app.services.coding_runs.workspace import LocalGitWorkspace
 from app.streaming import emit
 
-Intent = Literal["repository_question", "test_generation"]
+Intent = Literal["repository_question", "code_generation"]
 
 
 class Classification(BaseModel):
     """Structured output of the ``classify`` node."""
 
-    intent: Intent = Field(description="Route the user's request to either a read-only repository question or a test-generation coding run.")
+    intent: Intent = Field(description="Route the user's request to either a read-only repository question or a code-generation coding run.")
 
 
 class SharedState(TypedDict):
@@ -75,8 +75,8 @@ class RepositoryQuestionState(TypedDict):
     citations: list[Citation] | None
 
 
-class TestGenerationState(TypedDict):
-    """The ``test_generation`` pipeline's private working set (plan → … → approve/discard)."""
+class CodeGenerationState(TypedDict):
+    """The ``code_generation`` pipeline's private working set (plan → … → approve/discard)."""
 
     coding_run_id: uuid.UUID | None
     checkout_root: str | None
@@ -91,9 +91,9 @@ class TestGenerationState(TypedDict):
     diff: str | None
     patch_result: PatchResult | None
     review_result: ReviewResult | None
-    # Count of spent Revision Attempts; ``None``/absent means none spent yet. The
-    # spend/limit arithmetic lives in ``app.services.coding_runs.revision_budget``.
-    revision_attempts: int | None
+    # Count of spent Generation Retries; ``None``/absent means none spent yet. The
+    # spend/limit arithmetic lives in ``app.services.coding_runs.generation_retries``.
+    generation_retries: int | None
     # The owner's human-in-the-loop decision on an accepted patch, supplied by resuming
     # the suspended graph, and the terminal outcome when that decision is a rejection.
     approved: bool | None
@@ -104,7 +104,7 @@ class TestGenerationState(TypedDict):
     no_changes_result: RunNoChanges | None
 
 
-class GraphState(SharedState, RepositoryQuestionState, TestGenerationState):
+class GraphState(SharedState, RepositoryQuestionState, CodeGenerationState):
     """The single state threaded through every node.
 
     Composed from the shared spine plus the two branches' private working sets, so the
@@ -180,13 +180,13 @@ def build_graph(
     retriever,
     llm,
     planner_llm,
-    generator,
-    reviewer,
+    code_generator,
+    code_reviewer,
     run_recorder=None,
     workspace_factory=None,
     publisher_factory=None,
     checkpointer=None,
-    max_revision_attempts=None,
+    max_generation_retries=None,
 ):
     """Compile the unified intent-routed graph.
 
@@ -203,8 +203,8 @@ def build_graph(
     graph.add_node("classify", _classify_node(classifier_llm))
     graph.add_node("plan", build_plan_node(planner_llm, recorder))
     graph.add_node("gather_documents", build_gather_documents_node(retriever, recorder))
-    graph.add_node("generate_tests", build_generate_tests_node(generator, workspaces, recorder))
-    graph.add_node("review_patch", build_review_patch_node(reviewer, recorder, max_revision_attempts=max_revision_attempts))
+    graph.add_node("generate_code", build_generate_code_node(code_generator, workspaces, recorder))
+    graph.add_node("review_patch", build_review_patch_node(code_reviewer, recorder, max_generation_retries=max_generation_retries))
     graph.add_node("await_decision", build_await_decision_node())
     graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
@@ -214,14 +214,14 @@ def build_graph(
     graph.add_node("generate", build_generate_node(llm))
 
     graph.add_edge(START, "classify")
-    graph.add_conditional_edges("classify", _route_intent, {"test_generation": "plan", "repository_question": "retrieve"})
+    graph.add_conditional_edges("classify", _route_intent, {"code_generation": "plan", "repository_question": "retrieve"})
     graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "gather_documents"})
-    graph.add_edge("gather_documents", "generate_tests")
-    graph.add_conditional_edges("generate_tests", build_generate_router(), {"review": "review_patch", "failed": "fail_run"})
+    graph.add_edge("gather_documents", "generate_code")
+    graph.add_conditional_edges("generate_code", build_generate_router(), {"review": "review_patch", "failed": "fail_run"})
     graph.add_conditional_edges(
         "review_patch",
-        build_review_router(max_revision_attempts),
-        {"revise": "generate_tests", "escalate": "await_decision", "already_covered": "report_no_changes", "failed": "fail_run"},
+        build_review_router(max_generation_retries),
+        {"revise": "generate_code", "escalate": "await_decision", "already_covered": "report_no_changes", "failed": "fail_run"},
     )
     graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
     graph.add_conditional_edges("approve_patch", build_approval_router(), {"approved": END, "failed": "fail_run"})

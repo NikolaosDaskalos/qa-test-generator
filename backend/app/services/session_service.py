@@ -90,7 +90,7 @@ class RepositorySessionService:
         """Drive the unified intent-routed graph for one owned session.
 
         Ownership is enforced before streaming. In-flight stage/token/run markers
-        pass straight through. Test-generation terminal events are emitted by
+        pass straight through. Code-generation terminal events are emitted by
         their producing graph node and relayed from the stream, superseding the
         older "caller decides from final state" contract. Repository answers
         still use final state so the exchange can be persisted before reporting

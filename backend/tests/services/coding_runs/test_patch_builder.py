@@ -28,7 +28,7 @@ def test_builder_writes_validated_files_derives_diff_and_persists_the_patch(tmp_
         PatchBuildRequest(
             generated_files=files,
             checkout_root=tmp_path,
-            is_revision_attempt=False,
+            is_generation_retry=False,
             generation_branch="qa-tests/direct",
             coding_run_id=coding_run_id,
             external_references=references,
@@ -57,7 +57,7 @@ def test_builder_returns_a_typed_failure_for_rejected_paths_before_writing(tmp_p
         PatchBuildRequest(
             generated_files=[GeneratedFile(path="app/auth.py", content="malicious")],
             checkout_root=tmp_path,
-            is_revision_attempt=False,
+            is_generation_retry=False,
             generation_branch="qa-tests/direct",
             coding_run_id=uuid.uuid4(),
             external_references=[],
@@ -83,7 +83,7 @@ def test_builder_returns_a_typed_failure_when_patch_derivation_fails(tmp_path) -
         PatchBuildRequest(
             generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_login(): ...")],
             checkout_root=tmp_path,
-            is_revision_attempt=False,
+            is_generation_retry=False,
             generation_branch="qa-tests/direct",
             coding_run_id=uuid.uuid4(),
             external_references=[],
@@ -98,8 +98,8 @@ def test_builder_returns_a_typed_failure_when_patch_derivation_fails(tmp_path) -
     assert recorder.events == []
 
 
-def test_builder_resets_prior_patch_state_for_a_revision_attempt(tmp_path) -> None:
-    """A Revision Attempt replaces the prior generated patch before writing again."""
+def test_builder_resets_prior_patch_state_for_a_generation_retry(tmp_path) -> None:
+    """A Generation Retry replaces the prior generated patch before writing again."""
     (tmp_path / "tests").mkdir()
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
     builder = PatchBuilder(workspace_factory=_workspace_factory(workspace), recorder=RecordingRecorder())
@@ -108,7 +108,7 @@ def test_builder_resets_prior_patch_state_for_a_revision_attempt(tmp_path) -> No
         PatchBuildRequest(
             generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_revised(): ...")],
             checkout_root=tmp_path,
-            is_revision_attempt=True,
+            is_generation_retry=True,
             generation_branch="qa-tests/direct",
             coding_run_id=uuid.uuid4(),
             external_references=[],

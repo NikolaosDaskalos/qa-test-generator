@@ -1,4 +1,4 @@
-"""Add the Coding Run table for Test-Generation Tasks.
+"""Add the Coding Run table for Code Generation Tasks.
 
 Revision ID: 0007_coding_run
 Revises: 0006_session_history_citations

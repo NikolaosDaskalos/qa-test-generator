@@ -435,7 +435,7 @@ def test_run_lookup_exposes_failure_information() -> None:
         thread_id="t-2",
         status=CodingRunStatus.failed,
         failed_stage=CodingRunStage.generating,
-        failure_reason="The test generator could not produce a valid proposal.",
+        failure_reason="The code generator could not produce a valid proposal.",
     )
     service = FakeRepositorySessionService(RepositorySession(id=session_id, owner_id=user.id, repository_id=uuid.uuid4()), run=run)
     app = _lookup_app(service, user=user)

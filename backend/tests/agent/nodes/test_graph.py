@@ -11,9 +11,9 @@ from pathlib import Path
 from langgraph.types import Command
 
 from app.agent import Classification, build_graph
+from app.agent.nodes.code_generation import NO_CHANGES_MESSAGE, build_review_patch_node
 from app.agent.nodes.planner import PlannerOutput
 from app.agent.nodes.repository_question import INSUFFICIENT_DOCUMENTS_ANSWER
-from app.agent.nodes.test_generation import NO_CHANGES_MESSAGE, build_review_patch_node
 from app.enums import CodingRunStage
 from app.errors.git_errors import GitError
 from app.models import RepositoryDocument
@@ -120,7 +120,7 @@ class FakePlannerLLM:
 
 
 class RecordingRecorder:
-    """Record Coding Run lifecycle calls made by the test-generation branch."""
+    """Record Coding Run lifecycle calls made by the code-generation branch."""
 
     def __init__(self) -> None:
         self.events = []
@@ -161,8 +161,8 @@ class RecordingRecorder:
         self.events.append(("record_no_changes", coding_run_id))
 
 
-class FakeGenerator:
-    """A ``TestGenerator`` returning a fixed proposal and recording its inputs.
+class FakeCodeGenerator:
+    """A ``CodeGenerator`` returning a fixed proposal and recording its inputs.
 
     When a ``revision`` proposal is supplied it is returned by ``revise``; the
     revise inputs (prior proposal, canonical diff, reviewer findings) are recorded.
@@ -192,19 +192,19 @@ class FakeGenerator:
         return self.revision if self.revision is not None else self.proposal
 
 
-class RaisingGenerator:
-    """A ``TestGenerator`` that fails to produce a proposal."""
+class RaisingCodeGenerator:
+    """A ``CodeGenerator`` that fails to produce a proposal."""
 
     def generate(self, *, task, source_documents, test_documents):
         raise RuntimeError("model unavailable")
 
 
-class FakeReviewer:
-    """A ``PatchReviewer`` returning fixed decisions and recording its inputs.
+class FakeCodeReviewer:
+    """A ``CodeReviewer`` returning fixed decisions and recording its inputs.
 
     A single ``review`` is returned on every call; a ``reviews`` sequence returns
     one decision per call (clamped to the last), so first-review and second-review
-    verdicts can differ across a Revision Attempt.
+    verdicts can differ across a Generation Retry.
     """
 
     def __init__(self, review: PatchReview | None = None, *, reviews: list[PatchReview] | None = None) -> None:
@@ -222,8 +222,8 @@ class FakeReviewer:
         return self._reviews[index]
 
 
-class RaisingReviewer:
-    """A ``PatchReviewer`` whose model/tool loop fails to produce a decision."""
+class RaisingCodeReviewer:
+    """A ``CodeReviewer`` whose model/tool loop fails to produce a decision."""
 
     def review(self, *, task, source_documents, test_documents, generated_files, diff):
         raise RuntimeError("reviewer model unavailable")
@@ -321,23 +321,23 @@ def _build(
     llm=None,
     planner_llm=None,
     recorder=None,
-    generator=None,
+    code_generator=None,
     workspace=None,
-    reviewer=None,
+    code_reviewer=None,
     publisher=None,
-    max_revision_attempts=None,
+    max_generation_retries=None,
 ):
     return build_graph(
         classifier_llm=classifier_llm,
         retriever=retriever if retriever is not None else FakeRetriever(),
         llm=llm if llm is not None else FakeGeneratorLLM(),
         planner_llm=planner_llm if planner_llm is not None else FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
-        generator=generator if generator is not None else FakeGenerator(),
-        reviewer=reviewer if reviewer is not None else FakeReviewer(),
+        code_generator=code_generator if code_generator is not None else FakeCodeGenerator(),
+        code_reviewer=code_reviewer if code_reviewer is not None else FakeCodeReviewer(),
         run_recorder=recorder,
         workspace_factory=_workspace_factory(workspace),
         publisher_factory=_publisher_factory(publisher),
-        max_revision_attempts=max_revision_attempts,
+        max_generation_retries=max_generation_retries,
     )
 
 
@@ -354,13 +354,13 @@ def test_structured_output_models_describe_all_llm_fields() -> None:
         assert all(property_schema.get("description") for property_schema in properties.values())
 
 
-def test_graph_routes_test_generation_intent_to_the_test_branch() -> None:
-    """A test-generation classification enters the planning branch, not retrieval-first."""
-    graph = _build(FakeClassifierLLM("test_generation"))
+def test_graph_routes_code_generation_intent_to_the_code_generation_branch() -> None:
+    """A Code Generation Task enters the planning branch, not retrieval-first."""
+    graph = _build(FakeClassifierLLM("code_generation"))
 
     final = graph.invoke({"question": "now write tests for the auth module", "repository_id": uuid.uuid4()}, config=_config())
 
-    assert final["intent"] == "test_generation"
+    assert final["intent"] == "code_generation"
     assert final["trace"][0] == "classify"
     assert "plan" in final["trace"]
     assert "retrieve" not in final["trace"]
@@ -422,7 +422,7 @@ def test_repository_question_branch_reports_insufficient_documents_without_calli
     assert llm.stream_calls == []
 
 
-# ── test_generation branch: planning ──────────────────────────────
+# ── code_generation branch: planning ──────────────────────────────
 
 
 def test_planner_emits_retrieval_requests_tagged_source_and_test() -> None:
@@ -434,7 +434,7 @@ def test_planner_emits_retrieval_requests_tagged_source_and_test() -> None:
             RetrievalRequest(document_type="test", description="existing auth tests", candidate_paths=["tests/test_auth.py"]),
         ],
     )
-    graph = _build(FakeClassifierLLM("test_generation"), planner_llm=FakePlannerLLM(planner_output))
+    graph = _build(FakeClassifierLLM("code_generation"), planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke({"question": "add tests for the auth module", "repository_id": uuid.uuid4()}, config=_config())
 
@@ -447,7 +447,7 @@ def test_planner_emits_retrieval_requests_tagged_source_and_test() -> None:
 def test_out_of_scope_task_is_rejected_at_the_planning_stage() -> None:
     """A request outside adding or improving tests fails at planning before any retrieval."""
     planner_output = PlannerOutput(in_scope=False, reason="This asks to refactor production code, not to add or improve tests.")
-    graph = _build(FakeClassifierLLM("test_generation"), planner_llm=FakePlannerLLM(planner_output))
+    graph = _build(FakeClassifierLLM("code_generation"), planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke({"question": "rename the auth module everywhere", "repository_id": uuid.uuid4()}, config=_config())
 
@@ -457,10 +457,10 @@ def test_out_of_scope_task_is_rejected_at_the_planning_stage() -> None:
     assert not final.get("retrieval_requests")
 
 
-# ── test_generation branch: generic retrieve ──────────────────────
+# ── code_generation branch: generic retrieve ──────────────────────
 
 
-def test_test_generation_retrieve_partitions_source_and_test_documents() -> None:
+def test_code_generation_retrieve_partitions_source_and_test_documents() -> None:
     """Planner requests are executed under the session's Repository and split source vs. test."""
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
@@ -473,7 +473,7 @@ def test_test_generation_retrieve_partitions_source_and_test_documents() -> None
             RetrievalRequest(document_type="test", description="auth tests"),
         ],
     )
-    graph = _build(FakeClassifierLLM("test_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output))
+    graph = _build(FakeClassifierLLM("code_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id}, config=_config())
 
@@ -482,10 +482,10 @@ def test_test_generation_retrieve_partitions_source_and_test_documents() -> None
     assert all(call[1]["repository_id"] == repository_id for call in retriever.calls)
 
 
-def test_test_generation_retrieve_yields_empty_partitions_when_no_documents() -> None:
+def test_code_generation_retrieve_yields_empty_partitions_when_no_documents() -> None:
     """When retrieval finds nothing, both documents partitions are present and empty."""
     planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="nothing here")])
-    graph = _build(FakeClassifierLLM("test_generation"), retriever=FakeRetriever([]), planner_llm=FakePlannerLLM(planner_output))
+    graph = _build(FakeClassifierLLM("code_generation"), retriever=FakeRetriever([]), planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke({"question": "add tests", "repository_id": uuid.uuid4()}, config=_config())
 
@@ -493,36 +493,36 @@ def test_test_generation_retrieve_yields_empty_partitions_when_no_documents() ->
     assert final["test_documents"] == []
 
 
-def test_test_generation_retrieve_confines_candidate_paths_to_validated_hints(tmp_path) -> None:
+def test_code_generation_retrieve_confines_candidate_paths_to_validated_hints(tmp_path) -> None:
     """Untrusted candidate paths are confined to the checkout; unsafe ones never proceed."""
     repository_id = uuid.uuid4()
     planner_output = PlannerOutput(
         in_scope=True,
         retrieval_requests=[RetrievalRequest(document_type="source", description="auth", candidate_paths=["app/auth.py", "/etc/passwd", "../escape"])],
     )
-    graph = _build(FakeClassifierLLM("test_generation"), retriever=FakeRetriever([]), planner_llm=FakePlannerLLM(planner_output))
+    graph = _build(FakeClassifierLLM("code_generation"), retriever=FakeRetriever([]), planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke({"question": "add tests", "repository_id": repository_id, "checkout_root": str(tmp_path)}, config=_config())
 
     assert final["candidate_hints"] == ["app/auth.py"]
 
 
-# ── test_generation branch: Coding Run persistence ────────────────
+# ── code_generation branch: Coding Run persistence ────────────────
 
 
-def test_test_generation_persists_a_queued_run_and_advances_through_generation(tmp_path) -> None:
+def test_code_generation_persists_a_queued_run_and_advances_through_generation(tmp_path) -> None:
     """A routed task creates a Coding Run and advances it planning → retrieving → generating → complete."""
     (tmp_path / "tests").mkdir()  # an existing test root admits the proposed test file
     recorder = RecordingRecorder()
     session_id = uuid.uuid4()
     repository_id = uuid.uuid4()
     planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="x")])
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")]))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")]))
     graph = _build(
-        FakeClassifierLLM("test_generation"),
+        FakeClassifierLLM("code_generation"),
         recorder=recorder,
         planner_llm=FakePlannerLLM(planner_output),
-        generator=generator,
+        code_generator=generator,
         workspace=FakeWorkspace(diff="diff --git a/tests/test_x.py b/tests/test_x.py"),
     )
 
@@ -545,11 +545,11 @@ def test_test_generation_persists_a_queued_run_and_advances_through_generation(t
     assert final["coding_run_id"] == recorder.run_id
 
 
-def test_test_generation_marks_failure_at_planning_when_out_of_scope() -> None:
+def test_code_generation_marks_failure_at_planning_when_out_of_scope() -> None:
     """A rejected task records a planning failure and stops before retrieving."""
     recorder = RecordingRecorder()
     planner_output = PlannerOutput(in_scope=False, reason="Not a test request")
-    graph = _build(FakeClassifierLLM("test_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output))
+    graph = _build(FakeClassifierLLM("code_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke({"question": "refactor", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4()}, config=_config())
 
@@ -559,31 +559,31 @@ def test_test_generation_marks_failure_at_planning_when_out_of_scope() -> None:
     assert final["failure"].coding_run_id == recorder.run_id
 
 
-# ── test_generation branch: generation & patch ────────────────────
+# ── code_generation branch: generation & patch ────────────────────
 
 
-def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None, publisher=None, max_revision_attempts=None):
+def _generation_graph(*, code_generator, recorder=None, workspace=None, code_reviewer=None, publisher=None, max_generation_retries=None):
     planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="x")])
     return _build(
-        FakeClassifierLLM("test_generation"),
+        FakeClassifierLLM("code_generation"),
         recorder=recorder,
         planner_llm=FakePlannerLLM(planner_output),
-        generator=generator,
+        code_generator=code_generator,
         workspace=workspace,
-        reviewer=reviewer,
+        code_reviewer=code_reviewer,
         publisher=publisher,
-        max_revision_attempts=max_revision_attempts,
+        max_generation_retries=max_generation_retries,
     )
 
 
-def test_generator_receives_partitioned_documents_and_emits_structured_files(tmp_path) -> None:
+def test_code_generator_receives_partitioned_documents_and_emits_structured_files(tmp_path) -> None:
     """The generator is handed the task and partitioned documents and returns complete-file proposals."""
     (tmp_path / "tests").mkdir()  # an existing test root admits the new test file
     repository_id = uuid.uuid4()
     retriever = QueryRetriever({"impl": [_source(repository_id, "app/auth.py", "code")]})
     planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="impl")])
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _build(FakeClassifierLLM("test_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output), generator=generator)
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _build(FakeClassifierLLM("code_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output), code_generator=generator)
 
     final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path)}, config=_config())
 
@@ -596,13 +596,13 @@ def test_external_references_are_collected_separately_from_repository_documents(
     """Web results ride external_references, never mixed into source or test documents."""
     (tmp_path / "tests").mkdir()  # an existing test root admits the new test file
     repository_id = uuid.uuid4()
-    generator = FakeGenerator(
+    generator = FakeCodeGenerator(
         GenerationProposal(
             generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")],
             external_references=[ExternalReference(url="https://docs.pytest.org", title="pytest")],
         )
     )
-    graph = _generation_graph(generator=generator)
+    graph = _generation_graph(code_generator=generator)
 
     final = graph.invoke({"question": "add tests", "repository_id": repository_id, "checkout_root": str(tmp_path)}, config=_config())
 
@@ -618,8 +618,8 @@ def test_build_patch_writes_validated_files_and_emits_a_patch_result(tmp_path) -
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ...")
     files = [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
     references = [ExternalReference(url="https://docs.pytest.org", title="pytest")]
-    generator = FakeGenerator(GenerationProposal(generated_files=files, external_references=references))
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=files, external_references=references))
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace)
 
     final = graph.invoke(
         {
@@ -650,8 +650,8 @@ def test_unsafe_proposed_path_is_rejected_before_writing_as_a_generating_failure
     (tmp_path / "app" / "auth.py").write_text("real code")
     recorder = RecordingRecorder()
     workspace = FakeWorkspace()
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="app/auth.py", content="malicious")]))
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="app/auth.py", content="malicious")]))
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace)
 
     final = graph.invoke(
         {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)}, config=_config()
@@ -667,8 +667,8 @@ def test_new_test_file_without_an_existing_test_root_is_rejected_before_writing(
     """build_patch discovers test roots; a new test-named file with none fails and is never written."""
     recorder = RecordingRecorder()
     workspace = FakeWorkspace()
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace)
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace)
 
     final = graph.invoke(
         {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)}, config=_config()
@@ -682,12 +682,12 @@ def test_new_test_file_without_an_existing_test_root_is_rejected_before_writing(
 def test_repository_question_never_reaches_the_web_search_generator() -> None:
     """The web-search-capable generator is unreachable from a read-only repository question."""
     repository_id = uuid.uuid4()
-    generator = FakeGenerator()
+    generator = FakeCodeGenerator()
     graph = _build(
         FakeClassifierLLM("repository_question"),
         retriever=FakeRetriever([_source(repository_id, "app/a.py", "x")]),
         llm=FakeGeneratorLLM(("a",)),
-        generator=generator,
+        code_generator=generator,
     )
 
     graph.invoke({"question": "how does auth work?", "repository_id": repository_id}, config=_config())
@@ -695,10 +695,10 @@ def test_repository_question_never_reaches_the_web_search_generator() -> None:
     assert generator.calls == []
 
 
-def test_generation_failure_is_a_generating_run_failure() -> None:
+def test_code_generation_failure_is_a_generating_run_failure() -> None:
     """A generator that cannot produce a proposal fails the run at the generating stage."""
     recorder = RecordingRecorder()
-    graph = _generation_graph(generator=RaisingGenerator(), recorder=recorder)
+    graph = _generation_graph(code_generator=RaisingCodeGenerator(), recorder=recorder)
 
     final = graph.invoke(
         {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": "/unused"}, config=_config()
@@ -717,8 +717,8 @@ def test_branch_preparation_failure_is_a_generating_run_failure(tmp_path) -> Non
         def prepare_branch(self, indexed_commit_sha):
             raise GitError("could not prepare branch")
 
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=RaisingPrepareWorkspace())
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=RaisingPrepareWorkspace())
 
     final = graph.invoke(
         {
@@ -737,14 +737,18 @@ def test_branch_preparation_failure_is_a_generating_run_failure(tmp_path) -> Non
     assert recorder.events[-1][0] == "fail"
 
 
-# ── test_generation branch: patch review ──────────────────────────
+# ── code_generation branch: patch review ──────────────────────────
 
 
-def _reviewed_graph(*, reviewer, recorder=None, files=None, diff="diff --git a/tests/test_auth.py b/tests/test_auth.py", max_revision_attempts=None):
+def _reviewed_graph(*, code_reviewer, recorder=None, files=None, diff="diff --git a/tests/test_auth.py b/tests/test_auth.py", max_generation_retries=None):
     files = files if files is not None else [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
-    generator = FakeGenerator(GenerationProposal(generated_files=files))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=files))
     return _generation_graph(
-        generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=diff), reviewer=reviewer, max_revision_attempts=max_revision_attempts
+        code_generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff=diff),
+        code_reviewer=code_reviewer,
+        max_generation_retries=max_generation_retries,
     )
 
 
@@ -752,9 +756,9 @@ def test_accepted_review_advances_to_awaiting_approval_and_emits_review_result(t
     """An accepted first review records an accepted review and emits a ReviewResult carrying the final diff."""
     (tmp_path / "tests").mkdir()  # an existing test root so the proposal validates
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ..."
-    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder, diff=diff)
+    graph = _reviewed_graph(code_reviewer=reviewer, recorder=recorder, diff=diff)
 
     final = graph.invoke(
         {
@@ -780,7 +784,7 @@ def test_accepted_review_advances_to_awaiting_approval_and_emits_review_result(t
     assert record[2] is True
 
 
-def test_reviewer_receives_the_task_partitioned_documents_proposals_and_diff(tmp_path) -> None:
+def test_code_reviewer_receives_the_task_partitioned_documents_proposals_and_diff(tmp_path) -> None:
     """Review is invoked with the task, Repository Documents (source/test), the proposals, and the canonical diff."""
     (tmp_path / "tests").mkdir()
     repository_id = uuid.uuid4()
@@ -794,17 +798,17 @@ def test_reviewer_receives_the_task_partitioned_documents_proposals_and_diff(tmp
             RetrievalRequest(document_type="test", description="auth tests"),
         ],
     )
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     files = [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
-    generator = FakeGenerator(GenerationProposal(generated_files=files))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=files))
     diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py"
     graph = _build(
-        FakeClassifierLLM("test_generation"),
+        FakeClassifierLLM("code_generation"),
         retriever=retriever,
         planner_llm=FakePlannerLLM(planner_output),
-        generator=generator,
+        code_generator=generator,
         workspace=FakeWorkspace(diff=diff),
-        reviewer=reviewer,
+        code_reviewer=reviewer,
     )
 
     graph.invoke(
@@ -824,9 +828,9 @@ def test_accepted_review_pauses_for_a_human_decision(tmp_path) -> None:
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="readability", detail="clear and idiomatic")]
-    reviewer = FakeReviewer(PatchReview(score=10, findings=findings))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=findings))
     diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ..."
-    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder, diff=diff)
+    graph = _reviewed_graph(code_reviewer=reviewer, recorder=recorder, diff=diff)
     config = _config()
 
     result = graph.invoke(
@@ -859,9 +863,9 @@ def test_accepted_review_stream_emits_its_review_result(tmp_path) -> None:
     """An accepted Patch Review owns the terminal event emitted before the HITL pause."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ..."
-    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder, diff=diff)
+    graph = _reviewed_graph(code_reviewer=reviewer, recorder=recorder, diff=diff)
 
     events = _custom_events(
         graph,
@@ -886,10 +890,10 @@ def test_rejecting_a_paused_run_discards_the_patch_and_records_the_rejection(tmp
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="readability", detail="clear and idiomatic")]
-    reviewer = FakeReviewer(PatchReview(score=10, findings=findings))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=findings))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ...")
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer)
     config = _config()
     graph.invoke(
         {
@@ -923,10 +927,10 @@ def test_rejecting_a_paused_run_stream_emits_run_rejected(tmp_path) -> None:
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="readability", detail="clear and idiomatic")]
-    reviewer = FakeReviewer(PatchReview(score=10, findings=findings))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=findings))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ...")
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer)
     config = _config()
     graph.invoke(
         {
@@ -951,11 +955,11 @@ def test_approving_a_paused_run_commits_pushes_and_emits_run_approved(tmp_path) 
     """Resuming with an approval commits and pushes the reviewed patch and ends in a RunApproved."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     publisher = FakePublisher()
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer, publisher=publisher)
     config = _config()
     graph.invoke(
         {
@@ -988,11 +992,11 @@ def test_approving_a_paused_run_stream_emits_run_approved(tmp_path) -> None:
     """The approval node owns the approval terminal event on the resume stream."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     publisher = FakePublisher()
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer, publisher=publisher)
     config = _config()
     graph.invoke(
         {
@@ -1017,11 +1021,11 @@ def test_approval_records_the_run_and_restores_the_checkout_to_the_indexed_commi
     """After pushing, approval records the run approved and restores the checkout, removing the local branch."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     publisher = FakePublisher()
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer, publisher=publisher)
     config = _config()
     graph.invoke(
         {
@@ -1048,11 +1052,11 @@ def test_approval_commit_failure_is_a_git_commit_stage_failure(tmp_path, caplog)
     """A commit that fails records a git_commit-stage failure, never pushes, and does not approve."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     publisher = FakePublisher(fail_on="commit")
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer, publisher=publisher)
     config = _config()
     graph.invoke(
         {
@@ -1082,11 +1086,11 @@ def test_approval_push_failure_is_a_git_push_stage_failure(tmp_path, caplog) -> 
     """A push that fails after a successful commit records a git_push-stage failure with a sanitized reason."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     publisher = FakePublisher(fail_on="push")
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer, publisher=publisher)
     config = _config()
     graph.invoke(
         {
@@ -1121,11 +1125,11 @@ def test_approval_failure_stream_emits_one_stamped_run_failure(tmp_path) -> None
     """
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     publisher = FakePublisher(fail_on="commit")
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer, publisher=publisher)
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer, publisher=publisher)
     config = _config()
     graph.invoke(
         {
@@ -1147,12 +1151,12 @@ def test_approval_failure_stream_emits_one_stamped_run_failure(tmp_path) -> None
 
 
 def test_rejected_first_review_records_its_findings_before_revising(tmp_path) -> None:
-    """A first rejection persists its findings as a recorded review and routes onward to a Revision Attempt, not a failure."""
+    """A first rejection persists its findings as a recorded review and routes onward to a Generation Retry, not a failure."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="imports", detail="imports a helper not visible in Repository Documents")]
-    reviewer = FakeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
-    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder)
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
+    graph = _reviewed_graph(code_reviewer=reviewer, recorder=recorder)
 
     final = graph.invoke(
         {
@@ -1173,12 +1177,12 @@ def test_rejected_first_review_records_its_findings_before_revising(tmp_path) ->
 
 
 def test_review_rejects_a_patch_with_changes_unrelated_to_the_task(tmp_path) -> None:
-    """The reviewer rejects a patch that introduces changes unrelated to the Test-Generation Task."""
+    """The reviewer rejects a patch that introduces changes unrelated to the Code Generation Task."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="scope", detail="adds an unrelated test unrelated to the requested task")]
-    reviewer = FakeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
-    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder)
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
+    graph = _reviewed_graph(code_reviewer=reviewer, recorder=recorder)
 
     graph.invoke(
         {
@@ -1211,7 +1215,7 @@ def test_score_above_threshold_is_accepted_by_the_backend(tmp_path) -> None:
     """The backend, not the model, decides the pass: a score above the threshold is accepted."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeReviewer(PatchReview(score=8, findings=[])), recorder, threshold=7)
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, threshold=7)
 
     result = node(_review_state(tmp_path, recorder))
 
@@ -1224,7 +1228,7 @@ def test_score_at_threshold_is_accepted_by_the_backend(tmp_path) -> None:
     """A score exactly at the threshold passes: the pass bar is ``score >= threshold``."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeReviewer(PatchReview(score=7, findings=[])), recorder, threshold=7)
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=7, findings=[])), recorder, threshold=7)
 
     result = node(_review_state(tmp_path, recorder))
 
@@ -1235,7 +1239,7 @@ def test_score_below_threshold_is_not_accepted_by_the_backend(tmp_path) -> None:
     """A score under the threshold fails the pass decision, leaving routing to request a revision."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeReviewer(PatchReview(score=6, findings=[])), recorder, threshold=7)
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=6, findings=[])), recorder, threshold=7)
 
     result = node(_review_state(tmp_path, recorder))
 
@@ -1248,7 +1252,7 @@ def test_review_result_carries_the_score_and_the_threshold_it_was_judged_against
     """The ReviewResult surfaces the reviewer's score and the threshold the backend judged it against."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeReviewer(PatchReview(score=8, findings=[])), recorder, threshold=7)
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, threshold=7)
 
     review = node(_review_state(tmp_path, recorder))["review_result"]
 
@@ -1261,7 +1265,7 @@ def test_backend_independently_rejects_out_of_scope_files_even_when_the_score_pa
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "auth.py").write_text("real application code")
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
     node = build_review_patch_node(reviewer, recorder, threshold=7)
     state = {
         "coding_run_id": recorder.run_id,
@@ -1280,11 +1284,11 @@ def test_backend_independently_rejects_out_of_scope_files_even_when_the_score_pa
     assert record[2] is False
 
 
-def test_reviewer_failure_is_a_reviewing_run_failure(tmp_path) -> None:
+def test_code_reviewer_failure_is_a_reviewing_run_failure(tmp_path) -> None:
     """A reviewer that raises records a reviewing-stage failure instead of leaving the run stuck."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    graph = _reviewed_graph(reviewer=RaisingReviewer(), recorder=recorder)
+    graph = _reviewed_graph(code_reviewer=RaisingCodeReviewer(), recorder=recorder)
 
     final = graph.invoke(
         {
@@ -1308,11 +1312,11 @@ def test_reviewer_failure_is_a_reviewing_run_failure(tmp_path) -> None:
     assert "unavailable" not in final["failure"].reason
 
 
-def test_reviewer_failure_stream_emits_run_failure(tmp_path) -> None:
+def test_code_reviewer_failure_stream_emits_run_failure(tmp_path) -> None:
     """The failure node owns the reviewing-stage RunFailure terminal event."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    graph = _reviewed_graph(reviewer=RaisingReviewer(), recorder=recorder)
+    graph = _reviewed_graph(code_reviewer=RaisingCodeReviewer(), recorder=recorder)
 
     events = _custom_events(
         graph,
@@ -1331,17 +1335,17 @@ def test_reviewer_failure_stream_emits_run_failure(tmp_path) -> None:
     assert failures[0].failed_stage == "reviewing"
 
 
-# ── test_generation branch: bounded revision ──────────────────────
+# ── code_generation branch: bounded revision ──────────────────────
 
 
 def test_first_rejection_triggers_one_revision_that_is_accepted(tmp_path) -> None:
-    """A rejected first review routes through one Revision Attempt; an accepted second review reaches awaiting approval."""
+    """A rejected first review routes through one Generation Retry; an accepted second review reaches awaiting approval."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="coverage", detail="missing unhappy-path test")]
-    reviewer = FakeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
     revised = GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")])
-    generator = FakeGenerator(
+    generator = FakeCodeGenerator(
         GenerationProposal(
             generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")],
             external_references=[ExternalReference(url="https://docs.pytest.org", title="pytest")],
@@ -1349,7 +1353,10 @@ def test_first_rejection_triggers_one_revision_that_is_accepted(tmp_path) -> Non
         revision=revised,
     )
     graph = _generation_graph(
-        generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer
+        code_generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
+        code_reviewer=reviewer,
     )
 
     final = graph.invoke(
@@ -1374,7 +1381,7 @@ def test_first_rejection_triggers_one_revision_that_is_accepted(tmp_path) -> Non
 
 
 def test_revision_receives_the_task_documents_prior_proposal_diff_and_findings(tmp_path) -> None:
-    """The Revision Attempt is handed the original task, partitioned documents, its prior proposal, the canonical diff, and the findings."""
+    """The Generation Retry is handed the original task, partitioned documents, its prior proposal, the canonical diff, and the findings."""
     (tmp_path / "tests").mkdir()
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
@@ -1388,20 +1395,20 @@ def test_revision_receives_the_task_documents_prior_proposal_diff_and_findings(t
         ],
     )
     findings = [ReviewFinding(category="coverage", detail="missing unhappy-path test")]
-    reviewer = FakeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
     prior = GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")
-    generator = FakeGenerator(
+    generator = FakeCodeGenerator(
         GenerationProposal(generated_files=[prior]),
         revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")]),
     )
     diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py"
     graph = _build(
-        FakeClassifierLLM("test_generation"),
+        FakeClassifierLLM("code_generation"),
         retriever=retriever,
         planner_llm=FakePlannerLLM(planner_output),
-        generator=generator,
+        code_generator=generator,
         workspace=FakeWorkspace(diff=diff),
-        reviewer=reviewer,
+        code_reviewer=reviewer,
     )
 
     graph.invoke(
@@ -1421,15 +1428,15 @@ def test_revised_files_are_validated_and_rediffed_through_the_same_path(tmp_path
     """Revised proposals are written and a new canonical diff is derived by Git, exactly like initial generation."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(reviews=[PatchReview(score=3, findings=[]), PatchReview(score=10, findings=[])])
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=3, findings=[]), PatchReview(score=10, findings=[])])
     revised_file = GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")
-    generator = FakeGenerator(
+    generator = FakeCodeGenerator(
         GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
         revision=GenerationProposal(generated_files=[revised_file]),
     )
     revised_diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_y(): ..."
     workspace = FakeWorkspace(diff=revised_diff)
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer)
 
     final = graph.invoke(
         {
@@ -1453,18 +1460,18 @@ def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_
     """A revised proposal replaces the rejected patch, including files it omits."""
     repo, indexed_sha = _init_repo_with_test_root(tmp_path)
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(reviews=[PatchReview(score=3, findings=[]), PatchReview(score=10, findings=[])])
-    generator = FakeGenerator(
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=3, findings=[]), PatchReview(score=10, findings=[])])
+    generator = FakeCodeGenerator(
         GenerationProposal(generated_files=[GeneratedFile(path="tests/test_removed.py", content="def test_removed():\n    assert True\n")]),
         revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_kept.py", content="def test_kept():\n    assert True\n")]),
     )
     graph = build_graph(
-        classifier_llm=FakeClassifierLLM("test_generation"),
+        classifier_llm=FakeClassifierLLM("code_generation"),
         retriever=FakeRetriever(),
         llm=FakeGeneratorLLM(),
         planner_llm=FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
-        generator=generator,
-        reviewer=reviewer,
+        code_generator=generator,
+        code_reviewer=reviewer,
         run_recorder=recorder,
         workspace_factory=lambda checkout_root: LocalGitWorkspace(checkout_root),
     )
@@ -1488,21 +1495,21 @@ def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_
 
 
 def test_exhausting_the_budget_escalates_the_below_threshold_patch_to_human_review(tmp_path) -> None:
-    """A persistently below-threshold patch is escalated to human review once the budget is spent, never failed."""
+    """A persistently below-threshold patch is escalated to human review once Generation Retries are exhausted, never failed."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="coverage", detail="still incomplete")]
-    reviewer = FakeReviewer(PatchReview(score=3, findings=findings))
-    generator = FakeGenerator(
+    reviewer = FakeCodeReviewer(PatchReview(score=3, findings=findings))
+    generator = FakeCodeGenerator(
         GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
         revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
     )
     graph = _generation_graph(
-        generator=generator,
+        code_generator=generator,
         recorder=recorder,
         workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
-        reviewer=reviewer,
-        max_revision_attempts=1,
+        code_reviewer=reviewer,
+        max_generation_retries=1,
     )
     config = _config()
 
@@ -1517,7 +1524,7 @@ def test_exhausting_the_budget_escalates_the_below_threshold_patch_to_human_revi
         config=config,
     )
 
-    # Exactly one revision was attempted (budget of one), then the run escalated rather than failing.
+    # Exactly one revision was attempted (one configured Generation Retry), then the run escalated rather than failing.
     assert len(generator.revise_calls) == 1
     assert result.get("failure") is None
     # The run paused at the human-decision interrupt carrying the below-threshold score and its findings.
@@ -1533,18 +1540,18 @@ def test_exhausting_the_budget_escalates_the_below_threshold_patch_to_human_revi
 
 
 def test_a_zero_budget_escalates_a_below_threshold_patch_without_revising(tmp_path) -> None:
-    """With the Revision Budget configured to zero, a below-threshold patch escalates immediately, never revising."""
+    """With the Generation Retries configured to zero, a below-threshold patch escalates immediately, never revising."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     findings = [ReviewFinding(category="coverage", detail="thin")]
-    reviewer = FakeReviewer(PatchReview(score=4, findings=findings))
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    reviewer = FakeCodeReviewer(PatchReview(score=4, findings=findings))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     graph = _generation_graph(
-        generator=generator,
+        code_generator=generator,
         recorder=recorder,
         workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
-        reviewer=reviewer,
-        max_revision_attempts=0,
+        code_reviewer=reviewer,
+        max_generation_retries=0,
     )
     config = _config()
 
@@ -1570,9 +1577,9 @@ def test_an_empty_proposal_scores_zero_without_calling_the_reviewer(tmp_path) ->
     """A proposal with no test changes is scored zero by the backend; the reviewer is never asked to grade nothing."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))  # would pass if ever consulted
-    generator = FakeGenerator(GenerationProposal())  # no generated files → empty patch
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=""), reviewer=reviewer, max_revision_attempts=0)
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))  # would pass if ever consulted
+    generator = FakeCodeGenerator(GenerationProposal())  # no generated files → empty patch
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=""), code_reviewer=reviewer, max_generation_retries=0)
     config = _config()
 
     result = graph.invoke(
@@ -1594,11 +1601,11 @@ def test_an_empty_proposal_scores_zero_without_calling_the_reviewer(tmp_path) ->
 
 
 def test_a_persistently_empty_proposal_is_revised_then_reported_as_already_covered(tmp_path) -> None:
-    """An empty proposal is retried across the Revision Budget, then reported as the tests already covering the request — never escalated, never failed."""
+    """An empty proposal is retried across the Generation Retries, then reported as the tests already covering the request — never escalated, never failed."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    generator = FakeGenerator(GenerationProposal())  # empty on generate and revise
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=""), max_revision_attempts=2)
+    generator = FakeCodeGenerator(GenerationProposal())  # empty on generate and revise
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=""), max_generation_retries=2)
     config = _config()
 
     result = graph.invoke(
@@ -1612,7 +1619,7 @@ def test_a_persistently_empty_proposal_is_revised_then_reported_as_already_cover
         config=config,
     )
 
-    # The empty proposal was retried for the whole budget, then reported as already covered.
+    # The empty proposal was retried for all configured Generation Retries, then reported as already covered.
     assert len(generator.revise_calls) == 2
     assert result.get("failure") is None
     assert "__interrupt__" not in result  # never escalated to the owner
@@ -1625,11 +1632,11 @@ def test_a_persistently_empty_proposal_is_revised_then_reported_as_already_cover
 
 
 def test_an_empty_proposal_with_zero_budget_reports_already_covered_immediately(tmp_path) -> None:
-    """With no Revision Budget, an empty proposal reports already-covered on the first pass and emits a RunNoChanges on the stream."""
+    """With no Generation Retries, an empty proposal reports already-covered on the first pass and emits a RunNoChanges on the stream."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    generator = FakeGenerator(GenerationProposal())
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=""), max_revision_attempts=0)
+    generator = FakeCodeGenerator(GenerationProposal())
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=""), max_generation_retries=0)
 
     events = _custom_events(
         graph,
@@ -1650,21 +1657,21 @@ def test_an_empty_proposal_with_zero_budget_reports_already_covered_immediately(
     assert no_changes[0].message == NO_CHANGES_MESSAGE
 
 
-def test_a_budget_above_one_allows_multiple_revisions_before_escalating(tmp_path) -> None:
-    """A Revision Budget greater than one permits several revisions; only once it is spent does the patch escalate."""
+def test_multiple_generation_retries_allow_multiple_revisions_before_escalating(tmp_path) -> None:
+    """Multiple Generation Retries permit several revisions before the patch escalates."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=2, findings=[ReviewFinding(category="coverage", detail="thin")]))
-    generator = FakeGenerator(
+    reviewer = FakeCodeReviewer(PatchReview(score=2, findings=[ReviewFinding(category="coverage", detail="thin")]))
+    generator = FakeCodeGenerator(
         GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
         revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
     )
     graph = _generation_graph(
-        generator=generator,
+        code_generator=generator,
         recorder=recorder,
         workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
-        reviewer=reviewer,
-        max_revision_attempts=2,
+        code_reviewer=reviewer,
+        max_generation_retries=2,
     )
     config = _config()
 
@@ -1679,7 +1686,7 @@ def test_a_budget_above_one_allows_multiple_revisions_before_escalating(tmp_path
         config=config,
     )
 
-    # Two revisions were attempted (the budget), then the still-below-threshold patch escalated rather than failing.
+    # Two revisions were attempted (the configured Generation Retries), then the still-below-threshold patch escalated rather than failing.
     assert len(generator.revise_calls) == 2
     assert result.get("failure") is None
     assert graph.get_state(config).next == ("await_decision",)
@@ -1690,15 +1697,18 @@ def test_revision_generation_failure_is_a_generating_run_failure(tmp_path) -> No
     """A reviser that cannot produce a revised proposal fails the run at the generating stage."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=3, findings=[]))
+    reviewer = FakeCodeReviewer(PatchReview(score=3, findings=[]))
 
-    class RaisingReviser(FakeGenerator):
+    class RaisingReviser(FakeCodeGenerator):
         def revise(self, *, task, source_documents, test_documents, prior_files, diff, findings):
             raise RuntimeError("model unavailable")
 
     generator = RaisingReviser(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     graph = _generation_graph(
-        generator=generator, recorder=recorder, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer
+        code_generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
+        code_reviewer=reviewer,
     )
 
     final = graph.invoke(
@@ -1725,13 +1735,13 @@ def test_revision_validation_failure_is_a_generating_run_failure(tmp_path) -> No
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "auth.py").write_text("real application code")
     recorder = RecordingRecorder()
-    reviewer = FakeReviewer(PatchReview(score=3, findings=[]))
-    generator = FakeGenerator(
+    reviewer = FakeCodeReviewer(PatchReview(score=3, findings=[]))
+    generator = FakeCodeGenerator(
         GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
         revision=GenerationProposal(generated_files=[GeneratedFile(path="app/auth.py", content="malicious")]),
     )
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
-    graph = _generation_graph(generator=generator, recorder=recorder, workspace=workspace, reviewer=reviewer)
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer)
 
     final = graph.invoke(
         {
@@ -1753,12 +1763,14 @@ def test_revision_validation_failure_is_a_generating_run_failure(tmp_path) -> No
 def test_revision_stream_distinguishes_revising_and_second_review_stages(tmp_path) -> None:
     """The Agent Stream marks the revision and second-review passes with distinct stages and ends with one terminal review result."""
     (tmp_path / "tests").mkdir()
-    reviewer = FakeReviewer(reviews=[PatchReview(score=3, findings=[]), PatchReview(score=10, findings=[])])
-    generator = FakeGenerator(
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=3, findings=[]), PatchReview(score=10, findings=[])])
+    generator = FakeCodeGenerator(
         GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
         revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")]),
     )
-    graph = _generation_graph(generator=generator, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), reviewer=reviewer)
+    graph = _generation_graph(
+        code_generator=generator, workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"), code_reviewer=reviewer
+    )
 
     events = _custom_events(
         graph,
@@ -1780,8 +1792,8 @@ def test_escalated_below_threshold_patch_emits_its_review_result_on_the_stream(t
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     diff = "diff --git a/tests/test_auth.py b/tests/test_auth.py"
-    reviewer = FakeReviewer(PatchReview(score=4, findings=[ReviewFinding(category="coverage", detail="thin")]))
-    graph = _reviewed_graph(reviewer=reviewer, recorder=recorder, diff=diff, max_revision_attempts=0)
+    reviewer = FakeCodeReviewer(PatchReview(score=4, findings=[ReviewFinding(category="coverage", detail="thin")]))
+    graph = _reviewed_graph(code_reviewer=reviewer, recorder=recorder, diff=diff, max_generation_retries=0)
 
     events = _custom_events(
         graph,
@@ -1811,17 +1823,17 @@ def _custom_events(graph, graph_input):
     return [chunk for _mode, chunk in items]
 
 
-def test_test_generation_stream_emits_ordered_stage_and_run_markers(tmp_path) -> None:
-    """Test-generation progress is classifying → planning → retrieving → generating and identifies the run."""
+def test_code_generation_stream_emits_ordered_stage_and_run_markers(tmp_path) -> None:
+    """Code-generation progress is classifying → planning → retrieving → generating and identifies the run."""
     (tmp_path / "tests").mkdir()  # an existing test root admits the proposed test file
     recorder = RecordingRecorder()
     planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="x")])
-    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")]))
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")]))
     graph = _build(
-        FakeClassifierLLM("test_generation"),
+        FakeClassifierLLM("code_generation"),
         recorder=recorder,
         planner_llm=FakePlannerLLM(planner_output),
-        generator=generator,
+        code_generator=generator,
         workspace=FakeWorkspace(diff="diff --git a/tests/test_x.py b/tests/test_x.py"),
     )
 

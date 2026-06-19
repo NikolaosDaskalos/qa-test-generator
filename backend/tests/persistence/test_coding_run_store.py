@@ -78,12 +78,12 @@ def test_mark_failed_records_failure_stage_and_sanitized_reason() -> None:
         store = CodingRunStore(db)
         run = store.create(repository_session_id=session_id, thread_id="thread-fail")
 
-        store.mark_failed(run, failed_stage=CodingRunStage.planning, failure_reason="Request is out of scope for test generation")
+        store.mark_failed(run, failed_stage=CodingRunStage.planning, failure_reason="Request is out of scope for code generation")
 
         reloaded = store.get_by_id(run.id)
         assert reloaded.status == CodingRunStatus.failed
         assert reloaded.failed_stage == CodingRunStage.planning
-        assert reloaded.failure_reason == "Request is out of scope for test generation"
+        assert reloaded.failure_reason == "Request is out of scope for code generation"
 
 
 def test_complete_persists_the_patch_and_advances_to_awaiting_review() -> None:

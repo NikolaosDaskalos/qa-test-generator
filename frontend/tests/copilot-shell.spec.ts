@@ -918,7 +918,7 @@ test("Question stream transport errors are shown without crashing", async ({
   await expect(page.getByRole("region", { name: "Chat" })).toBeVisible()
 })
 
-test("User can request test generation and see the reviewed Test Patch", async ({
+test("User can request code generation and see the reviewed Test Patch", async ({
   page,
 }) => {
   await page.route("**/api/v1/repositories/**", async (route) => {
@@ -1232,7 +1232,7 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
   await expect(page.getByRole("button", { name: "Reject" })).not.toBeVisible()
 })
 
-test("Failed test generation renders the failed stage and sanitized reason", async ({
+test("Failed code generation renders the failed stage and sanitized reason", async ({
   page,
 }) => {
   await page.route("**/api/v1/repositories/**", async (route) => {
@@ -1314,7 +1314,7 @@ test("Failed test generation renders the failed stage and sanitized reason", asy
   ).not.toBeVisible()
 })
 
-test("Repository questions and test generation coexist in one chat history", async ({
+test("Repository questions and code generation coexist in one chat history", async ({
   page,
 }) => {
   let questionCount = 0

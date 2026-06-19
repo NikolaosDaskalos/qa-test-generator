@@ -1,6 +1,6 @@
 """The persistence port the graph uses to record a Coding Run's lifecycle.
 
-The unified graph stays free of the database: the ``test_generation`` branch
+The unified graph stays free of the database: the ``code_generation`` branch
 calls this thin port to persist the durable Coding Run (the domain record of
 truth) while the checkpointer holds in-flight graph state. ``CodingRunRecorder``
 is the production adapter over ``CodingRunStore``; tests substitute a fake.
@@ -15,7 +15,7 @@ from app.schemas import ExternalReference, GeneratedFile, ReviewFinding
 
 
 class RunRecorder(Protocol):
-    """Records Coding Run lifecycle transitions for the test-generation branch."""
+    """Records Coding Run lifecycle transitions for the code-generation branch."""
 
     def start(self, *, thread_id: str, repository_session_id: uuid.UUID) -> uuid.UUID:
         """Persist a queued Coding Run and return its id."""

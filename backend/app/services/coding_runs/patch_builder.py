@@ -22,7 +22,7 @@ class PatchBuildRequest:
 
     generated_files: list[GeneratedFile]
     checkout_root: Path | str | None
-    is_revision_attempt: bool
+    is_generation_retry: bool
     generation_branch: str
     coding_run_id: uuid.UUID
     external_references: list[ExternalReference]
@@ -58,7 +58,7 @@ class PatchBuilder:
 
         try:
             workspace = self._workspace_factory(request.checkout_root)
-            if request.is_revision_attempt:
+            if request.is_generation_retry:
                 workspace.reset_patch_state()
             workspace.write_test_files(validated)
             diff = workspace.diff()

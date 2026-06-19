@@ -1,4 +1,4 @@
-"""The bounded ReAct test generator: structured files + harvested External References.
+"""The bounded code generator: structured files + harvested External References.
 
 These drive the generator through an injected fake agent so the loop boundary,
 structured-file extraction, and External Reference harvesting are verified without
@@ -9,7 +9,7 @@ import json
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.agent.agents.generator import ReActTestGenerator, _GeneratorResponse
+from app.agent.agents.code_generator import CodeGenerator, _GeneratorResponse
 from app.schemas import GeneratedFile, ReviewFinding
 
 
@@ -36,11 +36,11 @@ def _build_generator(monkeypatch, final_state):
     generator through its public ``generate``/``revise`` interface with no real model.
     """
     agent = FakeAgent(final_state)
-    monkeypatch.setattr("app.agent.agents.generator.create_agent", lambda *a, **k: agent)
-    return ReActTestGenerator(llm=object()), agent
+    monkeypatch.setattr("app.agent.agents.code_generator.create_agent", lambda *a, **k: agent)
+    return CodeGenerator(llm=object()), agent
 
 
-def test_generator_extracts_structured_files_and_harvests_external_references(monkeypatch) -> None:
+def test_code_generator_extracts_structured_files_and_harvests_external_references(monkeypatch) -> None:
     """The structured response yields files; web_search tool messages yield External References."""
     final_state = {
         "messages": [
@@ -59,7 +59,7 @@ def test_generator_extracts_structured_files_and_harvests_external_references(mo
     assert [reference.url for reference in proposal.external_references] == ["https://docs.pytest.org"]
 
 
-def test_generator_caps_the_web_search_loop_with_a_tool_call_limit(monkeypatch) -> None:
+def test_code_generator_caps_the_web_search_loop_with_a_tool_call_limit(monkeypatch) -> None:
     """The agent is built with a per-run tool-call limit that stops the loop gracefully."""
     captured = {}
 
@@ -67,9 +67,9 @@ def test_generator_caps_the_web_search_loop_with_a_tool_call_limit(monkeypatch) 
         captured.update(kwargs)
         return FakeAgent({"messages": [], "structured_response": _GeneratorResponse(generated_files=[])})
 
-    monkeypatch.setattr("app.agent.agents.generator.create_agent", fake_create_agent)
+    monkeypatch.setattr("app.agent.agents.code_generator.create_agent", fake_create_agent)
 
-    ReActTestGenerator(llm=object())
+    CodeGenerator(llm=object())
 
     middleware = captured["middleware"]
     assert len(middleware) == 1
@@ -77,7 +77,7 @@ def test_generator_caps_the_web_search_loop_with_a_tool_call_limit(monkeypatch) 
     assert middleware[0].exit_behavior == "continue"
 
 
-def test_generator_revises_a_prior_proposal_against_reviewer_findings(monkeypatch) -> None:
+def test_code_generator_revises_a_prior_proposal_against_reviewer_findings(monkeypatch) -> None:
     """Revision returns the new files and prompts with the prior proposal, the canonical diff, and the findings."""
     final_state = {
         "messages": [],
@@ -103,7 +103,7 @@ def test_generator_revises_a_prior_proposal_against_reviewer_findings(monkeypatc
     assert "def test_x(): ..." in prompt
 
 
-def test_generator_uses_one_web_search_agent_for_both_generation_and_revision(monkeypatch) -> None:
+def test_code_generator_uses_one_web_search_agent_for_both_generation_and_revision(monkeypatch) -> None:
     """A single web_search-capable agent serves both generation and revision."""
     created = []
 
@@ -112,9 +112,9 @@ def test_generator_uses_one_web_search_agent_for_both_generation_and_revision(mo
         created.append({"agent": agent, "tools": tools or [], "system_prompt": kwargs["system_prompt"]})
         return agent
 
-    monkeypatch.setattr("app.agent.agents.generator.create_agent", fake_create_agent)
+    monkeypatch.setattr("app.agent.agents.code_generator.create_agent", fake_create_agent)
 
-    generator = ReActTestGenerator(llm=object())
+    generator = CodeGenerator(llm=object())
     generator.generate(task="add tests", source_documents=[], test_documents=[])
     generator.revise(task="add tests", source_documents=[], test_documents=[], prior_files=[], diff="", findings=[])
 
@@ -124,7 +124,7 @@ def test_generator_uses_one_web_search_agent_for_both_generation_and_revision(mo
     assert len(created[0]["agent"].invocations) == 2
 
 
-def test_generator_revision_consults_web_search_and_harvests_references(monkeypatch) -> None:
+def test_code_generator_revision_consults_web_search_and_harvests_references(monkeypatch) -> None:
     """Revision may now call web_search, so its tool messages yield External References."""
     final_state = {
         "messages": [
