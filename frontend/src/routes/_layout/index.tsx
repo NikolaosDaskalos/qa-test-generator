@@ -13,6 +13,7 @@ import type {
   SessionHistoryPublic,
 } from "@/client"
 import { RepositoriesService, SessionsService } from "@/client"
+import { DiffView } from "@/components/DiffView"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -908,9 +909,7 @@ function ReviewResultSummary({
           ))}
         </ul>
       ) : null}
-      <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3 text-xs">
-        {review.diff}
-      </pre>
+      <DiffView diff={review.diff} />
       <p className="text-xs text-muted-foreground">{review.disclaimer}</p>
       {canDecide ? (
         <div className="grid gap-2">
@@ -977,9 +976,7 @@ function RunDecisionSummary({ decision }: { decision: RunDecisionView }) {
           <p className="text-sm text-muted-foreground">
             Branch {decision.branch}
           </p>
-          <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3 text-xs">
-            {decision.diff}
-          </pre>
+          <DiffView diff={decision.diff} />
         </>
       ) : (
         <>
@@ -994,9 +991,7 @@ function RunDecisionSummary({ decision }: { decision: RunDecisionView }) {
               ))}
             </ul>
           ) : null}
-          <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3 text-xs">
-            {decision.diff}
-          </pre>
+          <DiffView diff={decision.diff} />
         </>
       )}
       <p className="text-xs text-muted-foreground">{decision.disclaimer}</p>
@@ -1102,13 +1097,9 @@ function RunDetails({
               </ul>
             ) : null}
             {patch?.diff ? (
-              <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3">
-                {patch.diff}
-              </pre>
+              <DiffView diff={patch.diff} />
             ) : run.diff ? (
-              <pre className="max-w-full overflow-x-auto rounded-md border bg-muted p-3">
-                {run.diff}
-              </pre>
+              <DiffView diff={run.diff} />
             ) : null}
             {patch?.generated_files && patch.generated_files.length > 0 ? (
               <div className="grid gap-1">
