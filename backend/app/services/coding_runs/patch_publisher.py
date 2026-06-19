@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from app.core import decrypt_repository_token
-from app.git import GitCommands, parse_repository_url
+from app.integrations.git import GitCommands, parse_repository_url
 from app.models import Repository
 
 

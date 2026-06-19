@@ -5,14 +5,23 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from fastapi import BackgroundTasks, HTTPException, status
+from fastapi import BackgroundTasks
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.core import WeaviateResources, encrypt_repository_token, engine
 from app.enums import RepositoryProvider, RepositoryStatus
 from app.errors.git_errors import GitError
-from app.git import GitCommands, ParsedRepositoryUrl, parse_repository_url
+from app.errors.repository_errors import (
+    DuplicateRepository,
+    InvalidRepositoryCredential,
+    InvalidRepositoryUrl,
+    RepositoryAccessForbidden,
+    RepositoryDeletionFailed,
+    RepositoryNotFound,
+    RepositoryProcessing,
+)
+from app.integrations.git import GitCommands, ParsedRepositoryUrl, parse_repository_url
 from app.models import Repository, User
 from app.persistence import RepositoryDocumentStore, RepositoryStore
 from app.rag import DocumentIngestor
@@ -53,13 +62,13 @@ class RepositoryService:
             parsed_url = parse_repository_url(repository_in.repository_url)
         except ValueError as exc:
             logger.warning("Repository creation rejected for user_id=%s: %s", user.id, exc)
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise InvalidRepositoryUrl(str(exc)) from exc
 
         if self._find_duplicate(parsed_url.canonical_url, user.id):
             logger.warning(
                 "Duplicate repository creation rejected user_id=%s host=%s owner=%s repository=%s", user.id, parsed_url.host, parsed_url.owner, parsed_url.name
             )
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository already exists")
+            raise DuplicateRepository
 
         repository = Repository(
             user_id=user.id,
@@ -77,7 +86,7 @@ class RepositoryService:
         except IntegrityError as exc:
             self.repository_store.rollback()
             logger.warning("Repository creation hit a uniqueness conflict user_id=%s repository_id=%s", user.id, repository.id)
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository already exists") from exc
+            raise DuplicateRepository from exc
 
         background_tasks.add_task(process_repository, repository.id, repository_in.token, weaviate_resources)
         logger.info("Repository created and processing scheduled repository_id=%s user_id=%s", repository.id, user.id)
@@ -92,7 +101,7 @@ class RepositoryService:
             git.validate_remote_access(repository_in.token)
         except GitError as exc:
             logger.warning("Repository credential validation failed repository_id=%s user_id=%s", repository.id, user.id)
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token is invalid for repository") from exc
+            raise InvalidRepositoryCredential from exc
 
         self.repository_store.update_token(
             repository,
@@ -106,7 +115,7 @@ class RepositoryService:
         repository = self._get_accessible(repository_id, user)
         if repository.status in ACTIVE_PROCESSING_STATUSES:
             logger.warning("Repository deletion blocked while processing repository_id=%s status=%s", repository.id, repository.status.value)
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository cannot be deleted while processing")
+            raise RepositoryProcessing
 
         user_id = repository.user_id
         encrypted_token = repository.encrypted_token
@@ -118,13 +127,13 @@ class RepositoryService:
         except Exception as exc:
             reason = self.repository_store.fail(repository, exc, credential=encrypted_token, fallback="Repository checkout deletion failed")
             logger.error("Repository checkout deletion failed repository_id=%s: %s", repository_id, reason)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
+            raise RepositoryDeletionFailed from exc
         try:
             self.ingestor.delete_repository(repository_id, user_id=user_id)
         except Exception as exc:
             reason = self.repository_store.fail(repository, exc, credential=encrypted_token, fallback="Repository vector deletion failed")
             logger.error("Repository vector deletion failed repository_id=%s: %s", repository_id, reason)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
+            raise RepositoryDeletionFailed from exc
         try:
             self.repository_store.delete(repository)
         except Exception as exc:
@@ -135,7 +144,7 @@ class RepositoryService:
             else:
                 reason = "Repository database deletion failed"
             logger.error("Repository database deletion failed repository_id=%s: %s", repository_id, reason)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
+            raise RepositoryDeletionFailed from exc
         logger.info("Repository deletion completed repository_id=%s user_id=%s", repository_id, user_id)
 
     def process_repository(self, repository_id: uuid.UUID, token: str) -> None:
@@ -184,10 +193,10 @@ class RepositoryService:
         repository = self.repository_store.get_by_id(repository_id)
         if not repository:
             logger.warning("Repository access failed because it was not found repository_id=%s user_id=%s", repository_id, user.id)
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+            raise RepositoryNotFound
         if not user.is_superuser and repository.user_id != user.id:
             logger.warning("Repository access denied repository_id=%s user_id=%s", repository_id, user.id)
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+            raise RepositoryAccessForbidden
         return repository
 
     def _find_duplicate(self, canonical_url: str, user_id: uuid.UUID) -> Repository | None:

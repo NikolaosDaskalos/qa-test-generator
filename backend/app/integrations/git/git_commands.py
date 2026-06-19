@@ -14,8 +14,8 @@ from pathlib import Path
 
 from app.core import settings
 from app.errors.git_errors import GitError
-from app.git.git_process import GitResult, run_git
-from app.git.repository_url import ParsedRepositoryUrl, parse_repository_url
+from app.integrations.git.git_process import GitResult, run_git
+from app.integrations.git.repository_url import ParsedRepositoryUrl, parse_repository_url
 
 logger = logging.getLogger(__name__)
 

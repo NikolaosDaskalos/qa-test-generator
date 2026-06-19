@@ -6,12 +6,21 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks
 
 from app.core import WeaviateResources, decrypt_repository_token, encrypt_repository_token
 from app.enums import RepositoryProvider, RepositoryStatus
 from app.errors.git_errors import GitError
-from app.git import ParsedRepositoryUrl
+from app.errors.repository_errors import (
+    DuplicateRepository,
+    InvalidRepositoryCredential,
+    InvalidRepositoryUrl,
+    RepositoryAccessForbidden,
+    RepositoryDeletionFailed,
+    RepositoryNotFound,
+    RepositoryProcessing,
+)
+from app.integrations.git import ParsedRepositoryUrl
 from app.models import Repository, User
 from app.schemas import RepositoryCreate, RepositoryUpdate
 from app.services import RepositoryService
@@ -179,7 +188,7 @@ def test_create_rejects_equivalent_existing_repository() -> None:
     existing = make_repository()
     store = FakeRepositoryStore(existing)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(DuplicateRepository):
         make_service(store).create_repository(
             repository_in=RepositoryCreate(repository_url="git@github.com:openai/openai-python.git", token="secret-token", token_expiration_days=30),
             user=make_user(user_id=existing.user_id),
@@ -187,13 +196,11 @@ def test_create_rejects_equivalent_existing_repository() -> None:
             weaviate_resources=make_weaviate_resources(),
         )
 
-    assert exc_info.value.status_code == 409
-
 
 def test_create_rejects_unsupported_repository_provider() -> None:
     store = FakeRepositoryStore()
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(InvalidRepositoryUrl) as exc_info:
         make_service(store).create_repository(
             repository_in=RepositoryCreate(repository_url="https://example.com/team/repository.git", token="secret-token", token_expiration_days=None),
             user=make_user(),
@@ -201,7 +208,6 @@ def test_create_rejects_unsupported_repository_provider() -> None:
             weaviate_resources=make_weaviate_resources(),
         )
 
-    assert exc_info.value.status_code == 422
     assert exc_info.value.detail == "Repository provider is not supported"
     assert store.saved == []
 
@@ -414,14 +420,13 @@ def test_update_rejects_token_without_repository_access() -> None:
         def validate_remote_access(self, token):
             raise GitError(f"Authentication failed for {token}")
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(InvalidRepositoryCredential) as exc_info:
         make_service(store, git_factory=FakeGit).update_repository(
             repository_id=repository.id,
             repository_in=RepositoryUpdate(token="invalid-token", token_expiration_days=30),
             user=make_user(user_id=repository.user_id),
         )
 
-    assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Token is invalid for repository"
     assert repository.encrypted_token == original_encrypted_token
     assert repository.token_expiration_date == original_expiration
@@ -433,10 +438,9 @@ def test_delete_rejects_active_processing_states(repository_status) -> None:
     repository = make_repository(status=repository_status)
     store = FakeRepositoryStore(repository)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositoryProcessing):
         make_service(store).delete_repository(repository_id=repository.id, user=make_user(user_id=repository.user_id))
 
-    assert exc_info.value.status_code == 409
     assert store.deleted == []
 
 
@@ -487,12 +491,11 @@ def test_local_cleanup_failure_persists_failure_and_returns_500() -> None:
         def delete_checkout(self):
             raise GitError(f"Checkout deletion failed for credential {credential}: " + ("x" * 1100))
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositoryDeletionFailed):
         make_service(store, ingestor=ingestor, git_factory=FailingGit).delete_repository(
             repository_id=repository.id, user=make_user(user_id=repository.user_id)
         )
 
-    assert exc_info.value.status_code == 500
     assert repository.status == RepositoryStatus.failed
     assert repository.failed_reason.startswith("Checkout deletion failed for credential [REDACTED]")
     assert credential not in repository.failed_reason
@@ -517,10 +520,9 @@ def test_vector_cleanup_failure_persists_failure_and_returns_500() -> None:
             nonlocal local_deleted
             local_deleted = True
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositoryDeletionFailed):
         make_service(store, ingestor=ingestor, git_factory=FakeGit).delete_repository(repository_id=repository.id, user=make_user(user_id=repository.user_id))
 
-    assert exc_info.value.status_code == 500
     assert local_deleted
     assert repository.status == RepositoryStatus.failed
     assert repository.failed_reason == "Repository vector deletion failed"
@@ -565,10 +567,9 @@ def test_database_cleanup_failure_rolls_back_reloads_and_persists_failure() -> N
         def delete_checkout(self):
             pass
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositoryDeletionFailed):
         make_service(store, git_factory=FakeGit).delete_repository(repository_id=repository.id, user=make_user(user_id=repository.user_id))
 
-    assert exc_info.value.status_code == 500
     assert store.transaction_calls == ["delete", "rollback", "reload", "persist_failed"]
     assert repository.status == RepositoryStatus.failed
     assert repository.failed_reason == "Repository database deletion failed"
@@ -581,8 +582,14 @@ def test_repository_access_enforces_owner_and_allows_superuser() -> None:
 
     assert service.get_repository(repository_id=repository.id, user=make_user(user_id=repository.user_id)) is repository
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositoryAccessForbidden):
         service.get_repository(repository_id=repository.id, user=make_user())
-    assert exc_info.value.status_code == 403
 
     assert service.get_repository(repository_id=repository.id, user=make_user(is_superuser=True)) is repository
+
+
+def test_repository_access_raises_not_found_for_missing_repository() -> None:
+    service = make_service(FakeRepositoryStore())
+
+    with pytest.raises(RepositoryNotFound):
+        service.get_repository(repository_id=uuid.uuid4(), user=make_user())

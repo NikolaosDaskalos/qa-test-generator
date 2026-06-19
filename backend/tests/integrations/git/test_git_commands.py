@@ -8,7 +8,7 @@ import pytest
 
 from app.core import settings
 from app.errors.git_errors import GitError
-from app.git import COMMIT_AUTHOR_EMAIL, COMMIT_AUTHOR_NAME, GitCommands, GitResult, parse_repository_url
+from app.integrations.git import COMMIT_AUTHOR_EMAIL, COMMIT_AUTHOR_NAME, GitCommands, GitResult, parse_repository_url
 
 
 def test_git_repository_checkout_paths_are_isolated_by_user(monkeypatch, tmp_path: Path) -> None:

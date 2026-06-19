@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Protocol
 
-from app.git import run_git
+from app.integrations.git import run_git
 from app.schemas import GeneratedFile
 
 # Temporary branches are namespaced and uniquely suffixed, so they are always

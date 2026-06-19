@@ -10,6 +10,7 @@ from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 
 from app.api import api_router
+from app.api.exception_handlers import register_exception_handlers
 from app.core import close_checkpointer, open_checkpointer, settings, vector_db
 
 logger = logging.getLogger(__name__)
@@ -55,3 +56,6 @@ if settings.all_cors_origins:
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 logger.info("API router registered with prefix=%s", settings.API_V1_STR)
+
+register_exception_handlers(app)
+logger.info("Domain exception handlers registered")
