@@ -1,3 +1,5 @@
+"""The ``CodingRun`` table: the durable record of one Test-Generation Task."""
+
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING

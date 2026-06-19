@@ -212,6 +212,7 @@ class GitCommands:
         return self._run("git", "checkout", "-B", branch_name, f"origin/{branch_name}", cwd=self.repo_path)
 
     def _is_git_repository(self) -> bool:
+        """Whether the local path is an initialized Git checkout."""
         return (self.repo_path / ".git").is_dir()
 
     def _run(self, *args: str, cwd: Path, token: str | None = None) -> GitResult:
@@ -243,4 +244,5 @@ class GitCommands:
         return run_git(*args, cwd=cwd, env=environment, token=token)
 
     def _credential_username(self) -> str:
+        """The username GitHub expects when authenticating with a token."""
         return "x-access-token"

@@ -1,3 +1,5 @@
+"""The system prompts for every LLM role: Q&A, planner, generator, and reviewer."""
+
 # ── System Prompt (default persona) ────────────────────────────────────────────
 # PCTF-structured: Persona + Context + Task + Format, with a prompt-injection guard
 # that treats retrieved evidence as data to cite, never as instructions to follow.

@@ -1,3 +1,5 @@
+"""The ``User`` table: an authenticated account owning repositories and sessions."""
+
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -12,6 +14,8 @@ if TYPE_CHECKING:
 
 
 class User(SQLModel, table=True):
+    """An application account, holding the password hash and ownership relationships."""
+
     email: EmailStr = Field(unique=True, index=True, max_length=255)
     is_active: bool = True
     is_superuser: bool = False

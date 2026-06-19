@@ -1,3 +1,6 @@
+"""Exceptions raised by the RAG ingestion and retrieval layers."""
+
+
 class IngestorError(ValueError):
     """Ingestor error with a message."""
 

@@ -37,4 +37,5 @@ def spend_revision(state: Mapping[str, object]) -> dict[str, int]:
 
 
 def _resolve_limit(limit: int | None) -> int:
+    """Return the explicit limit, falling back to the configured ``MAX_REVISION_ATTEMPTS``."""
     return settings.MAX_REVISION_ATTEMPTS if limit is None else limit

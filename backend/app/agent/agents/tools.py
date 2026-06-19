@@ -1,3 +1,11 @@
+"""The single ``web_search`` tool both agents share.
+
+A thin Tavily wrapper exposed as a LangChain tool, scoped to looking up
+test-framework syntax and idioms — never the repository under test. It emits a
+``researching`` stage marker and returns JSON-serialized results, degrading to a
+JSON error payload rather than raising so the agent loop stays alive.
+"""
+
 import json
 import logging
 import os

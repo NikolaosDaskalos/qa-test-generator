@@ -1,3 +1,5 @@
+"""Local-only routes for development convenience, never mounted outside the local environment."""
+
 import logging
 from typing import Any
 
@@ -15,6 +17,8 @@ router = APIRouter(tags=["private"], prefix="/private")
 
 
 class PrivateUserCreate(BaseModel):
+    """Payload for the local-only user creation endpoint."""
+
     email: str
     password: str
     full_name: str

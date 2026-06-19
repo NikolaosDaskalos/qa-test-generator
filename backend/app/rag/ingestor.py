@@ -33,6 +33,7 @@ class DocumentIngestor:
 
     @cached_property
     def splitter(self) -> RecursiveCharacterTextSplitter:
+        """The cached Python-aware splitter, sized by the embedding model's tokenizer."""
         return RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
             tokenizer=AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL_TOKENIZER),
             separators=RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON),

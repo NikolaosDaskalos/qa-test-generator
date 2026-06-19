@@ -1,3 +1,5 @@
+"""The PostgreSQL store for Git repository records, with credential-safe failure stamping."""
+
 import uuid
 from datetime import datetime
 
@@ -15,13 +17,16 @@ class RepositoryStore:
         self.session = session
 
     def get_by_id(self, repository_id: uuid.UUID) -> Repository | None:
+        """Load a repository by id, or ``None`` if absent."""
         return self.session.get(Repository, repository_id)
 
     def get_by_user_id(self, user_id: uuid.UUID) -> list[Repository]:
+        """Return all of a user's repositories."""
         statement = select(Repository).where(Repository.user_id == user_id)
         return list(self.session.exec(statement).all())
 
     def get_page(self, *, skip: int, limit: int, user_id: uuid.UUID | None = None) -> list[Repository]:
+        """Return a page of repositories, optionally scoped to one user."""
         statement = select(Repository)
         if user_id is not None:
             statement = statement.where(Repository.user_id == user_id)
@@ -29,22 +34,26 @@ class RepositoryStore:
         return list(self.session.exec(statement).all())
 
     def count(self, *, user_id: uuid.UUID | None = None) -> int:
+        """Count repositories, optionally scoped to one user."""
         statement = select(func.count()).select_from(Repository)
         if user_id is not None:
             statement = statement.where(Repository.user_id == user_id)
         return self.session.exec(statement).one()
 
     def get_by_url_and_user_id(self, repository_url: str, user_id: uuid.UUID) -> Repository | None:
+        """Find a user's repository by URL, used to detect duplicates."""
         statement = select(Repository).where(Repository.user_id == user_id, Repository.repository_url == repository_url)
         return self.session.exec(statement).first()
 
     def save(self, repository: Repository) -> Repository:
+        """Persist a repository and return the refreshed row."""
         self.session.add(repository)
         self.session.commit()
         self.session.refresh(repository)
         return repository
 
     def update_token(self, repository: Repository, *, encrypted_token: str, token_expiration_date: datetime | None) -> Repository:
+        """Replace the stored access token and its expiry."""
         repository.encrypted_token = encrypted_token
         repository.token_expiration_date = token_expiration_date
         return self.save(repository)
@@ -82,10 +91,12 @@ class RepositoryStore:
         return reason
 
     def delete(self, repository: Repository) -> None:
+        """Delete a repository and its cascaded records."""
         self.session.delete(repository)
         self.session.commit()
 
     def rollback(self) -> None:
+        """Roll back the current session transaction."""
         self.session.rollback()
 
 

@@ -1,3 +1,5 @@
+"""The PostgreSQL store for indexed source documents (the Postgres side of the RAG index)."""
+
 import uuid
 
 from sqlmodel import Session, col, delete, select
@@ -12,13 +14,16 @@ class SourceDocumentStore:
         self.session = session
 
     def get_by_id(self, source_document_id: uuid.UUID) -> SourceDocument | None:
+        """Load a source document by id, or ``None`` if absent."""
         return self.session.get(SourceDocument, source_document_id)
 
     def get_by_repository_id(self, repository_id: uuid.UUID) -> list[SourceDocument]:
+        """Return all source documents indexed for one repository."""
         statement = select(SourceDocument).where(SourceDocument.repository_id == repository_id)
         return list(self.session.exec(statement).all())
 
     def get_page(self, *, skip: int, limit: int, repository_id: uuid.UUID | None = None) -> list[SourceDocument]:
+        """Return a page of source documents, optionally scoped to one repository."""
         statement = select(SourceDocument)
         if repository_id is not None:
             statement = statement.where(SourceDocument.repository_id == repository_id)
@@ -26,12 +31,14 @@ class SourceDocumentStore:
         return list(self.session.exec(statement).all())
 
     def save(self, source_document: SourceDocument) -> SourceDocument:
+        """Persist a single source document and return the refreshed row."""
         self.session.add(source_document)
         self.session.commit()
         self.session.refresh(source_document)
         return source_document
 
     def save_all(self, source_documents: list[SourceDocument]) -> list[SourceDocument]:
+        """Persist a batch of source documents in one commit."""
         self.session.add_all(source_documents)
         self.session.commit()
         return source_documents
@@ -57,5 +64,6 @@ class SourceDocumentStore:
             raise
 
     def delete(self, document: SourceDocument) -> None:
+        """Delete a single source document."""
         self.session.delete(document)
         self.session.commit()

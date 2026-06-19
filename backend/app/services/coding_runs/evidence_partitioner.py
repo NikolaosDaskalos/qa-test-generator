@@ -44,6 +44,7 @@ class EvidencePartitioner:
         self._retriever = retriever
 
     def partition(self, request: EvidencePartitionRequest) -> EvidencePartition:
+        """Retrieve each intent's evidence, splitting it into source vs. test and collecting safe hints."""
         source_evidence: list[SourceDocument] = []
         test_evidence: list[SourceDocument] = []
         hints: list[str] = []

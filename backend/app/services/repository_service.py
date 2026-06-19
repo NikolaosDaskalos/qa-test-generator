@@ -188,6 +188,7 @@ class RepositoryService:
                 logger.error("Git repository processing failed for repository_id=%s; record no longer exists", repository_id)
 
     def _get_accessible(self, repository_id: uuid.UUID, user: User) -> Repository:
+        """Return a repository the user can access, raising 404 if missing or 403 if not theirs."""
         repository = self.repository_store.get_by_id(repository_id)
         if not repository:
             logger.warning("Repository access failed because it was not found repository_id=%s user_id=%s", repository_id, user.id)
@@ -198,6 +199,7 @@ class RepositoryService:
         return repository
 
     def _find_duplicate(self, canonical_url: str, user_id: uuid.UUID) -> Repository | None:
+        """Find the user's existing repository matching ``canonical_url``, comparing canonical forms."""
         repository = self.repository_store.get_by_url_and_user_id(canonical_url, user_id)
         if repository:
             return repository
@@ -221,12 +223,14 @@ def process_repository(repository_id: uuid.UUID, token: str, weaviate_resources:
 
 
 def _expiration_date(token_expiration_days: int | None) -> datetime | None:
+    """Convert a token lifetime in days to an absolute UTC expiry, or ``None`` for no expiry."""
     if token_expiration_days is None:
         return None
     return datetime.now(UTC) + timedelta(days=token_expiration_days)
 
 
 def _provider_for(parsed_url: ParsedRepositoryUrl) -> RepositoryProvider:
+    """Map a parsed URL to its provider, raising for unsupported hosts (only GitHub today)."""
     if parsed_url.host != "github.com":
         raise ValueError("Repository provider is not supported")
     return RepositoryProvider.github

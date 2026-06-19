@@ -1,3 +1,5 @@
+"""Request/response schemas for the repository session API and its streaming turns."""
+
 import uuid
 from datetime import datetime
 
@@ -12,6 +14,8 @@ from app.schemas.review import ReviewFinding
 
 
 class RepositorySessionCreate(BaseModel):
+    """Payload to open a session bound to a repository."""
+
     repository_id: uuid.UUID
     title: str = Field(default=NEW_SESSION_TITLE, min_length=1, max_length=255)
 
@@ -42,6 +46,7 @@ class RepositoryQuestionRequest(BaseModel):
 
     @model_validator(mode="after")
     def _exactly_one_intent(self) -> "RepositoryQuestionRequest":
+        """Require exactly one of ``question`` or ``decision``, and a non-blank question."""
         if (self.question is None) == (self.decision is None):
             raise ValueError("Provide either a question or a decision, not both")
         if self.question is not None and not self.question.strip():
@@ -50,6 +55,8 @@ class RepositoryQuestionRequest(BaseModel):
 
 
 class RepositorySessionPublic(BaseModel):
+    """A session as exposed to clients."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -61,11 +68,15 @@ class RepositorySessionPublic(BaseModel):
 
 
 class RepositorySessionsPublic(BaseModel):
+    """A page of sessions with the total count."""
+
     data: list[RepositorySessionPublic]
     count: int
 
 
 class SessionHistoryPublic(BaseModel):
+    """One persisted session message as exposed to clients."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -78,6 +89,8 @@ class SessionHistoryPublic(BaseModel):
 
 
 class SessionHistoriesPublic(BaseModel):
+    """A session's full message history."""
+
     data: list[SessionHistoryPublic]
 
 

@@ -1,3 +1,5 @@
+"""Enumerations for the Coding Run lifecycle: overall status and failure stages."""
+
 from enum import Enum
 
 

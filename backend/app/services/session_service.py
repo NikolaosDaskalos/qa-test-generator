@@ -1,3 +1,5 @@
+"""The Repository Session application service: ownership rules, history, and graph streaming."""
+
 import uuid
 from collections.abc import Generator
 from typing import Any
@@ -27,6 +29,7 @@ class RepositorySessionService:
         self.coding_run_store = coding_run_store
 
     def create_session(self, *, session_in: RepositorySessionCreate, user: User) -> RepositorySession:
+        """Open a session, requiring the caller to own a ready repository (404/403/409 otherwise)."""
         repository = self.repository_store.get_by_id(session_in.repository_id)
         if not repository:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
@@ -54,6 +57,7 @@ class RepositorySessionService:
         return RepositorySessionsPublic(data=sessions, count=count)  # type: ignore[arg-type]
 
     def _assert_repository_readable(self, repository_id: uuid.UUID, user: User) -> None:
+        """Raise 404/403 unless the caller can read the repository (superuser bypass)."""
         repository = self.repository_store.get_by_id(repository_id)
         if not repository:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
@@ -61,6 +65,7 @@ class RepositorySessionService:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
 
     def get_recent_history(self, *, repository_session_id: uuid.UUID, user: User) -> list[SessionHistory]:
+        """Return an owned session's recent message history."""
         repository_session = self._get_accessible(repository_session_id, user)
         return self.session_store.get_recent_history(repository_session.id)
 
@@ -80,6 +85,7 @@ class RepositorySessionService:
     def record_exchange(
         self, *, repository_session_id: uuid.UUID, user: User, user_message: str, assistant_message: str
     ) -> tuple[SessionHistory, SessionHistory]:
+        """Append a user/assistant message pair to an owned session."""
         repository_session = self._get_accessible(repository_session_id, user)
         return self.session_store.append_exchange(repository_session.id, user_message=user_message, assistant_message=assistant_message)
 
@@ -118,6 +124,7 @@ class RepositorySessionService:
         graph: Any,
         thread_id: str,
     ) -> Generator[AgentStreamEvent, None, None]:
+        """Stream a fresh turn, persisting the exchange and emitting the terminal ``Result`` for answers."""
         repository_session = context.repository_session
         config = {"configurable": {"thread_id": thread_id}}
         yield from map_graph_stream(graph.stream(context.graph_input(question), config=config, stream_mode=["custom", "messages"]))
@@ -166,6 +173,7 @@ class RepositorySessionService:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Coding Run is not awaiting a decision")
 
     def _get_accessible(self, repository_session_id: uuid.UUID, user: User) -> RepositorySession:
+        """Return a session the user owns, raising 404 if missing or 403 if not theirs."""
         repository_session = self.session_store.get_by_id(repository_session_id)
         if not repository_session:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository Session not found")

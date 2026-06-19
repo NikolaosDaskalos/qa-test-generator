@@ -1,3 +1,5 @@
+"""Repository session routes: create/list sessions, stream agent turns, and read run results."""
+
 import json
 import logging
 import uuid
@@ -29,6 +31,7 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 def create_repository_session(
     *, repository_session_service: RepositorySessionServiceDep, current_user: CurrentUser, session_in: RepositorySessionCreate
 ) -> RepositorySession:
+    """Open a new session bound to a repository the caller can access."""
     return repository_session_service.create_session(session_in=session_in, user=current_user)
 
 
@@ -77,6 +80,7 @@ def ask_repository_question(
 def read_repository_session_history(
     *, repository_session_service: RepositorySessionServiceDep, current_user: CurrentUser, repository_session_id: uuid.UUID
 ) -> SessionHistoriesPublic:
+    """Return the recent message history of an owned session."""
     history = repository_session_service.get_recent_history(repository_session_id=repository_session_id, user=current_user)
     return SessionHistoriesPublic(data=[SessionHistoryPublic.model_validate(message) for message in history])
 

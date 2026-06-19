@@ -1,3 +1,5 @@
+"""The ``SourceDocument`` table: a repository file chunk and the metadata behind its embedding."""
+
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict
@@ -21,6 +23,8 @@ class SourceDocumentMetadata(TypedDict):
 
 
 class SourceDocument(SQLModel, table=True):
+    """The PostgreSQL record of an indexed file chunk, mirrored as a vector in Weaviate."""
+
     __tablename__ = "source_document"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)

@@ -1,3 +1,5 @@
+"""Utility endpoints: superuser email test and an unauthenticated health check."""
+
 import logging
 
 from fastapi import APIRouter, Depends
@@ -14,9 +16,7 @@ router = APIRouter(prefix="/utils", tags=["utils"])
 
 @router.post("/test-email/", dependencies=[Depends(get_current_active_superuser)], status_code=201)
 def test_email(email_to: EmailStr) -> Message:
-    """
-    Test emails.
-    """
+    """Send a test email to verify SMTP configuration (superuser only)."""
     email_data = generate_test_email(email_to=email_to)
     send_email(email_to=email_to, subject=email_data.subject, html_content=email_data.html_content)
     logger.info("Test email sent")
@@ -25,4 +25,5 @@ def test_email(email_to: EmailStr) -> Message:
 
 @router.get("/health-check/")
 async def health_check() -> bool:
+    """Return ``True`` to signal the service is up."""
     return True

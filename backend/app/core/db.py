@@ -1,3 +1,5 @@
+"""The shared SQLModel engine and initial-data seeding."""
+
 import logging
 
 from sqlmodel import Session, create_engine, select
@@ -13,6 +15,7 @@ engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
 
 
 def init_db(session: Session) -> None:
+    """Ensure the first superuser exists, creating it from settings if absent."""
     # Tables should be created with Alembic migrations
     # But if you don't want to use migrations, create
     # the tables un-commenting the next lines

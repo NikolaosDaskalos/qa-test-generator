@@ -1,3 +1,6 @@
+"""Exceptions raised by the Git subprocess layer."""
+
+
 class GitError(Exception):
     """A git-command execution error with a message."""
 

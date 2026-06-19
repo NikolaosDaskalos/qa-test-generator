@@ -49,6 +49,7 @@ class DecisionFinalizer:
         diff: str,
         indexed_commit_sha: str,
     ) -> RunApproved | RunFailure:
+        """Commit, push, record approved, and restore the checkout; map Git errors to a typed failure."""
         try:
             publisher.commit(APPROVAL_COMMIT_MESSAGE)
         except Exception:
@@ -74,6 +75,7 @@ class DecisionFinalizer:
         indexed_commit_sha: str,
         findings: list[ReviewFinding],
     ) -> RunRejected:
+        """Restore the checkout, remove the temporary branch, record rejected, and return the outcome."""
         self._restore_checkout(workspace, indexed_commit_sha, generation_branch)
         self._recorder.reject(coding_run_id)
         return RunRejected(coding_run_id=coding_run_id, diff=diff or "", findings=list(findings))

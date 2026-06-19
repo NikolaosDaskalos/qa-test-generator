@@ -83,6 +83,7 @@ RepositoryServiceDep = Annotated[RepositoryService, Depends(get_repository_servi
 
 
 def get_repository_session_store(session: SessionDep) -> RepositorySessionStore:
+    """Build the PostgreSQL store for repository session records."""
     return RepositorySessionStore(session)
 
 
@@ -100,6 +101,7 @@ CodingRunStoreDep = Annotated[CodingRunStore, Depends(get_coding_run_store)]
 def get_repository_session_service(
         session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep, coding_run_store: CodingRunStoreDep
 ) -> RepositorySessionService:
+    """Compose the repository session application service from its stores."""
     return RepositorySessionService(session_store, repository_store, coding_run_store)
 
 

@@ -1,3 +1,5 @@
+"""User routes: admin CRUD over users and self-service profile, password, and signup."""
+
 import logging
 import uuid
 from typing import Any

@@ -1,3 +1,5 @@
+"""Alembic migration environment: wires SQLModel metadata and the app's database URL."""
+
 import logging
 from logging.config import fileConfig
 
@@ -36,6 +38,7 @@ target_metadata = SQLModel.metadata
 
 
 def get_url():
+    """Return the database URL from application settings."""
     return str(settings.SQLALCHEMY_DATABASE_URI)
 
 

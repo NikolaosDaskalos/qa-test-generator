@@ -131,10 +131,12 @@ def _classify_node(classifier_llm):
 
 
 def _route_intent(state: GraphState) -> Intent:
+    """Route off the ``classify`` verdict, defaulting to the read-only question branch."""
     return state.get("intent", "repository_question")
 
 
 def _route_after_plan(state: GraphState) -> Literal["failed", "planned"]:
+    """Route a planning-stage failure to the sink, otherwise on to evidence gathering."""
     return "failed" if state.get("failure") else "planned"
 
 
@@ -164,10 +166,12 @@ def _fail_run_node(recorder):
 
 
 def _default_workspace_factory(checkout_root):
+    """Default workspace seam: a local-Git workspace over the checkout."""
     return LocalGitWorkspace(checkout_root)
 
 
 def _default_publisher_factory(_repository_id):
+    """Default publisher seam: a no-op publisher when no credential seam is wired."""
     return NullPatchPublisher()
 
 

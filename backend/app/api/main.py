@@ -1,3 +1,5 @@
+"""The top-level API router aggregating every route module (private routes only when local)."""
+
 from fastapi import APIRouter
 
 from app.api.routes import login, private, repositories, sessions, users, utils

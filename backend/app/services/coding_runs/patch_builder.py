@@ -45,6 +45,11 @@ class PatchBuilder:
         self._recorder = recorder
 
     def build(self, request: PatchBuildRequest) -> PatchBuildOutcome:
+        """Validate and write the proposed files, derive the canonical diff, and persist the run.
+
+        Returns a ``PatchBuildOutcome`` carrying either the patch result or a typed
+        generating-stage ``RunFailure``; rejected paths and write/diff errors never escape.
+        """
         try:
             validated = validate_generated_test_files(Path(request.checkout_root), request.generated_files) if request.checkout_root else list(request.generated_files)
         except RejectedTestFile as rejection:

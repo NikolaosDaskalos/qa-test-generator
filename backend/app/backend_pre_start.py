@@ -1,3 +1,5 @@
+"""Pre-start gate: block until Postgres and Weaviate are ready before the app boots."""
+
 import logging
 from typing import Any
 
@@ -90,6 +92,7 @@ def _validate_collection(collection: Any) -> None:
 
 
 def main() -> None:
+    """Run the database and Weaviate readiness checks, then dispose the engine."""
     logger.info("Initializing service")
     try:
         init(engine)

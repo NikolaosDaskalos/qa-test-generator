@@ -1,3 +1,5 @@
+"""Authentication routes: access-token login, token testing, and password recovery/reset."""
+
 import logging
 from datetime import timedelta
 from typing import Annotated, Any

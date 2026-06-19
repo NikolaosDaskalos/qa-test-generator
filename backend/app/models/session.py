@@ -1,3 +1,5 @@
+"""Repository session tables: a conversation bound to one repository and its message history."""
+
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict, cast
@@ -29,6 +31,8 @@ class CitationData(TypedDict):
 
 
 class RepositorySession(SQLModel, table=True):
+    """A conversation immutably bound to one Repository, owning its history and Coding Runs."""
+
     __tablename__ = "repository_session"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -53,6 +57,8 @@ class RepositorySession(SQLModel, table=True):
 
 
 class SessionHistory(SQLModel, table=True):
+    """One message in a session, ordered by ``position`` and carrying any source citations."""
+
     __tablename__ = "session_history"
     __table_args__ = (UniqueConstraint("session_id", "position", name="uq_session_history_position"),)
 
@@ -72,6 +78,7 @@ class SessionHistory(SQLModel, table=True):
 
 @event.listens_for(RepositorySession, "before_update")
 def _prevent_repository_reassignment(_mapper: Mapper[Any], _connection: Connection, target: RepositorySession) -> None:
+    """Enforce the immutable repository binding by rejecting any update that changes ``repository_id``."""
     state = cast(InstanceState[RepositorySession], inspect(target))
     if state.attrs.repository_id.history.has_changes():
         raise ValueError("Repository Session binding is immutable")

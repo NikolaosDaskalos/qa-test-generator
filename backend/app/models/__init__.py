@@ -1,3 +1,5 @@
+"""SQLModel table models, re-exported for a single import surface and Alembic discovery."""
+
 from app.models.coding_run import CodingRun
 from app.models.repository import Repository
 from app.models.session import RepositorySession, SessionHistory

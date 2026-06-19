@@ -1,3 +1,5 @@
+"""The ``Repository`` table: a user's registered Git repository and its index state."""
+
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -12,6 +14,12 @@ if TYPE_CHECKING:
 
 
 class Repository(SQLModel, table=True):
+    """A Git repository registered by a user, unique per ``(user_id, repository_url)``.
+
+    Holds the access token (encrypted at rest) and the SHA of the commit that was
+    indexed, so retrieval and test generation work against a known checkout.
+    """
+
     __tablename__ = "repository"
     __table_args__ = (UniqueConstraint("user_id", "repository_url", name="uq_user_id_repository_url"),)
 
