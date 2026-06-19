@@ -4,10 +4,11 @@ import uuid
 from collections.abc import Generator
 from typing import Any
 
-from fastapi import HTTPException, status
 from langgraph.types import Command
 
 from app.enums import RepositoryStatus
+from app.errors.repository_errors import RepositoryAccessForbidden, RepositoryNotFound
+from app.errors.session_errors import CodingRunNotFound, RepositoryNotReady, RepositorySessionAccessForbidden, RepositorySessionNotFound, RunNotAwaitingDecision
 from app.models import CodingRun, RepositorySession, SessionHistory, User
 from app.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore
 from app.schemas import AgentStreamEvent, HumanDecisionRequest, RepositorySessionCreate, RepositorySessionsPublic, Result, RunApproved, RunRejected
@@ -27,11 +28,11 @@ class RepositorySessionService:
         """Open a session, requiring the caller to own a ready repository (404/403/409 otherwise)."""
         repository = self.repository_store.get_by_id(session_in.repository_id)
         if not repository:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+            raise RepositoryNotFound()
         if repository.user_id != user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+            raise RepositoryAccessForbidden()
         if repository.status != RepositoryStatus.ready:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository is not ready")
+            raise RepositoryNotReady()
 
         return self.session_store.save(RepositorySession(owner_id=user.id, repository_id=repository.id))
 
@@ -55,9 +56,9 @@ class RepositorySessionService:
         """Raise 404/403 unless the caller can read the repository (superuser bypass)."""
         repository = self.repository_store.get_by_id(repository_id)
         if not repository:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+            raise RepositoryNotFound()
         if not user.is_superuser and repository.user_id != user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+            raise RepositoryAccessForbidden()
 
     def get_recent_history(self, *, repository_session_id: uuid.UUID, user: User) -> list[SessionHistory]:
         """Return an owned session's recent message history."""
@@ -74,7 +75,7 @@ class RepositorySessionService:
         repository_session = self._get_accessible(repository_session_id, user)
         run = self.coding_run_store.get_by_id(coding_run_id) if self.coding_run_store else None
         if run is None or run.repository_session_id != repository_session.id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Coding Run not found")
+            raise CodingRunNotFound()
         return run
 
     def record_exchange(
@@ -139,7 +140,7 @@ class RepositorySessionService:
         """
         run = self.get_owned_run(repository_session_id=repository_session_id, coding_run_id=decision.coding_run_id, user=user)
         if not run.awaiting_decision:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Coding Run is not awaiting a decision")
+            raise RunNotAwaitingDecision()
         self._assert_checkpoint_awaits_decision(run, graph)
         return self._resume_stream(run, decision, graph)
 
@@ -159,13 +160,13 @@ class RepositorySessionService:
         state = graph.get_state(config)
         pending_nodes = tuple(getattr(state, "next", ()) or ())
         if "await_decision" not in pending_nodes:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Coding Run is not awaiting a decision")
+            raise RunNotAwaitingDecision()
 
     def _get_accessible(self, repository_session_id: uuid.UUID, user: User) -> RepositorySession:
         """Return a session the user owns, raising 404 if missing or 403 if not theirs."""
         repository_session = self.session_store.get_by_id(repository_session_id)
         if not repository_session:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository Session not found")
+            raise RepositorySessionNotFound()
         if repository_session.owner_id != user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+            raise RepositorySessionAccessForbidden()
         return repository_session

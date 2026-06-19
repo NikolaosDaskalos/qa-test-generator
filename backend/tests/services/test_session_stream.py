@@ -4,10 +4,10 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
 from langgraph.types import Command
 
 from app.enums import CodingRunStatus
+from app.errors.session_errors import CodingRunNotFound, RepositorySessionAccessForbidden, RunNotAwaitingDecision
 from app.models import CodingRun, Repository, RepositorySession, SessionHistory, User
 from app.schemas import Citation, HumanDecisionRequest, Result, ReviewFinding, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
 from app.services import RepositorySessionService
@@ -177,10 +177,8 @@ def test_stream_session_rejects_a_session_owned_by_another_user():
     service, _store, repository_session = _wiring(user)
     other = _user()
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(RepositorySessionAccessForbidden):
         list(service.stream_session(repository_session_id=repository_session.id, user=other, question="q", graph=FakeGraph([], {}), thread_id="t"))
-
-    assert exc.value.status_code == 403
 
 
 class FakeCodingRunStore:
@@ -285,10 +283,8 @@ def test_stream_session_rejects_a_decision_when_the_checkpoint_is_not_paused_at_
     graph = FakeGraph([], {"intent": "code_generation", "review_result": stale_review}, next_nodes=())
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(RunNotAwaitingDecision):
         list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision))
-
-    assert exc.value.status_code == 409
     assert graph.streamed == []
 
 
@@ -301,10 +297,8 @@ def test_stream_session_rejects_a_decision_for_a_run_not_awaiting_a_decision():
         graph = FakeGraph([], {})
         decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(RunNotAwaitingDecision):
             list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="t", decision=decision))
-
-        assert exc.value.status_code == 409
         # An invalid decision never drives the graph, so the checkout is never touched.
         assert graph.streamed == []
 
@@ -318,10 +312,8 @@ def test_stream_session_rejects_a_decision_from_a_non_owner():
     graph = FakeGraph([], {})
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(RepositorySessionAccessForbidden):
         list(service.stream_session(repository_session_id=repository_session.id, user=other, question=None, graph=graph, thread_id="t", decision=decision))
-
-    assert exc.value.status_code == 403
     assert graph.streamed == []
 
 
@@ -342,10 +334,8 @@ def test_get_owned_run_rejects_a_run_belonging_to_another_session():
     foreign_run = CodingRun(repository_session_id=uuid.uuid4(), thread_id="t-foreign", status=CodingRunStatus.awaiting_approval)
     service.coding_run_store = FakeCodingRunStore(foreign_run)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(CodingRunNotFound):
         service.get_owned_run(repository_session_id=repository_session.id, coding_run_id=foreign_run.id, user=user)
-
-    assert exc.value.status_code == 404
 
 
 def test_get_owned_run_rejects_a_session_owned_by_another_user():
@@ -355,7 +345,5 @@ def test_get_owned_run_rejects_a_session_owned_by_another_user():
     service.coding_run_store = FakeCodingRunStore(run)
     other = _user()
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(RepositorySessionAccessForbidden):
         service.get_owned_run(repository_session_id=repository_session.id, coding_run_id=run.id, user=other)
-
-    assert exc.value.status_code == 403

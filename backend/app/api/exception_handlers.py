@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.errors.repository_errors import RepositoryError
+from app.errors.session_errors import SessionError
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -15,4 +16,8 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RepositoryError)
     async def _handle_repository_error(_request: Request, exc: RepositoryError) -> JSONResponse:
+        return JSONResponse(status_code=int(exc.status_code), content={"detail": exc.detail})
+
+    @app.exception_handler(SessionError)
+    async def _handle_session_error(_request: Request, exc: SessionError) -> JSONResponse:
         return JSONResponse(status_code=int(exc.status_code), content={"detail": exc.detail})

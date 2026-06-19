@@ -3,9 +3,10 @@
 import uuid
 
 import pytest
-from fastapi import HTTPException
 
 from app.enums import RepositoryStatus
+from app.errors.repository_errors import RepositoryAccessForbidden, RepositoryNotFound
+from app.errors.session_errors import RepositoryNotReady, RepositorySessionAccessForbidden
 from app.models import Repository, RepositorySession, User
 from app.schemas import RepositorySessionCreate
 from app.services import RepositorySessionService
@@ -106,10 +107,9 @@ def test_filtered_list_returns_404_when_repository_is_missing() -> None:
     session_store = FakeRepositorySessionStore()
     service = RepositorySessionService(session_store, FakeRepositoryStore(None))
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositoryNotFound):
         service.list_sessions(user=_user(uuid.uuid4()), repository_id=uuid.uuid4(), skip=0, limit=100)
 
-    assert exc_info.value.status_code == 404
     assert session_store.page_calls == []
 
 
@@ -118,10 +118,9 @@ def test_filtered_list_returns_403_when_caller_does_not_own_the_repository() -> 
     session_store = FakeRepositorySessionStore()
     service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositoryAccessForbidden):
         service.list_sessions(user=_user(uuid.uuid4()), repository_id=repository.id, skip=0, limit=100)
 
-    assert exc_info.value.status_code == 403
     assert session_store.page_calls == []
 
 
@@ -153,10 +152,9 @@ def test_user_cannot_create_session_for_another_users_repository() -> None:
     session_store = FakeRepositorySessionStore()
     service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositoryAccessForbidden):
         service.create_session(session_in=RepositorySessionCreate(repository_id=repository.id), user=_user(uuid.uuid4()))
 
-    assert exc_info.value.status_code == 403
     assert session_store.saved == []
 
 
@@ -166,10 +164,9 @@ def test_user_cannot_create_session_until_repository_is_ready() -> None:
     session_store = FakeRepositorySessionStore()
     service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositoryNotReady):
         service.create_session(session_in=RepositorySessionCreate(repository_id=repository.id), user=_user(owner_id))
 
-    assert exc_info.value.status_code == 409
     assert session_store.saved == []
 
 
@@ -189,10 +186,8 @@ def test_user_cannot_read_another_users_session_history() -> None:
     repository_session = RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4())
     service = RepositorySessionService(FakeRepositorySessionStore(repository_session), FakeRepositoryStore(None))
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RepositorySessionAccessForbidden):
         service.get_recent_history(repository_session_id=repository_session.id, user=_user(uuid.uuid4()))
-
-    assert exc_info.value.status_code == 403
 
 
 def test_owned_exchange_is_persisted_through_one_store_operation() -> None:

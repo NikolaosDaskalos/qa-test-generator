@@ -7,9 +7,11 @@ from types import SimpleNamespace
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
+from app.api.exception_handlers import register_exception_handlers
 from app.api.routes.sessions import router
 from app.dependencies import get_current_user, get_repository_session_service, get_session_graph
 from app.enums import CodingRunStage, CodingRunStatus, SessionMessageRole
+from app.errors.session_errors import RepositorySessionNotFound
 from app.models import CodingRun, RepositorySession, SessionHistory
 from app.schemas import Citation, RepositorySessionPublic, RepositorySessionsPublic, Result, RunApproved, RunRejected, Stage, Token
 
@@ -22,12 +24,14 @@ class FakeRepositorySessionService:
         run: CodingRun | None = None,
         listing: RepositorySessionsPublic | None = None,
         list_raises: HTTPException | None = None,
+        history_raises: Exception | None = None,
     ) -> None:
         self.repository_session = repository_session
         self.history = history or []
         self.run = run
         self.listing = listing
         self.list_raises = list_raises
+        self.history_raises = history_raises
         self.create_calls = []
         self.history_calls = []
         self.run_calls = []
@@ -45,6 +49,8 @@ class FakeRepositorySessionService:
 
     def get_recent_history(self, **kwargs) -> list[SessionHistory]:
         self.history_calls.append(kwargs)
+        if self.history_raises is not None:
+            raise self.history_raises
         return self.history
 
     def get_owned_run(self, **kwargs) -> CodingRun:
@@ -154,6 +160,23 @@ def test_list_sessions_surfaces_repository_validation_error_from_the_service() -
         response = client.get("/sessions", params={"repository_id": str(uuid.uuid4())})
 
     assert response.status_code == 404
+
+
+def test_session_domain_error_is_translated_to_http_at_the_api_seam() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    repository_session = RepositorySession(owner_id=user.id, repository_id=uuid.uuid4())
+    service = FakeRepositorySessionService(repository_session, history_raises=RepositorySessionNotFound())
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{repository_session.id}/history")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Repository Session not found"}
 
 
 def test_owner_can_read_session_history() -> None:

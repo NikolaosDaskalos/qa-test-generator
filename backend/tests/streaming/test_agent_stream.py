@@ -4,7 +4,7 @@ import typing
 import uuid
 
 from app.schemas import AgentStreamEvent, PatchResult, RunStarted, Stage, Token
-from app.streaming import map_graph_stream
+from app.streaming import map_graph_stream, to_sse_frames
 
 
 class _Message:
@@ -59,3 +59,23 @@ def test_message_chunks_from_non_answer_nodes_are_not_streamed_as_tokens() -> No
     events = list(map_graph_stream(items))
 
     assert events == [Token(content="visible answer")]
+
+
+def test_to_sse_frames_serializes_typed_events_as_server_sent_frames() -> None:
+    run_id = uuid.uuid4()
+    events = [Stage(stage="planning"), RunStarted(coding_run_id=run_id)]
+
+    frames = list(to_sse_frames(events))
+
+    assert frames == [f"data: {event.model_dump_json()}\n\n" for event in events]
+
+
+def test_to_sse_frames_emits_out_of_band_error_frame_when_streaming_fails() -> None:
+    def _failing() -> typing.Iterator[AgentStreamEvent]:
+        yield Stage(stage="planning")
+        raise RuntimeError("boom")
+
+    frames = list(to_sse_frames(_failing()))
+
+    assert frames[0] == f"data: {Stage(stage='planning').model_dump_json()}\n\n"
+    assert frames[1] == 'data: {"type": "error", "message": "An error occurred while generating the answer."}\n\n'

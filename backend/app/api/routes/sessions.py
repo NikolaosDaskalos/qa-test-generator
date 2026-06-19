@@ -1,9 +1,6 @@
 """Repository session routes: create/list sessions, stream agent turns, and read run results."""
 
-import json
-import logging
 import uuid
-from collections.abc import Generator, Iterable
 
 from fastapi import APIRouter, status
 from fastapi.responses import StreamingResponse
@@ -11,7 +8,6 @@ from fastapi.responses import StreamingResponse
 from app.dependencies import CurrentUser, RepositorySessionServiceDep, SessionGraphDep
 from app.models import RepositorySession
 from app.schemas import (
-    AgentStreamEvent,
     CodingRunPublic,
     RepositoryQuestionRequest,
     RepositorySessionCreate,
@@ -21,8 +17,7 @@ from app.schemas import (
     SessionHistoriesPublic,
     SessionHistoryPublic,
 )
-
-logger = logging.getLogger(__name__)
+from app.streaming import to_sse_frames
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -73,7 +68,7 @@ def ask_repository_question(
         thread_id=str(uuid.uuid4()),
         decision=question_in.decision,
     )
-    return StreamingResponse(_to_stream(events), media_type="text/event-stream")
+    return StreamingResponse(to_sse_frames(events), media_type="text/event-stream")
 
 
 @router.get("/{repository_session_id}/history", response_model=SessionHistoriesPublic)
@@ -109,20 +104,3 @@ def read_coding_run_patch(
     return RunPatchPublic(
         coding_run_id=run.id, diff=run.diff or "", generated_files=run.generated_files or [], external_references=run.external_references or []
     )
-
-
-def _to_stream(events: Iterable[AgentStreamEvent]) -> Generator[str, None, None]:
-    """Serialize typed Agent Stream events as server-sent event frames.
-
-    This is the only module that knows the wire format. The terminal ``Result``
-    event closes a successful stream — there is no separate ``done`` frame. An
-    unexpected mid-stream failure surfaces as a single out-of-band ``error`` frame
-    (outside the typed vocabulary) rather than tearing down the connection.
-    """
-    try:
-        for event in events:
-            yield f"data: {event.model_dump_json()}\n\n"
-    except Exception:
-        logger.exception("Streaming answer failed")
-        error = {"type": "error", "message": "An error occurred while generating the answer."}
-        yield f"data: {json.dumps(error)}\n\n"

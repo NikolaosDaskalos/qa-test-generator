@@ -1,6 +1,6 @@
 # Reorganize Repository Sessions
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 18-29, 32, 87-103
 
@@ -12,13 +12,13 @@ The restructure must preserve Session History chronology, Repository scoping, du
 
 ## Acceptance criteria
 
-- [ ] Repository Session schemas, workflows, execution, history behavior, and authorization rules have one predictable feature-oriented home.
-- [ ] Repository Session and Session History database records and persistence adapters have explicit placement under the shared database structure.
-- [ ] HTTP routes perform request/response translation while session workflows remain free of FastAPI-specific exceptions and response types.
-- [ ] SSE serialization remains the only module aware of wire framing and preserves the closed Agent Stream vocabulary.
-- [ ] The unified questions endpoint still handles Repository questions, Code Generation Tasks, and resumed human decisions.
-- [ ] Repository ownership, history ordering, pagination, recent AI context, Coding Run recovery, and disconnect handling remain unchanged.
-- [ ] API, persistence, streaming, graph-resume, and frontend integration tests pass through the reorganized imports.
+- [x] Repository Session schemas, workflows, execution, history behavior, and authorization rules have one predictable feature-oriented home.
+- [x] Repository Session and Session History database records and persistence adapters have explicit placement under the shared database structure.
+- [x] HTTP routes perform request/response translation while session workflows remain free of FastAPI-specific exceptions and response types.
+- [x] SSE serialization remains the only module aware of wire framing and preserves the closed Agent Stream vocabulary.
+- [x] The unified questions endpoint still handles Repository questions, Code Generation Tasks, and resumed human decisions.
+- [x] Repository ownership, history ordering, pagination, recent AI context, Coding Run recovery, and disconnect handling remain unchanged.
+- [x] API, persistence, streaming, graph-resume, and frontend integration tests pass through the reorganized imports.
 
 ## Blocked by
 
