@@ -1,6 +1,6 @@
 # Reorganize the Repository lifecycle
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 1-17, 80-84
 
@@ -12,13 +12,13 @@ This is a structural refactor only. Existing endpoint contracts, ownership rules
 
 ## Acceptance criteria
 
-- [ ] Repository schemas, workflows, policies, and background-task entry points have one predictable feature-oriented home.
-- [ ] Repository database records and persistence adapters have explicit placement under the shared database structure.
-- [ ] Concrete Git operations have explicit placement under integrations and do not leak transport concerns into Repository workflows.
-- [ ] FastAPI response codes and exceptions are translated at the HTTP seam rather than forming the Repository workflow interface.
-- [ ] Repository processing composes fresh database, Git, and RAG dependencies safely for background execution.
-- [ ] Registration, listing, credential update, deletion, initial indexing, synchronization, authorization, and sanitized failures behave exactly as before.
-- [ ] Existing API, workflow, persistence, Git, and integration tests pass through the reorganized imports.
+- [x] Repository schemas, workflows, policies, and background-task entry points have one predictable feature-oriented home.
+- [x] Repository database records and persistence adapters have explicit placement under the shared database structure.
+- [x] Concrete Git operations have explicit placement under integrations and do not leak transport concerns into Repository workflows.
+- [x] FastAPI response codes and exceptions are translated at the HTTP seam rather than forming the Repository workflow interface.
+- [x] Repository processing composes fresh database, Git, and RAG dependencies safely for background execution.
+- [x] Registration, listing, credential update, deletion, initial indexing, synchronization, authorization, and sanitized failures behave exactly as before.
+- [x] Existing API, workflow, persistence, Git, and integration tests pass through the reorganized imports.
 
 ## Blocked by
 
