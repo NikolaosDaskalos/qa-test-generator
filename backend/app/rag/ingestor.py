@@ -16,8 +16,8 @@ from weaviate.classes.tenants import Tenant
 
 from app.core import WeaviateResources, settings
 from app.errors.rag_errors import IngestorError
-from app.models import SourceDocument
-from app.persistence import SourceDocumentStore
+from app.models import RepositoryDocument
+from app.persistence import RepositoryDocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 class DocumentIngestor:
     """Loads an existing local Git clone and stores Python chunks in Weaviate."""
 
-    def __init__(self, resources: WeaviateResources, source_document_store: SourceDocumentStore) -> None:
+    def __init__(self, resources: WeaviateResources, repository_document_store: RepositoryDocumentStore) -> None:
         """Create an ingestor backed by shared Weaviate resources."""
         self.resources = resources
-        self.source_document_store = source_document_store
+        self.repository_document_store = repository_document_store
 
     @cached_property
     def splitter(self) -> RecursiveCharacterTextSplitter:
@@ -58,17 +58,19 @@ class DocumentIngestor:
 
         # todo sanitize the docs before persist them
 
-        source_docs = [
-            SourceDocument(repository_id=repository_id, content=doc.page_content, doc_metadata=doc.metadata | {"commit_sha": commit_sha, "branch": branch})
+        repository_documents = [
+            RepositoryDocument(repository_id=repository_id, content=doc.page_content, doc_metadata=doc.metadata | {"commit_sha": commit_sha, "branch": branch})
             for doc in raw_docs
         ]
 
-        self.source_document_store.replace_for_repository(repository_id, source_docs)
-        logger.info("Source documents persisted repository_id=%s user_id=%s branch=%s document_count=%s", repository_id, user_id, branch, len(source_docs))
+        self.repository_document_store.replace_for_repository(repository_id, repository_documents)
+        logger.info(
+            "Repository Documents persisted repository_id=%s user_id=%s branch=%s document_count=%s", repository_id, user_id, branch, len(repository_documents)
+        )
 
         try:
-            for raw_doc, source_doc in zip(raw_docs, source_docs, strict=True):
-                raw_doc.metadata.update({"parent_id": str(source_doc.id), "repository_id": repository_key, "branch": branch, "commit_sha": commit_sha})
+            for raw_doc, repository_document in zip(raw_docs, repository_documents, strict=True):
+                raw_doc.metadata.update({"parent_id": str(repository_document.id), "repository_id": repository_key, "branch": branch, "commit_sha": commit_sha})
 
             chunked_docs = self._split(raw_docs)
             ids = [str(uuid.uuid5(repository_id, f"{commit_sha}:{doc.metadata['source']}:{index}")) for index, doc in enumerate(chunked_docs)]
@@ -110,9 +112,9 @@ class DocumentIngestor:
         except Exception:
             logger.exception("Failed to clean up repository vectors repository_id=%s tenant=%s", repository_id, tenant)
         try:
-            self.source_document_store.delete_by_repository(repository_id)
+            self.repository_document_store.delete_by_repository(repository_id)
         except Exception:
-            logger.exception("Failed to clean up source documents repository_id=%s", repository_id)
+            logger.exception("Failed to clean up Repository Documents repository_id=%s", repository_id)
 
     def _tenant_exists(self, tenant: str) -> bool:
         """Return whether a non-empty tenant already exists."""

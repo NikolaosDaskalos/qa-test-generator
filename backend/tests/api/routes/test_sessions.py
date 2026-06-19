@@ -257,13 +257,13 @@ def test_question_streams_grounded_answer_as_event_stream() -> None:
     assert isinstance(call["thread_id"], str) and call["thread_id"]
 
 
-def test_question_streams_insufficient_evidence_with_empty_citations() -> None:
+def test_question_streams_insufficient_documents_with_empty_citations() -> None:
     user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
     events = [
         Stage(stage="retrieving"),
         Stage(stage="generating"),
-        Token(content="I don't have enough Repository Evidence."),
-        Result(repository_session_id=uuid.uuid4(), assistant_message_id=uuid.uuid4(), answer="I don't have enough Repository Evidence.", citations=[]),
+        Token(content="I don't have enough Repository Documents."),
+        Result(repository_session_id=uuid.uuid4(), assistant_message_id=uuid.uuid4(), answer="I don't have enough Repository Documents.", citations=[]),
     ]
     service = FakeAnsweringService(events)
     app = _question_app(service, user=user)
@@ -273,7 +273,7 @@ def test_question_streams_insufficient_evidence_with_empty_citations() -> None:
 
     streamed = _parse_sse(response.text)
     assert next(event for event in streamed if event["type"] == "result")["citations"] == []
-    assert "enough Repository Evidence" in next(event for event in streamed if event["type"] == "token")["content"]
+    assert "enough Repository Documents" in next(event for event in streamed if event["type"] == "token")["content"]
 
 
 def test_question_surfaces_midstream_failure_as_out_of_band_error() -> None:

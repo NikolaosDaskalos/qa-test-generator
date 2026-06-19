@@ -76,7 +76,7 @@ class RepositoryStore:
         return self.save(repository)
 
     def mark_ready(self, repository: Repository, *, indexed_commit_sha: str) -> Repository:
-        """Publish successfully indexed Repository Evidence."""
+        """Publish successfully indexed Repository Documents."""
         repository.indexed_commit_sha = indexed_commit_sha
         repository.status = RepositoryStatus.ready
         repository.failed_reason = None

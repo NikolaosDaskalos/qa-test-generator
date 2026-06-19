@@ -14,7 +14,7 @@ from app.enums import RepositoryProvider, RepositoryStatus
 from app.errors.git_errors import GitError
 from app.git import GitCommands, ParsedRepositoryUrl, parse_repository_url
 from app.models import Repository, User
-from app.persistence import RepositoryStore, SourceDocumentStore
+from app.persistence import RepositoryDocumentStore, RepositoryStore
 from app.rag import DocumentIngestor
 from app.schemas import RepositoriesPublic, RepositoryCreate, RepositoryUpdate
 
@@ -209,8 +209,8 @@ def process_repository(repository_id: uuid.UUID, token: str, weaviate_resources:
     """Compose fresh request-independent dependencies for background work."""
     logger.info("Repository background task opened repository_id=%s", repository_id)
     with Session(engine) as session:
-        source_document_store = SourceDocumentStore(session)
-        RepositoryService(RepositoryStore(session), DocumentIngestor(weaviate_resources, source_document_store)).process_repository(repository_id, token)
+        repository_document_store = RepositoryDocumentStore(session)
+        RepositoryService(RepositoryStore(session), DocumentIngestor(weaviate_resources, repository_document_store)).process_repository(repository_id, token)
     logger.info("Repository background task closed repository_id=%s", repository_id)
 
 

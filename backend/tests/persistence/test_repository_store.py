@@ -65,7 +65,7 @@ def test_update_credentials_persists_only_credential_fields() -> None:
 
 
 def test_mark_ready_persists_indexed_commit_and_status_together() -> None:
-    """Publish Repository Evidence and its exact commit in one transaction."""
+    """Publish Repository Documents and its exact commit in one transaction."""
     session = FakeSession()
     repository_store = RepositoryStore(session)
     repository = _repository()

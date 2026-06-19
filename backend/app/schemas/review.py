@@ -1,6 +1,6 @@
 """Structured Patch Review output: a score out of ten with findings.
 
-Patch Review is evidence-based static assessment only — it never executes the
+Patch Review is documents-based static assessment only — it never executes the
 generated tests, installs dependencies, or implies runtime correctness. The
 reviewer returns a quality ``score`` (0–10) and human-readable findings
 categorized by concern; it no longer returns a pass/fail flag. The backend owns

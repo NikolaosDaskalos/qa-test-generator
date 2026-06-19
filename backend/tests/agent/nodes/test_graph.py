@@ -12,11 +12,11 @@ from langgraph.types import Command
 
 from app.agent import Classification, build_graph
 from app.agent.nodes.planner import PlannerOutput
-from app.agent.nodes.repository_question import INSUFFICIENT_EVIDENCE_ANSWER
+from app.agent.nodes.repository_question import INSUFFICIENT_DOCUMENTS_ANSWER
 from app.agent.nodes.test_generation import NO_CHANGES_MESSAGE, build_review_patch_node
 from app.enums import CodingRunStage
 from app.errors.git_errors import GitError
-from app.models import SourceDocument
+from app.models import RepositoryDocument
 from app.schemas import (
     Citation,
     ExternalReference,
@@ -24,7 +24,7 @@ from app.schemas import (
     GenerationProposal,
     PatchResult,
     PatchReview,
-    ResearchIntent,
+    RetrievalRequest,
     ReviewFinding,
     ReviewResult,
     RunApproved,
@@ -83,25 +83,25 @@ class FakeGeneratorLLM:
 
 
 class FakeRetriever:
-    """Return canned Repository Evidence and record retrieval arguments."""
+    """Return canned Repository Documents and record retrieval arguments."""
 
-    def __init__(self, evidence=None) -> None:
-        self.evidence = evidence or []
+    def __init__(self, documents=None) -> None:
+        self.documents = documents or []
         self.calls = []
 
-    def retrieve_evidence(self, query, **kwargs):
+    def retrieve_documents(self, query, **kwargs):
         self.calls.append((query, kwargs))
-        return self.evidence
+        return self.documents
 
 
 class QueryRetriever:
-    """Return evidence keyed by the retrieval query, recording every call."""
+    """Return documents keyed by the retrieval query, recording every call."""
 
     def __init__(self, by_query: dict) -> None:
         self.by_query = by_query
         self.calls = []
 
-    def retrieve_evidence(self, query, **kwargs):
+    def retrieve_documents(self, query, **kwargs):
         self.calls.append((query, kwargs))
         return self.by_query.get(query, [])
 
@@ -174,13 +174,20 @@ class FakeGenerator:
         self.calls = []
         self.revise_calls = []
 
-    def generate(self, *, task, source_evidence, test_evidence):
-        self.calls.append({"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence})
+    def generate(self, *, task, source_documents, test_documents):
+        self.calls.append({"task": task, "source_documents": source_documents, "test_documents": test_documents})
         return self.proposal
 
-    def revise(self, *, task, source_evidence, test_evidence, prior_files, diff, findings):
+    def revise(self, *, task, source_documents, test_documents, prior_files, diff, findings):
         self.revise_calls.append(
-            {"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence, "prior_files": prior_files, "diff": diff, "findings": findings}
+            {
+                "task": task,
+                "source_documents": source_documents,
+                "test_documents": test_documents,
+                "prior_files": prior_files,
+                "diff": diff,
+                "findings": findings,
+            }
         )
         return self.revision if self.revision is not None else self.proposal
 
@@ -188,7 +195,7 @@ class FakeGenerator:
 class RaisingGenerator:
     """A ``TestGenerator`` that fails to produce a proposal."""
 
-    def generate(self, *, task, source_evidence, test_evidence):
+    def generate(self, *, task, source_documents, test_documents):
         raise RuntimeError("model unavailable")
 
 
@@ -207,8 +214,10 @@ class FakeReviewer:
             self._reviews = [review if review is not None else PatchReview(score=10, findings=[])]
         self.calls = []
 
-    def review(self, *, task, source_evidence, test_evidence, generated_files, diff):
-        self.calls.append({"task": task, "source_evidence": source_evidence, "test_evidence": test_evidence, "generated_files": generated_files, "diff": diff})
+    def review(self, *, task, source_documents, test_documents, generated_files, diff):
+        self.calls.append(
+            {"task": task, "source_documents": source_documents, "test_documents": test_documents, "generated_files": generated_files, "diff": diff}
+        )
         index = min(len(self.calls) - 1, len(self._reviews) - 1)
         return self._reviews[index]
 
@@ -216,7 +225,7 @@ class FakeReviewer:
 class RaisingReviewer:
     """A ``PatchReviewer`` whose model/tool loop fails to produce a decision."""
 
-    def review(self, *, task, source_evidence, test_evidence, generated_files, diff):
+    def review(self, *, task, source_documents, test_documents, generated_files, diff):
         raise RuntimeError("reviewer model unavailable")
 
 
@@ -280,8 +289,8 @@ def _publisher_factory(publisher=None):
     return lambda _repository_id: publisher
 
 
-def _source(repository_id: uuid.UUID, source: str, content: str = "evidence") -> SourceDocument:
-    return SourceDocument(repository_id=repository_id, content=content, doc_metadata={"source": source})
+def _source(repository_id: uuid.UUID, source: str, content: str = "documents") -> RepositoryDocument:
+    return RepositoryDocument(repository_id=repository_id, content=content, doc_metadata={"source": source})
 
 
 def _config(thread_id: str = "t1") -> dict:
@@ -322,7 +331,7 @@ def _build(
         classifier_llm=classifier_llm,
         retriever=retriever if retriever is not None else FakeRetriever(),
         llm=llm if llm is not None else FakeGeneratorLLM(),
-        planner_llm=planner_llm if planner_llm is not None else FakePlannerLLM(PlannerOutput(in_scope=True, intents=[])),
+        planner_llm=planner_llm if planner_llm is not None else FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
         generator=generator if generator is not None else FakeGenerator(),
         reviewer=reviewer if reviewer is not None else FakeReviewer(),
         run_recorder=recorder,
@@ -337,7 +346,7 @@ def _build(
 
 def test_structured_output_models_describe_all_llm_fields() -> None:
     """Structured LLM schemas carry field descriptions for better model guidance."""
-    structured_output_models = [Classification, PlannerOutput, ResearchIntent]
+    structured_output_models = [Classification, PlannerOutput, RetrievalRequest]
 
     for model in structured_output_models:
         properties = model.model_json_schema()["properties"]
@@ -380,7 +389,7 @@ def test_uncertain_classification_falls_back_to_the_repository_question_branch()
 # ── repository_question branch ────────────────────────────────────
 
 
-def test_repository_question_branch_answers_from_retrieved_evidence() -> None:
+def test_repository_question_branch_answers_from_retrieved_documents() -> None:
     """The retrieve → generate branch grounds an answer and emits de-duplicated citations."""
     repository_id = uuid.uuid4()
     retriever = FakeRetriever(
@@ -400,15 +409,15 @@ def test_repository_question_branch_answers_from_retrieved_evidence() -> None:
     assert final["citations"] == [Citation(source="app/auth.py"), Citation(source="app/login.py")]
 
 
-def test_repository_question_branch_reports_insufficient_evidence_without_calling_the_model() -> None:
-    """Empty Repository Evidence yields a deterministic answer and never streams the model."""
+def test_repository_question_branch_reports_insufficient_documents_without_calling_the_model() -> None:
+    """Empty Repository Documents yields a deterministic answer and never streams the model."""
     repository_id = uuid.uuid4()
     llm = FakeGeneratorLLM(("unused",))
     graph = _build(FakeClassifierLLM("repository_question"), retriever=FakeRetriever([]), llm=llm)
 
     final = graph.invoke({"question": "anything", "repository_id": repository_id}, config=_config())
 
-    assert final["answer"] == INSUFFICIENT_EVIDENCE_ANSWER
+    assert final["answer"] == INSUFFICIENT_DOCUMENTS_ANSWER
     assert final["citations"] == []
     assert llm.stream_calls == []
 
@@ -416,13 +425,13 @@ def test_repository_question_branch_reports_insufficient_evidence_without_callin
 # ── test_generation branch: planning ──────────────────────────────
 
 
-def test_planner_emits_research_intents_tagged_source_and_test() -> None:
-    """An in-scope task plans evidence to find, tagged source vs. test, with candidate path hints."""
+def test_planner_emits_retrieval_requests_tagged_source_and_test() -> None:
+    """An in-scope task plans documents to find, tagged source vs. test, with candidate path hints."""
     planner_output = PlannerOutput(
         in_scope=True,
-        intents=[
-            ResearchIntent(target="source", description="auth login implementation", candidate_paths=["app/auth.py"]),
-            ResearchIntent(target="test", description="existing auth tests", candidate_paths=["tests/test_auth.py"]),
+        retrieval_requests=[
+            RetrievalRequest(document_type="source", description="auth login implementation", candidate_paths=["app/auth.py"]),
+            RetrievalRequest(document_type="test", description="existing auth tests", candidate_paths=["tests/test_auth.py"]),
         ],
     )
     graph = _build(FakeClassifierLLM("test_generation"), planner_llm=FakePlannerLLM(planner_output))
@@ -430,9 +439,9 @@ def test_planner_emits_research_intents_tagged_source_and_test() -> None:
     final = graph.invoke({"question": "add tests for the auth module", "repository_id": uuid.uuid4()}, config=_config())
 
     assert final.get("failure") is None
-    intents = final["research_intents"]
-    assert [intent.target for intent in intents] == ["source", "test"]
-    assert intents[0].candidate_paths == ["app/auth.py"]
+    requests = final["retrieval_requests"]
+    assert [request.document_type for request in requests] == ["source", "test"]
+    assert requests[0].candidate_paths == ["app/auth.py"]
 
 
 def test_out_of_scope_task_is_rejected_at_the_planning_stage() -> None:
@@ -445,46 +454,51 @@ def test_out_of_scope_task_is_rejected_at_the_planning_stage() -> None:
     failure = final["failure"]
     assert failure.failed_stage == "planning"
     assert failure.reason == "This asks to refactor production code, not to add or improve tests."
-    assert not final.get("research_intents")
+    assert not final.get("retrieval_requests")
 
 
 # ── test_generation branch: generic retrieve ──────────────────────
 
 
-def test_test_generation_retrieve_partitions_source_and_test_evidence() -> None:
-    """Planner intents are executed under the session's Repository and split source vs. test."""
+def test_test_generation_retrieve_partitions_source_and_test_documents() -> None:
+    """Planner requests are executed under the session's Repository and split source vs. test."""
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
         {"auth implementation": [_source(repository_id, "app/auth.py", "impl")], "auth tests": [_source(repository_id, "tests/test_auth.py", "test")]}
     )
     planner_output = PlannerOutput(
-        in_scope=True, intents=[ResearchIntent(target="source", description="auth implementation"), ResearchIntent(target="test", description="auth tests")]
+        in_scope=True,
+        retrieval_requests=[
+            RetrievalRequest(document_type="source", description="auth implementation"),
+            RetrievalRequest(document_type="test", description="auth tests"),
+        ],
     )
     graph = _build(FakeClassifierLLM("test_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id}, config=_config())
 
-    assert [doc.doc_metadata["source"] for doc in final["source_evidence"]] == ["app/auth.py"]
-    assert [doc.doc_metadata["source"] for doc in final["test_evidence"]] == ["tests/test_auth.py"]
+    assert [doc.doc_metadata["source"] for doc in final["source_documents"]] == ["app/auth.py"]
+    assert [doc.doc_metadata["source"] for doc in final["test_documents"]] == ["tests/test_auth.py"]
     assert all(call[1]["repository_id"] == repository_id for call in retriever.calls)
 
 
-def test_test_generation_retrieve_yields_empty_partitions_when_no_evidence() -> None:
-    """When retrieval finds nothing, both evidence partitions are present and empty."""
-    planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="nothing here")])
+def test_test_generation_retrieve_yields_empty_partitions_when_no_documents() -> None:
+    """When retrieval finds nothing, both documents partitions are present and empty."""
+    planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="nothing here")])
     graph = _build(FakeClassifierLLM("test_generation"), retriever=FakeRetriever([]), planner_llm=FakePlannerLLM(planner_output))
 
     final = graph.invoke({"question": "add tests", "repository_id": uuid.uuid4()}, config=_config())
 
-    assert final["source_evidence"] == []
-    assert final["test_evidence"] == []
+    assert final["source_documents"] == []
+    assert final["test_documents"] == []
 
 
 def test_test_generation_retrieve_confines_candidate_paths_to_validated_hints(tmp_path) -> None:
     """Untrusted candidate paths are confined to the checkout; unsafe ones never proceed."""
     repository_id = uuid.uuid4()
     planner_output = PlannerOutput(
-        in_scope=True, intents=[ResearchIntent(target="source", description="auth", candidate_paths=["app/auth.py", "/etc/passwd", "../escape"])]
+        in_scope=True,
+        retrieval_requests=[RetrievalRequest(document_type="source", description="auth", candidate_paths=["app/auth.py", "/etc/passwd", "../escape"])],
     )
     graph = _build(FakeClassifierLLM("test_generation"), retriever=FakeRetriever([]), planner_llm=FakePlannerLLM(planner_output))
 
@@ -502,7 +516,7 @@ def test_test_generation_persists_a_queued_run_and_advances_through_generation(t
     recorder = RecordingRecorder()
     session_id = uuid.uuid4()
     repository_id = uuid.uuid4()
-    planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
+    planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="x")])
     generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")]))
     graph = _build(
         FakeClassifierLLM("test_generation"),
@@ -549,7 +563,7 @@ def test_test_generation_marks_failure_at_planning_when_out_of_scope() -> None:
 
 
 def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None, publisher=None, max_revision_attempts=None):
-    planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
+    planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="x")])
     return _build(
         FakeClassifierLLM("test_generation"),
         recorder=recorder,
@@ -562,24 +576,24 @@ def _generation_graph(*, generator, recorder=None, workspace=None, reviewer=None
     )
 
 
-def test_generator_receives_partitioned_evidence_and_emits_structured_files(tmp_path) -> None:
-    """The generator is handed the task and partitioned evidence and returns complete-file proposals."""
+def test_generator_receives_partitioned_documents_and_emits_structured_files(tmp_path) -> None:
+    """The generator is handed the task and partitioned documents and returns complete-file proposals."""
     (tmp_path / "tests").mkdir()  # an existing test root admits the new test file
     repository_id = uuid.uuid4()
     retriever = QueryRetriever({"impl": [_source(repository_id, "app/auth.py", "code")]})
-    planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="impl")])
+    planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="impl")])
     generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
     graph = _build(FakeClassifierLLM("test_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output), generator=generator)
 
     final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path)}, config=_config())
 
     assert generator.calls[0]["task"] == "add tests for auth"
-    assert [doc.doc_metadata["source"] for doc in generator.calls[0]["source_evidence"]] == ["app/auth.py"]
+    assert [doc.doc_metadata["source"] for doc in generator.calls[0]["source_documents"]] == ["app/auth.py"]
     assert [file.path for file in final["generated_files"]] == ["tests/test_auth.py"]
 
 
-def test_external_references_are_collected_separately_from_repository_evidence(tmp_path) -> None:
-    """Web results ride external_references, never mixed into source or test evidence."""
+def test_external_references_are_collected_separately_from_repository_documents(tmp_path) -> None:
+    """Web results ride external_references, never mixed into source or test documents."""
     (tmp_path / "tests").mkdir()  # an existing test root admits the new test file
     repository_id = uuid.uuid4()
     generator = FakeGenerator(
@@ -593,8 +607,8 @@ def test_external_references_are_collected_separately_from_repository_evidence(t
     final = graph.invoke({"question": "add tests", "repository_id": repository_id, "checkout_root": str(tmp_path)}, config=_config())
 
     assert [reference.url for reference in final["external_references"]] == ["https://docs.pytest.org"]
-    assert all("docs.pytest.org" not in doc.content for doc in final.get("source_evidence", []))
-    assert all("docs.pytest.org" not in doc.content for doc in final.get("test_evidence", []))
+    assert all("docs.pytest.org" not in doc.content for doc in final.get("source_documents", []))
+    assert all("docs.pytest.org" not in doc.content for doc in final.get("test_documents", []))
 
 
 def test_build_patch_writes_validated_files_and_emits_a_patch_result(tmp_path) -> None:
@@ -766,15 +780,19 @@ def test_accepted_review_advances_to_awaiting_approval_and_emits_review_result(t
     assert record[2] is True
 
 
-def test_reviewer_receives_the_task_partitioned_evidence_proposals_and_diff(tmp_path) -> None:
-    """Review is invoked with the task, Repository Evidence (source/test), the proposals, and the canonical diff."""
+def test_reviewer_receives_the_task_partitioned_documents_proposals_and_diff(tmp_path) -> None:
+    """Review is invoked with the task, Repository Documents (source/test), the proposals, and the canonical diff."""
     (tmp_path / "tests").mkdir()
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
         {"auth implementation": [_source(repository_id, "app/auth.py", "impl")], "auth tests": [_source(repository_id, "tests/test_auth.py", "existing test")]}
     )
     planner_output = PlannerOutput(
-        in_scope=True, intents=[ResearchIntent(target="source", description="auth implementation"), ResearchIntent(target="test", description="auth tests")]
+        in_scope=True,
+        retrieval_requests=[
+            RetrievalRequest(document_type="source", description="auth implementation"),
+            RetrievalRequest(document_type="test", description="auth tests"),
+        ],
     )
     reviewer = FakeReviewer(PatchReview(score=10, findings=[]))
     files = [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
@@ -795,8 +813,8 @@ def test_reviewer_receives_the_task_partitioned_evidence_proposals_and_diff(tmp_
 
     call = reviewer.calls[0]
     assert call["task"] == "add tests for auth"
-    assert [doc.doc_metadata["source"] for doc in call["source_evidence"]] == ["app/auth.py"]
-    assert [doc.doc_metadata["source"] for doc in call["test_evidence"]] == ["tests/test_auth.py"]
+    assert [doc.doc_metadata["source"] for doc in call["source_documents"]] == ["app/auth.py"]
+    assert [doc.doc_metadata["source"] for doc in call["test_documents"]] == ["tests/test_auth.py"]
     assert [file.path for file in call["generated_files"]] == ["tests/test_auth.py"]
     assert call["diff"] == diff
 
@@ -1132,7 +1150,7 @@ def test_rejected_first_review_records_its_findings_before_revising(tmp_path) ->
     """A first rejection persists its findings as a recorded review and routes onward to a Revision Attempt, not a failure."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    findings = [ReviewFinding(category="imports", detail="imports a helper not visible in Repository Evidence")]
+    findings = [ReviewFinding(category="imports", detail="imports a helper not visible in Repository Documents")]
     reviewer = FakeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
     graph = _reviewed_graph(reviewer=reviewer, recorder=recorder)
 
@@ -1355,15 +1373,19 @@ def test_first_rejection_triggers_one_revision_that_is_accepted(tmp_path) -> Non
     assert [record[2] for record in review_records] == [False, True]
 
 
-def test_revision_receives_the_task_evidence_prior_proposal_diff_and_findings(tmp_path) -> None:
-    """The Revision Attempt is handed the original task, partitioned evidence, its prior proposal, the canonical diff, and the findings."""
+def test_revision_receives_the_task_documents_prior_proposal_diff_and_findings(tmp_path) -> None:
+    """The Revision Attempt is handed the original task, partitioned documents, its prior proposal, the canonical diff, and the findings."""
     (tmp_path / "tests").mkdir()
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
         {"auth implementation": [_source(repository_id, "app/auth.py", "impl")], "auth tests": [_source(repository_id, "tests/test_auth.py", "existing test")]}
     )
     planner_output = PlannerOutput(
-        in_scope=True, intents=[ResearchIntent(target="source", description="auth implementation"), ResearchIntent(target="test", description="auth tests")]
+        in_scope=True,
+        retrieval_requests=[
+            RetrievalRequest(document_type="source", description="auth implementation"),
+            RetrievalRequest(document_type="test", description="auth tests"),
+        ],
     )
     findings = [ReviewFinding(category="coverage", detail="missing unhappy-path test")]
     reviewer = FakeReviewer(reviews=[PatchReview(score=3, findings=findings), PatchReview(score=10, findings=[])])
@@ -1388,8 +1410,8 @@ def test_revision_receives_the_task_evidence_prior_proposal_diff_and_findings(tm
 
     revise = generator.revise_calls[0]
     assert revise["task"] == "add tests for auth"
-    assert [doc.doc_metadata["source"] for doc in revise["source_evidence"]] == ["app/auth.py"]
-    assert [doc.doc_metadata["source"] for doc in revise["test_evidence"]] == ["tests/test_auth.py"]
+    assert [doc.doc_metadata["source"] for doc in revise["source_documents"]] == ["app/auth.py"]
+    assert [doc.doc_metadata["source"] for doc in revise["test_documents"]] == ["tests/test_auth.py"]
     assert [file.path for file in revise["prior_files"]] == ["tests/test_auth.py"]
     assert revise["diff"] == diff
     assert [finding.category for finding in revise["findings"]] == ["coverage"]
@@ -1440,7 +1462,7 @@ def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_
         classifier_llm=FakeClassifierLLM("test_generation"),
         retriever=FakeRetriever(),
         llm=FakeGeneratorLLM(),
-        planner_llm=FakePlannerLLM(PlannerOutput(in_scope=True, intents=[])),
+        planner_llm=FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
         generator=generator,
         reviewer=reviewer,
         run_recorder=recorder,
@@ -1671,7 +1693,7 @@ def test_revision_generation_failure_is_a_generating_run_failure(tmp_path) -> No
     reviewer = FakeReviewer(PatchReview(score=3, findings=[]))
 
     class RaisingReviser(FakeGenerator):
-        def revise(self, *, task, source_evidence, test_evidence, prior_files, diff, findings):
+        def revise(self, *, task, source_documents, test_documents, prior_files, diff, findings):
             raise RuntimeError("model unavailable")
 
     generator = RaisingReviser(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
@@ -1793,7 +1815,7 @@ def test_test_generation_stream_emits_ordered_stage_and_run_markers(tmp_path) ->
     """Test-generation progress is classifying → planning → retrieving → generating and identifies the run."""
     (tmp_path / "tests").mkdir()  # an existing test root admits the proposed test file
     recorder = RecordingRecorder()
-    planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
+    planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="x")])
     generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")]))
     graph = _build(
         FakeClassifierLLM("test_generation"),

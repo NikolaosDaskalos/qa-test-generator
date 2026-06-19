@@ -242,7 +242,7 @@ def test_process_repository_follows_successful_status_sequence(tmp_path: Path) -
 
 
 def test_process_repository_rejects_repository_without_python_chunks(tmp_path: Path) -> None:
-    """Do not make unsupported Repository Evidence available."""
+    """Do not make unsupported Repository Documents available."""
     repository = make_repository()
     store = FakeRepositoryStore(repository)
     ingestor = FakeIngestor()

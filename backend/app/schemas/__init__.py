@@ -23,7 +23,7 @@ from app.schemas.agent_stream import (
 from app.schemas.authentication import Message, NewPassword, TokenPayload
 from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 from app.schemas.repository import RepositoriesPublic, RepositoryCreate, RepositoryPublic, RepositoryUpdate
-from app.schemas.research_intent import ResearchIntent, ResearchTarget
+from app.schemas.retrieval_request import RepositoryDocumentType, RetrievalRequest
 from app.schemas.review import FindingCategory, PatchReview, ReviewFinding
 from app.schemas.session import (
     CodingRunPublic,
@@ -62,8 +62,8 @@ __all__ = [
     "RepositoryCreate",
     "RepositoryPublic",
     "RepositoryUpdate",
-    "ResearchIntent",
-    "ResearchTarget",
+    "RepositoryDocumentType",
+    "RetrievalRequest",
     "FindingCategory",
     "PatchReview",
     "ReviewFinding",

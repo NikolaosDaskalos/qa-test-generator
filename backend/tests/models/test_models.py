@@ -13,7 +13,7 @@ from sqlalchemy.orm import configure_mappers
 from sqlmodel import Session, SQLModel, select
 
 from app.enums import RepositoryProvider, RepositoryStatus
-from app.models import Repository, RepositorySession, SessionHistory, SourceDocument, User
+from app.models import Repository, RepositoryDocument, RepositorySession, SessionHistory, User
 from app.schemas import RepositoryCreate, RepositoryPublic
 
 
@@ -86,7 +86,7 @@ def test_importing_one_model_registers_all_relationship_targets() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_deleting_repository_uses_database_cascade_for_source_documents() -> None:
+def test_deleting_repository_uses_database_cascade_for_repository_documents() -> None:
     engine = create_engine("sqlite://")
 
     @event.listens_for(engine, "connect")
@@ -98,17 +98,17 @@ def test_deleting_repository_uses_database_cascade_for_source_documents() -> Non
     repository = Repository(
         name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai", user_id=user.id, status=RepositoryStatus.ready
     )
-    source_document = SourceDocument(repository_id=repository.id, content="print('hello')", doc_metadata={"source": "app/main.py"})
+    repository_document = RepositoryDocument(repository_id=repository.id, content="print('hello')", doc_metadata={"source": "app/main.py"})
 
     with Session(engine) as session:
         session.add(user)
         session.add(repository)
-        session.add(source_document)
+        session.add(repository_document)
         session.commit()
         session.refresh(repository)
-        assert repository.source_documents == [source_document]
+        assert repository.repository_documents == [repository_document]
 
         session.delete(repository)
         session.commit()
 
-        assert session.exec(select(SourceDocument).where(SourceDocument.repository_id == repository.id)).all() == []
+        assert session.exec(select(RepositoryDocument).where(RepositoryDocument.repository_id == repository.id)).all() == []

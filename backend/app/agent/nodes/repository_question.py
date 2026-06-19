@@ -1,6 +1,6 @@
 """The ``repository_question`` branch nodes: retrieval-grounded answering.
 
-The ``retrieve`` node scopes Repository Evidence to the session's Repository; the
+The ``retrieve`` node scopes Repository Documents to the session's Repository; the
 ``generate`` node streams the grounded answer (its token chunks ride LangGraph's
 ``messages`` stream mode) and records the answer text plus de-duplicated file
 citations on the shared state.
@@ -11,13 +11,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core import settings
 from app.prompts.prompts import QA_SYSTEM_PROMPT
-from app.prompts.rendering import format_evidence
+from app.prompts.rendering import format_repository_documents
 from app.schemas import Citation, Stage
 from app.streaming import emit
 
-# Returned verbatim when retrieval yields no Repository Evidence, so the answer
+# Returned verbatim when retrieval yields no Repository Documents, so the answer
 # states the limitation instead of letting the model fill gaps from its own knowledge.
-INSUFFICIENT_EVIDENCE_ANSWER = "I don't have enough Repository Evidence in this session to answer that question."
+INSUFFICIENT_DOCUMENTS_ANSWER = "I don't have enough Repository Documents in this session to answer that question."
 
 
 def build_retrieve_node(retriever):
@@ -25,14 +25,14 @@ def build_retrieve_node(retriever):
 
     def retrieve(state) -> dict:
         emit(Stage(stage="retrieving"))
-        evidence = retriever.retrieve_evidence(
+        documents = retriever.retrieve_documents(
             state["question"],
             repository_id=state["repository_id"],
             k=settings.TOP_K,
             alpha=settings.HYBRID_SEARCH_ALPHA,
             parent_limit=settings.FINAL_PARENT_LIMIT,
         )
-        return {"evidence": evidence, "trace": ["retrieve"]}
+        return {"documents": documents, "trace": ["retrieve"]}
 
     return retrieve
 
@@ -42,11 +42,11 @@ def build_generate_node(llm):
 
     def generate(state) -> dict:
         emit(Stage(stage="generating"))
-        evidence = state.get("evidence") or []
-        if not evidence:
-            return {"answer": INSUFFICIENT_EVIDENCE_ANSWER, "citations": [], "trace": ["generate"]}
+        documents = state.get("documents") or []
+        if not documents:
+            return {"answer": INSUFFICIENT_DOCUMENTS_ANSWER, "citations": [], "trace": ["generate"]}
 
-        context = format_evidence(evidence)
+        context = format_repository_documents(documents)
         messages = [SystemMessage(content=f"{QA_SYSTEM_PROMPT}\n\nContext:\n{context}"), HumanMessage(content=state["question"])]
         collected = ""
         for chunk in llm.stream(messages):
@@ -54,13 +54,13 @@ def build_generate_node(llm):
             if token:
                 collected += token
 
-        return {"answer": collected, "citations": _to_citations(_extract_sources(evidence)), "trace": ["generate"]}
+        return {"answer": collected, "citations": _to_citations(_extract_sources(documents)), "trace": ["generate"]}
 
     return generate
 
 
 def _extract_sources(docs) -> list[str]:
-    """Extract source paths from selected parent SourceDocuments."""
+    """Extract source paths from selected parent RepositoryDocuments."""
     return [document.doc_metadata.get("source", "Unknown") for document in docs]
 
 

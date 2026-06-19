@@ -9,7 +9,7 @@ from sqlmodel import SQLModel
 
 import app.models.repository  # noqa: F401
 import app.models.session  # noqa: F401
-import app.models.source_document  # noqa: F401
+import app.models.repository_document  # noqa: F401
 import app.models.user  # noqa: F401
 from app.core import settings
 

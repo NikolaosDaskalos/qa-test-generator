@@ -26,14 +26,14 @@ from app.agent.nodes.test_generation import (
     build_approve_patch_node,
     build_await_decision_node,
     build_discard_patch_node,
-    build_gather_evidence_node,
+    build_gather_documents_node,
     build_generate_router,
     build_generate_tests_node,
     build_report_no_changes_node,
     build_review_patch_node,
     build_review_router,
 )
-from app.schemas import Citation, PatchResult, ResearchIntent, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
+from app.schemas import Citation, PatchResult, RetrievalRequest, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
 from app.services.coding_runs.patch_publisher import NullPatchPublisher
 from app.services.coding_runs.recorder import NullRunRecorder
 from app.services.coding_runs.workspace import LocalGitWorkspace
@@ -70,7 +70,7 @@ class SharedState(TypedDict):
 class RepositoryQuestionState(TypedDict):
     """The ``repository_question`` branch's private working set (retrieve → generate)."""
 
-    evidence: list | None
+    documents: list | None
     answer: str | None
     citations: list[Citation] | None
 
@@ -81,9 +81,9 @@ class TestGenerationState(TypedDict):
     coding_run_id: uuid.UUID | None
     checkout_root: str | None
     indexed_commit_sha: str | None
-    research_intents: list[ResearchIntent] | None
-    source_evidence: list | None
-    test_evidence: list | None
+    retrieval_requests: list[RetrievalRequest] | None
+    source_documents: list | None
+    test_documents: list | None
     candidate_hints: list[str] | None
     generation_branch: str | None
     generated_files: list | None
@@ -135,7 +135,7 @@ def _route_intent(state: GraphState) -> Intent:
 
 
 def _route_after_plan(state: GraphState) -> Literal["failed", "planned"]:
-    """Route a planning-stage failure to the sink, otherwise on to evidence gathering."""
+    """Route a planning-stage failure to the sink, otherwise on to documents gathering."""
     return "failed" if state.get("failure") else "planned"
 
 
@@ -202,7 +202,7 @@ def build_graph(
     graph = StateGraph(GraphState)
     graph.add_node("classify", _classify_node(classifier_llm))
     graph.add_node("plan", build_plan_node(planner_llm, recorder))
-    graph.add_node("gather_evidence", build_gather_evidence_node(retriever, recorder))
+    graph.add_node("gather_documents", build_gather_documents_node(retriever, recorder))
     graph.add_node("generate_tests", build_generate_tests_node(generator, workspaces, recorder))
     graph.add_node("review_patch", build_review_patch_node(reviewer, recorder, max_revision_attempts=max_revision_attempts))
     graph.add_node("await_decision", build_await_decision_node())
@@ -215,8 +215,8 @@ def build_graph(
 
     graph.add_edge(START, "classify")
     graph.add_conditional_edges("classify", _route_intent, {"test_generation": "plan", "repository_question": "retrieve"})
-    graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "gather_evidence"})
-    graph.add_edge("gather_evidence", "generate_tests")
+    graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "gather_documents"})
+    graph.add_edge("gather_documents", "generate_tests")
     graph.add_conditional_edges("generate_tests", build_generate_router(), {"review": "review_patch", "failed": "fail_run"})
     graph.add_conditional_edges(
         "review_patch",

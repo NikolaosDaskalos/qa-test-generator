@@ -19,7 +19,7 @@ from app.agent.agents.generator import ReActTestGenerator
 from app.agent.agents.reviewer import ReActPatchReviewer
 from app.core import WeaviateResources, engine, get_weaviate_resources, security, settings
 from app.models import User
-from app.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore, SourceDocumentStore
+from app.persistence import CodingRunStore, RepositoryDocumentStore, RepositorySessionStore, RepositoryStore
 from app.rag import DocumentIngestor, DocumentRetriever
 from app.schemas import TokenPayload
 from app.services import RepositoryService, RepositorySessionService
@@ -50,17 +50,17 @@ def get_repository_store(session: SessionDep) -> RepositoryStore:
 RepositoryStoreDep = Annotated[RepositoryStore, Depends(get_repository_store)]
 
 
-def get_source_document_store(session: SessionDep) -> SourceDocumentStore:
+def get_repository_document_store(session: SessionDep) -> RepositoryDocumentStore:
     """Build the PostgreSQL store for git document records."""
-    return SourceDocumentStore(session)
+    return RepositoryDocumentStore(session)
 
 
-SourceDocumentStoreDep = Annotated[SourceDocumentStore, Depends(get_source_document_store)]
+RepositoryDocumentStoreDep = Annotated[RepositoryDocumentStore, Depends(get_repository_document_store)]
 
 
-def get_document_ingestor(weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStoreDep) -> DocumentIngestor:
+def get_document_ingestor(weaviate_resources: WeaviateResourcesDep, repository_document_store: RepositoryDocumentStoreDep) -> DocumentIngestor:
     """Build a lazy repository document ingestor for one request."""
-    return DocumentIngestor(weaviate_resources, source_document_store)
+    return DocumentIngestor(weaviate_resources, repository_document_store)
 
 
 DocumentIngestorDep = Annotated[DocumentIngestor, Depends(get_document_ingestor)]
@@ -175,11 +175,11 @@ ChatAnthropicStrongestDep = Annotated[ChatAnthropic, Depends(get_anthropic_llm)]
 
 
 def get_document_retriever(
-    current_user: CurrentUser, weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStoreDep
+    current_user: CurrentUser, weaviate_resources: WeaviateResourcesDep, repository_document_store: RepositoryDocumentStoreDep
 ) -> DocumentRetriever:
     """Build the authenticated user's repository-scoped retriever."""
     reranker = CohereRerank(model=settings.COHERE_RERANK_MODEL, cohere_api_key=SecretStr(settings.COHERE_API_KEY), top_n=settings.TOP_K)
-    return DocumentRetriever(weaviate_resources, str(current_user.id), source_document_store, reranker)
+    return DocumentRetriever(weaviate_resources, str(current_user.id), repository_document_store, reranker)
 
 
 DocumentRetrieverDep = Annotated[DocumentRetriever, Depends(get_document_retriever)]

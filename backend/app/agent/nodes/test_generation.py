@@ -1,10 +1,10 @@
 """The ``test_generation`` generic retrieve node.
 
-This node executes the planner's Research Intents under the session's Repository
-identity. Each intent's untrusted candidate paths are confined to the checkout
+This node executes the planner's Retrieval Requests under the session's Repository
+identity. Each request's untrusted candidate paths are confined to the checkout
 (unsafe ones dropped) before any survive into state as validated retrieval hints.
-Retrieved Repository Evidence is partitioned by the intent's tag into separate
-``source_evidence`` (what's implemented) and ``test_evidence`` (what's already
+Retrieved Repository Documents are partitioned by document type into separate
+``source_documents`` (what's implemented) and ``test_documents`` (what's already
 tested), which are kept apart on the shared state.
 """
 
@@ -18,8 +18,8 @@ from app.core import settings
 from app.enums import CodingRunStage
 from app.schemas import ReviewFinding, ReviewResult, RunFailure, RunNoChanges, Stage
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
-from app.services.coding_runs.evidence_partitioner import EvidencePartitioner, EvidencePartitionRequest
 from app.services.coding_runs.patch_builder import PatchBuilder, PatchBuildRequest
+from app.services.coding_runs.repository_document_partitioner import RepositoryDocumentPartitioner, RepositoryDocumentPartitionRequest
 from app.services.coding_runs.revision_budget import can_revise, is_revision_attempt, spend_revision
 from app.services.coding_runs.test_file_validation import verify_test_file_boundary
 from app.streaming import emit
@@ -41,31 +41,31 @@ EMPTY_PATCH_FINDING = ReviewFinding(category="coverage", detail="The generator p
 NO_CHANGES_MESSAGE = "The existing tests already cover all the requested cases, so no new tests were generated."
 
 
-def build_gather_evidence_node(retriever, recorder):
-    """Build the generic retrieve node that partitions evidence source vs. test.
+def build_gather_documents_node(retriever, recorder):
+    """Build the generic retrieve node that partitions documents source vs. test.
 
-    Gathering evidence first advances the run into the retrieving stage and emits
-    the retrieving marker, then partitions Repository Evidence as before.
+    Gathering documents first advances the run into the retrieving stage and emits
+    the retrieving marker, then partitions Repository Documents as before.
     """
 
-    partitioner = EvidencePartitioner(retriever)
+    partitioner = RepositoryDocumentPartitioner(retriever)
 
-    def gather_evidence(state) -> dict:
+    def gather_documents(state) -> dict:
         recorder.begin_retrieving(state["coding_run_id"])
         emit(Stage(stage="retrieving"))
         partition = partitioner.partition(
-            EvidencePartitionRequest(
-                research_intents=state.get("research_intents") or [], repository_id=state["repository_id"], checkout_root=state.get("checkout_root")
+            RepositoryDocumentPartitionRequest(
+                retrieval_requests=state.get("retrieval_requests") or [], repository_id=state["repository_id"], checkout_root=state.get("checkout_root")
             )
         )
         return {
-            "source_evidence": partition.source_evidence,
-            "test_evidence": partition.test_evidence,
+            "source_documents": partition.source_documents,
+            "test_documents": partition.test_documents,
             "candidate_hints": partition.candidate_hints,
-            "trace": ["gather_evidence"],
+            "trace": ["gather_documents"],
         }
 
-    return gather_evidence
+    return gather_documents
 
 
 def _generating_failure(reason: str) -> dict:
@@ -77,7 +77,7 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
     """Build the single node that runs the whole generating stage end-to-end.
 
     The node distinguishes its two passes by whether a prior ``review_result`` is on
-    state — absent on the first pass (straight from evidence gathering), present
+    state — absent on the first pass (straight from documents gathering), present
     whenever the post-review router routes a below-threshold patch back here. On the
     first pass it advances the run into generating, restores a clean generation branch
     at the indexed commit (the backend — never the model — owns this), and calls the
@@ -109,8 +109,8 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
             try:
                 proposal = generator.revise(
                     task=state["question"],
-                    source_evidence=state.get("source_evidence") or [],
-                    test_evidence=state.get("test_evidence") or [],
+                    source_documents=state.get("source_documents") or [],
+                    test_documents=state.get("test_documents") or [],
                     prior_files=state.get("generated_files") or [],
                     diff=state.get("diff") or "",
                     findings=list(review.findings),
@@ -132,7 +132,7 @@ def build_generate_tests_node(generator, workspace_factory, recorder):
             emit(Stage(stage="generating"))
             try:
                 proposal = generator.generate(
-                    task=state["question"], source_evidence=state.get("source_evidence") or [], test_evidence=state.get("test_evidence") or []
+                    task=state["question"], source_documents=state.get("source_documents") or [], test_documents=state.get("test_documents") or []
                 )
             except Exception:
                 logger.exception("Test generation failed")
@@ -210,7 +210,7 @@ def _post_review_route(review: ReviewResult | None, state, max_revision_attempts
 def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None, max_revision_attempts: int | None = None):
     """Build the node that statically reviews a generated Test Patch before approval.
 
-    Review is evidence-based static assessment only: the reviewer never executes
+    Review is document-grounded static assessment only: the reviewer never executes
     the generated tests, installs dependencies, or implies runtime correctness. The
     reviewer returns a quality ``score`` (0–10); the backend — not the model — owns
     the pass decision, accepting the patch when ``score >= threshold`` (the
@@ -254,8 +254,8 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None,
             try:
                 review = reviewer.review(
                     task=state["question"],
-                    source_evidence=state.get("source_evidence") or [],
-                    test_evidence=state.get("test_evidence") or [],
+                    source_documents=state.get("source_documents") or [],
+                    test_documents=state.get("test_documents") or [],
                     generated_files=generated_files,
                     diff=diff,
                 )

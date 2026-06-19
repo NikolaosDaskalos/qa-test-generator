@@ -169,7 +169,7 @@ export const ExternalReferenceSchema = {
     type: 'object',
     required: ['url'],
     title: 'ExternalReference',
-    description: 'A web result consulted for test-writing guidance, kept apart from Repository Evidence.'
+    description: 'A web result consulted for test-writing guidance, kept apart from Repository Documents.'
 } as const;
 
 export const GeneratedFileSchema = {
@@ -242,7 +242,8 @@ export const MessageSchema = {
     },
     type: 'object',
     required: ['message'],
-    title: 'Message'
+    title: 'Message',
+    description: 'A simple ``{"message": ...}`` response body.'
 } as const;
 
 export const NewPasswordSchema = {
@@ -260,7 +261,8 @@ export const NewPasswordSchema = {
     },
     type: 'object',
     required: ['token', 'new_password'],
-    title: 'NewPassword'
+    title: 'NewPassword',
+    description: 'A password-reset submission pairing the reset token with the new password.'
 } as const;
 
 export const PrivateUserCreateSchema = {
@@ -285,7 +287,8 @@ export const PrivateUserCreateSchema = {
     },
     type: 'object',
     required: ['email', 'password', 'full_name'],
-    title: 'PrivateUserCreate'
+    title: 'PrivateUserCreate',
+    description: 'Payload for the local-only user creation endpoint.'
 } as const;
 
 export const RepositoriesPublicSchema = {
@@ -304,7 +307,8 @@ export const RepositoriesPublicSchema = {
     },
     type: 'object',
     required: ['data', 'count'],
-    title: 'RepositoriesPublic'
+    title: 'RepositoriesPublic',
+    description: 'A page of repositories with the total count.'
 } as const;
 
 export const RepositoryCreateSchema = {
@@ -336,13 +340,15 @@ export const RepositoryCreateSchema = {
     },
     type: 'object',
     required: ['token', 'repository_url'],
-    title: 'RepositoryCreate'
+    title: 'RepositoryCreate',
+    description: 'Registration payload: a repository URL plus its access token.'
 } as const;
 
 export const RepositoryProviderSchema = {
     type: 'string',
     enum: ['github'],
-    title: 'RepositoryProvider'
+    title: 'RepositoryProvider',
+    description: 'Supported Git hosting providers.'
 } as const;
 
 export const RepositoryPublicSchema = {
@@ -439,7 +445,8 @@ export const RepositoryPublicSchema = {
     },
     type: 'object',
     required: ['id', 'user_id', 'repository_url', 'name', 'owner', 'status', 'failed_reason', 'created_at', 'updated_at'],
-    title: 'RepositoryPublic'
+    title: 'RepositoryPublic',
+    description: 'A repository as exposed to clients, without the stored token.'
 } as const;
 
 export const RepositoryQuestionRequestSchema = {
@@ -493,7 +500,8 @@ export const RepositorySessionCreateSchema = {
     },
     type: 'object',
     required: ['repository_id'],
-    title: 'RepositorySessionCreate'
+    title: 'RepositorySessionCreate',
+    description: 'Payload to open a session bound to a repository.'
 } as const;
 
 export const RepositorySessionPublicSchema = {
@@ -530,7 +538,8 @@ export const RepositorySessionPublicSchema = {
     },
     type: 'object',
     required: ['id', 'title', 'owner_id', 'repository_id', 'created_at', 'updated_at'],
-    title: 'RepositorySessionPublic'
+    title: 'RepositorySessionPublic',
+    description: 'A session as exposed to clients.'
 } as const;
 
 export const RepositorySessionsPublicSchema = {
@@ -549,13 +558,15 @@ export const RepositorySessionsPublicSchema = {
     },
     type: 'object',
     required: ['data', 'count'],
-    title: 'RepositorySessionsPublic'
+    title: 'RepositorySessionsPublic',
+    description: 'A page of sessions with the total count.'
 } as const;
 
 export const RepositoryStatusSchema = {
     type: 'string',
     enum: ['pending', 'cloning', 'indexing', 'ready', 'failed'],
-    title: 'RepositoryStatus'
+    title: 'RepositoryStatus',
+    description: 'Lifecycle of a repository from registration through clone, index, and ready.'
 } as const;
 
 export const RepositoryUpdateSchema = {
@@ -581,7 +592,8 @@ export const RepositoryUpdateSchema = {
     },
     type: 'object',
     required: ['token'],
-    title: 'RepositoryUpdate'
+    title: 'RepositoryUpdate',
+    description: 'Update payload supplying a new access token and optional expiry.'
 } as const;
 
 export const ReviewFindingSchema = {
@@ -648,7 +660,8 @@ export const SessionHistoriesPublicSchema = {
     },
     type: 'object',
     required: ['data'],
-    title: 'SessionHistoriesPublic'
+    title: 'SessionHistoriesPublic',
+    description: "A session's full message history."
 } as const;
 
 export const SessionHistoryPublicSchema = {
@@ -689,13 +702,15 @@ export const SessionHistoryPublicSchema = {
     },
     type: 'object',
     required: ['id', 'session_id', 'role', 'content', 'citations', 'position', 'created_at'],
-    title: 'SessionHistoryPublic'
+    title: 'SessionHistoryPublic',
+    description: 'One persisted session message as exposed to clients.'
 } as const;
 
 export const SessionMessageRoleSchema = {
     type: 'string',
     enum: ['user', 'assistant'],
-    title: 'SessionMessageRole'
+    title: 'SessionMessageRole',
+    description: 'Author of a session history message.'
 } as const;
 
 export const TokenSchema = {
@@ -712,7 +727,8 @@ export const TokenSchema = {
     },
     type: 'object',
     required: ['access_token'],
-    title: 'Token'
+    title: 'Token',
+    description: 'An OAuth2 access-token response.'
 } as const;
 
 export const UpdatePasswordSchema = {
@@ -732,7 +748,8 @@ export const UpdatePasswordSchema = {
     },
     type: 'object',
     required: ['current_password', 'new_password'],
-    title: 'UpdatePassword'
+    title: 'UpdatePassword',
+    description: 'Self-service password change, verifying the current password.'
 } as const;
 
 export const UserCreateSchema = {
@@ -774,7 +791,8 @@ export const UserCreateSchema = {
     },
     type: 'object',
     required: ['email', 'password'],
-    title: 'UserCreate'
+    title: 'UserCreate',
+    description: 'Admin payload to create a user with a plaintext password.'
 } as const;
 
 export const UserPublicSchema = {
@@ -827,7 +845,8 @@ export const UserPublicSchema = {
     },
     type: 'object',
     required: ['email', 'id'],
-    title: 'UserPublic'
+    title: 'UserPublic',
+    description: 'A user as exposed to clients, without the password hash.'
 } as const;
 
 export const UserRegisterSchema = {
@@ -859,7 +878,8 @@ export const UserRegisterSchema = {
     },
     type: 'object',
     required: ['email', 'password'],
-    title: 'UserRegister'
+    title: 'UserRegister',
+    description: 'Self-service signup payload.'
 } as const;
 
 export const UserUpdateSchema = {
@@ -914,7 +934,8 @@ export const UserUpdateSchema = {
         }
     },
     type: 'object',
-    title: 'UserUpdate'
+    title: 'UserUpdate',
+    description: 'Admin payload to update a user; all fields optional.'
 } as const;
 
 export const UserUpdateMeSchema = {
@@ -946,7 +967,8 @@ export const UserUpdateMeSchema = {
         }
     },
     type: 'object',
-    title: 'UserUpdateMe'
+    title: 'UserUpdateMe',
+    description: "Self-service update of one's own name and email."
 } as const;
 
 export const UsersPublicSchema = {
@@ -965,7 +987,8 @@ export const UsersPublicSchema = {
     },
     type: 'object',
     required: ['data', 'count'],
-    title: 'UsersPublic'
+    title: 'UsersPublic',
+    description: 'A page of users with the total count.'
 } as const;
 
 export const ValidationErrorSchema = {

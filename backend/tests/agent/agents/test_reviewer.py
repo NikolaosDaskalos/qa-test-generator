@@ -8,7 +8,7 @@ model or network call.
 from langchain_core.messages import HumanMessage
 
 from app.agent.agents.reviewer import ReActPatchReviewer
-from app.models import SourceDocument
+from app.models import RepositoryDocument
 from app.schemas import GeneratedFile, PatchReview, ReviewFinding
 
 
@@ -24,8 +24,8 @@ class FakeAgent:
         return self.final_state
 
 
-def _source(source: str, content: str) -> SourceDocument:
-    return SourceDocument(content=content, doc_metadata={"source": source})
+def _source(source: str, content: str) -> RepositoryDocument:
+    return RepositoryDocument(content=content, doc_metadata={"source": source})
 
 
 def test_patch_review_carries_a_bounded_score_and_findings_not_an_accepted_flag() -> None:
@@ -43,7 +43,7 @@ def test_reviewer_returns_the_structured_score_and_findings() -> None:
     agent = FakeAgent({"messages": [], "structured_response": PatchReview(score=5, findings=findings)})
     reviewer = ReActPatchReviewer(llm=object(), agent=agent)
 
-    review = reviewer.review(task="add tests", source_evidence=[], test_evidence=[], generated_files=[], diff="d")
+    review = reviewer.review(task="add tests", source_documents=[], test_documents=[], generated_files=[], diff="d")
 
     assert review.score == 5
     assert [finding.category for finding in review.findings] == ["coverage"]
@@ -54,20 +54,20 @@ def test_reviewer_defaults_to_a_zero_score_when_no_structured_decision_is_return
     agent = FakeAgent({"messages": [], "structured_response": None})
     reviewer = ReActPatchReviewer(llm=object(), agent=agent)
 
-    review = reviewer.review(task="add tests", source_evidence=[], test_evidence=[], generated_files=[], diff="d")
+    review = reviewer.review(task="add tests", source_documents=[], test_documents=[], generated_files=[], diff="d")
 
     assert review.score == 0
 
 
 def test_reviewer_prompt_includes_the_task_proposals_and_diff() -> None:
-    """The review prompt carries the task, the evidence, the proposed files, and the canonical diff."""
+    """The review prompt carries the task, the documents, the proposed files, and the canonical diff."""
     agent = FakeAgent({"messages": [], "structured_response": PatchReview(score=9, findings=[])})
     reviewer = ReActPatchReviewer(llm=object(), agent=agent)
 
     reviewer.review(
         task="add auth tests",
-        source_evidence=[_source("app/auth.py", "def login(): ...")],
-        test_evidence=[],
+        source_documents=[_source("app/auth.py", "def login(): ...")],
+        test_documents=[],
         generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_login(): ...")],
         diff="diff --git a/tests/test_auth.py b/tests/test_auth.py",
     )

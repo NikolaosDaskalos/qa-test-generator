@@ -39,7 +39,7 @@ def web_search(query: str) -> str:
 
     Do NOT use it to learn anything about the repository under test: its modules,
     functions, behavior, or file layout come only from the provided Repository
-    Evidence, never from the web. Results are external references about test-writing
+    Documents, never from the web. Results are external references about test-writing
     technique and must not ground claims about the repository's own code.
 
     Returns JSON-serialized search results.

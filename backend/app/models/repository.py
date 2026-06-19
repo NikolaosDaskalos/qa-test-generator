@@ -10,7 +10,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from app.enums import RepositoryProvider, RepositoryStatus
 
 if TYPE_CHECKING:
-    from app.models import RepositorySession, SourceDocument, User
+    from app.models import RepositoryDocument, RepositorySession, User
 
 
 class Repository(SQLModel, table=True):
@@ -44,4 +44,4 @@ class Repository(SQLModel, table=True):
     )
     user: "User" = Relationship(back_populates="repositories")
     sessions: list["RepositorySession"] = Relationship(back_populates="repository", sa_relationship_kwargs={"passive_deletes": "all"})
-    source_documents: list["SourceDocument"] = Relationship(back_populates="repository", sa_relationship_kwargs={"passive_deletes": "all"})
+    repository_documents: list["RepositoryDocument"] = Relationship(back_populates="repository", sa_relationship_kwargs={"passive_deletes": "all"})

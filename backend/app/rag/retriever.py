@@ -11,8 +11,8 @@ from weaviate.classes.query import Filter, HybridFusion
 
 from app.core import TEXT_PROPERTY, WeaviateResources, settings
 from app.errors.rag_errors import RetrieverError
-from app.models import SourceDocument
-from app.persistence import SourceDocumentStore
+from app.models import RepositoryDocument
+from app.persistence import RepositoryDocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 class DocumentRetriever:
     """Wrap Weaviate hybrid retrieval behind the RAG query contract."""
 
-    def __init__(self, resources: WeaviateResources, tenant: str, source_document_store: SourceDocumentStore, reranker: CohereRerank):
+    def __init__(self, resources: WeaviateResources, tenant: str, repository_document_store: RepositoryDocumentStore, reranker: CohereRerank):
         """Initialize retrieval against a specific Weaviate tenant."""
         self.resources = resources
         self.tenant = tenant
-        self.source_document_store = source_document_store
+        self.repository_document_store = repository_document_store
         self.reranker = reranker
 
     def search_with_scores(self, query: str, *, repository_id: uuid.UUID, k: int, alpha: float) -> list[tuple[Document, float]]:
@@ -44,14 +44,14 @@ class DocumentRetriever:
         logger.info("Document search completed tenant=%s result_count=%s", self.tenant, len(results))
         return results
 
-    def retrieve_evidence(self, query: str, *, repository_id: uuid.UUID, k: int, alpha: float, parent_limit: int) -> list[SourceDocument]:
+    def retrieve_documents(self, query: str, *, repository_id: uuid.UUID, k: int, alpha: float, parent_limit: int) -> list[RepositoryDocument]:
         """Rerank candidate Code Chunks and hydrate their parent documents."""
         candidates = [document for document, _ in self.search_with_scores(query, repository_id=repository_id, k=k, alpha=alpha)]
         if not candidates:
             return []
 
         reranked_candidates = self.reranker.compress_documents(candidates, query)
-        evidence: list[SourceDocument] = []
+        documents: list[RepositoryDocument] = []
         seen_parent_ids = set()
         for candidate in reranked_candidates:
             try:
@@ -61,12 +61,12 @@ class DocumentRetriever:
             if parent_id in seen_parent_ids:
                 continue
             seen_parent_ids.add(parent_id)
-            parent = self.source_document_store.get_by_id(parent_id)
+            parent = self.repository_document_store.get_by_id(parent_id)
             if parent is not None and parent.repository_id == repository_id:
-                evidence.append(parent)
-            if len(evidence) == parent_limit:
+                documents.append(parent)
+            if len(documents) == parent_limit:
                 break
-        return evidence
+        return documents
 
     def get_stats(self, *, repository_id: uuid.UUID) -> dict[str, Any]:
         """Return chunk and source counts for one Repository."""

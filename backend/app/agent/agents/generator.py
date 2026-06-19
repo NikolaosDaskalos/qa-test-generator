@@ -7,7 +7,7 @@ bounded by single-tool binding and a per-run tool-call limit. A single agent per
 both initial generation and revision; revision may also call ``web_search``, since
 many findings (e.g. a deprecated test-framework API) are exactly what a web lookup
 resolves. Web results become ``External Reference``s harvested from the agent's tool
-messages, kept separate from Repository Evidence and never used to ground claims
+messages, kept separate from Repository Documents and never used to ground claims
 about the Repository's code — only how tests are written.
 """
 
@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from app.agent.agents.middleware import build_tool_call_limit_middleware
 from app.agent.agents.tools import web_search
 from app.prompts.prompts import GENERATOR_SYSTEM_PROMPT
-from app.prompts.rendering import format_evidence, format_files
+from app.prompts.rendering import format_files, format_repository_documents
 from app.schemas import ExternalReference, GeneratedFile, GenerationProposal
 
 logger = logging.getLogger(__name__)
@@ -45,19 +45,19 @@ class ReActTestGenerator:
             llm, tools=[web_search], system_prompt=GENERATOR_SYSTEM_PROMPT, response_format=_GeneratorResponse, middleware=[build_tool_call_limit_middleware()]
         )
 
-    def generate(self, *, task: str, source_evidence: list, test_evidence: list) -> GenerationProposal:
-        prompt = _build_prompt(task, source_evidence, test_evidence)
+    def generate(self, *, task: str, source_documents: list, test_documents: list) -> GenerationProposal:
+        prompt = _build_prompt(task, source_documents, test_documents)
         return self._propose(prompt)
 
-    def revise(self, *, task: str, source_evidence: list, test_evidence: list, prior_files: list, diff: str, findings: list) -> GenerationProposal:
+    def revise(self, *, task: str, source_documents: list, test_documents: list, prior_files: list, diff: str, findings: list) -> GenerationProposal:
         """Replace a rejected proposal once, grounded in the reviewer's findings.
 
-        The reviser sees the same task and Repository Evidence as initial generation
+        The reviser sees the same task and Repository Documents as initial generation
         plus its own prior complete-file proposal, the canonical diff that was
         reviewed, and the categorized findings to address, and returns a full
         replacement proposal — never a diff.
         """
-        prompt = _build_revision_prompt(task, source_evidence, test_evidence, prior_files, diff, findings)
+        prompt = _build_revision_prompt(task, source_documents, test_documents, prior_files, diff, findings)
         return self._propose(prompt)
 
     def _propose(self, prompt: str) -> GenerationProposal:
@@ -66,28 +66,28 @@ class ReActTestGenerator:
         generated_files = response.generated_files if response else []
         return GenerationProposal(generated_files=generated_files, external_references=_references_from_messages(result.get("messages") or []))
 
-    def __call__(self, *, task: str, source_evidence: list, test_evidence: list) -> GenerationProposal:
-        return self.generate(task=task, source_evidence=source_evidence, test_evidence=test_evidence)
+    def __call__(self, *, task: str, source_documents: list, test_documents: list) -> GenerationProposal:
+        return self.generate(task=task, source_documents=source_documents, test_documents=test_documents)
 
 
-def _build_prompt(task: str, source_evidence: list, test_evidence: list) -> str:
-    """Assemble the generation prompt from the task and partitioned Repository Evidence."""
+def _build_prompt(task: str, source_documents: list, test_documents: list) -> str:
+    """Assemble the generation prompt from the task and partitioned Repository Documents."""
     sections = [f"Task:\n{task}"]
-    if source_evidence:
-        sections.append("Source code under test:\n" + format_evidence(source_evidence))
-    if test_evidence:
-        sections.append("Existing tests:\n" + format_evidence(test_evidence))
+    if source_documents:
+        sections.append("Source code under test:\n" + format_repository_documents(source_documents))
+    if test_documents:
+        sections.append("Existing tests:\n" + format_repository_documents(test_documents))
     return "\n\n".join(sections)
 
 
-def _build_revision_prompt(task: str, source_evidence: list, test_evidence: list, prior_files: list, diff: str, findings: list) -> str:
+def _build_revision_prompt(task: str, source_documents: list, test_documents: list, prior_files: list, diff: str, findings: list) -> str:
     """Assemble the revision prompt: the generation context plus the rejected proposal and findings.
 
     The reviewer's findings frame the revision as a directed fix, and the prior
     proposal and canonical diff show exactly what was rejected so the model replaces
     it wholesale rather than guessing at the prior attempt.
     """
-    sections = [_build_prompt(task, source_evidence, test_evidence)]
+    sections = [_build_prompt(task, source_documents, test_documents)]
     sections.append(
         "Your previous proposal was reviewed and rejected. Address every finding below and return the complete, "
         "corrected contents of each test file; never return a diff."

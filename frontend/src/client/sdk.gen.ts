@@ -238,6 +238,7 @@ export class RepositoriesService {
 export class SessionsService {
     /**
      * Create Repository Session
+     * Open a new session bound to a repository the caller can access.
      * @param data The data for the request.
      * @param data.requestBody
      * @returns RepositorySessionPublic Successful Response
@@ -312,6 +313,7 @@ export class SessionsService {
     
     /**
      * Read Repository Session History
+     * Return the recent message history of an owned session.
      * @param data The data for the request.
      * @param data.repositorySessionId
      * @returns SessionHistoriesPublic Successful Response
@@ -580,7 +582,7 @@ export class UsersService {
 export class UtilsService {
     /**
      * Test Email
-     * Test emails.
+     * Send a test email to verify SMTP configuration (superuser only).
      * @param data The data for the request.
      * @param data.emailTo
      * @returns Message Successful Response
@@ -601,6 +603,7 @@ export class UtilsService {
     
     /**
      * Health Check
+     * Return ``True`` to signal the service is up.
      * @returns boolean Successful Response
      * @throws ApiError
      */

@@ -1,6 +1,6 @@
 # Rename RAG language to Repository Documents
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: 9-17, 26-31, 35-38, 69, 73, 94
 
@@ -12,13 +12,13 @@ The live implementation must stop using “evidence” and “Research Intent”
 
 ## Acceptance criteria
 
-- [ ] `RepositoryDocument` replaces the live `SourceDocument` domain and persistence name, with its store, relationships, migrations, and tests updated without data loss.
-- [ ] `RetrievalRequest` replaces `ResearchIntent` across planner output, schemas, graph state, retrieval orchestration, prompts, and tests.
-- [ ] Retrieval interfaces and state use document terminology, including source documents and test documents, without live evidence-named files, classes, or methods.
-- [ ] RAG still indexes Python files into Code Chunks, reranks candidates, hydrates parent Repository Documents, and returns only documents from the requested Repository.
-- [ ] Repository Synchronization, citations, insufficient-document behavior, and External Reference separation remain unchanged.
-- [ ] Backend schemas and generated frontend contracts describe Repository Documents consistently.
-- [ ] Database migration and automated tests prove that existing Repository Documents remain readable and retrieval behavior is unchanged.
+- [x] `RepositoryDocument` replaces the live `SourceDocument` domain and persistence name, with its store, relationships, migrations, and tests updated without data loss.
+- [x] `RetrievalRequest` replaces `ResearchIntent` across planner output, schemas, graph state, retrieval orchestration, prompts, and tests.
+- [x] Retrieval interfaces and state use document terminology, including source documents and test documents, without live evidence-named files, classes, or methods.
+- [x] RAG still indexes Python files into Code Chunks, reranks candidates, hydrates parent Repository Documents, and returns only documents from the requested Repository.
+- [x] Repository Synchronization, citations, insufficient-document behavior, and External Reference separation remain unchanged.
+- [x] Backend schemas and generated frontend contracts describe Repository Documents consistently.
+- [x] Database migration and automated tests prove that existing Repository Documents remain readable and retrieval behavior is unchanged.
 
 ## Blocked by
 

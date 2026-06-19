@@ -39,7 +39,7 @@ class CodingRun(SQLModel, table=True):
     # The canonical unified diff (Test Patch) derived by Git; the displayed record of truth.
     diff: str | None = Field(default=None, sa_column=Column(Text))
     # The complete generated file proposals ({path, content}) and the External References
-    # consulted while writing them, kept separate from Repository Evidence.
+    # consulted while writing them, kept separate from Repository Documents.
     generated_files: list | None = Field(default=None, sa_column=Column(JSON))
     external_references: list | None = Field(default=None, sa_column=Column(JSON))
     # The Patch Review findings ({category, detail}) recorded for the latest review.

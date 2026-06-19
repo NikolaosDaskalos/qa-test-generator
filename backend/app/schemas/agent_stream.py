@@ -6,7 +6,7 @@ question or Test-Generation Task may report. Each event carries a literal
 adapter serializes them to the wire (via ``model_dump_json``); no other module
 knows the wire format.
 
-Deliberate outcomes (insufficient evidence, a rejected Test Patch) are normal
+Deliberate outcomes (insufficient documents, a rejected Test Patch) are normal
 terminal ``Result`` events, never errors. Unexpected transport failures stay an
 out-of-band concern of the adapter and are deliberately absent from this union.
 """
@@ -21,7 +21,7 @@ from app.schemas.generation import ExternalReference, GeneratedFile
 from app.schemas.review import ReviewFinding
 
 # User-safe disclaimer carried on every review outcome: Patch Review is a static,
-# evidence-based assessment that never runs the generated tests.
+# documents-based assessment that never runs the generated tests.
 REVIEW_DISCLAIMER = "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."
 
 

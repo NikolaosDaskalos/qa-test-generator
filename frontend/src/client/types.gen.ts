@@ -47,7 +47,7 @@ export type CodingRunStage = 'planning' | 'retrieving' | 'generating' | 'reviewi
 export type CodingRunStatus = 'queued' | 'planning' | 'retrieving' | 'generating' | 'awaiting_review' | 'reviewing' | 'awaiting_approval' | 'changes_requested' | 'approved' | 'succeeded' | 'rejected' | 'failed';
 
 /**
- * A web result consulted for test-writing guidance, kept apart from Repository Evidence.
+ * A web result consulted for test-writing guidance, kept apart from Repository Documents.
  */
 export type ExternalReference = {
     /**
@@ -91,15 +91,24 @@ export type HumanDecisionRequest = {
     feedback?: string;
 };
 
+/**
+ * A simple ``{"message": ...}`` response body.
+ */
 export type Message = {
     message: string;
 };
 
+/**
+ * A password-reset submission pairing the reset token with the new password.
+ */
 export type NewPassword = {
     token: string;
     new_password: string;
 };
 
+/**
+ * Payload for the local-only user creation endpoint.
+ */
 export type PrivateUserCreate = {
     email: string;
     password: string;
@@ -107,19 +116,31 @@ export type PrivateUserCreate = {
     is_verified?: boolean;
 };
 
+/**
+ * A page of repositories with the total count.
+ */
 export type RepositoriesPublic = {
     data: Array<RepositoryPublic>;
     count: number;
 };
 
+/**
+ * Registration payload: a repository URL plus its access token.
+ */
 export type RepositoryCreate = {
     token: string;
     token_expiration_days?: (number | null);
     repository_url: string;
 };
 
+/**
+ * Supported Git hosting providers.
+ */
 export type RepositoryProvider = 'github';
 
+/**
+ * A repository as exposed to clients, without the stored token.
+ */
 export type RepositoryPublic = {
     id: string;
     user_id: string;
@@ -147,11 +168,17 @@ export type RepositoryQuestionRequest = {
     decision?: (HumanDecisionRequest | null);
 };
 
+/**
+ * Payload to open a session bound to a repository.
+ */
 export type RepositorySessionCreate = {
     repository_id: string;
     title?: string;
 };
 
+/**
+ * A session as exposed to clients.
+ */
 export type RepositorySessionPublic = {
     id: string;
     title: string;
@@ -161,13 +188,22 @@ export type RepositorySessionPublic = {
     updated_at: string;
 };
 
+/**
+ * A page of sessions with the total count.
+ */
 export type RepositorySessionsPublic = {
     data: Array<RepositorySessionPublic>;
     count: number;
 };
 
+/**
+ * Lifecycle of a repository from registration through clone, index, and ready.
+ */
 export type RepositoryStatus = 'pending' | 'cloning' | 'indexing' | 'ready' | 'failed';
 
+/**
+ * Update payload supplying a new access token and optional expiry.
+ */
 export type RepositoryUpdate = {
     token: string;
     token_expiration_days?: (number | null);
@@ -202,10 +238,16 @@ export type RunPatchPublic = {
     external_references?: Array<ExternalReference>;
 };
 
+/**
+ * A session's full message history.
+ */
 export type SessionHistoriesPublic = {
     data: Array<SessionHistoryPublic>;
 };
 
+/**
+ * One persisted session message as exposed to clients.
+ */
 export type SessionHistoryPublic = {
     id: string;
     session_id: string;
@@ -216,18 +258,30 @@ export type SessionHistoryPublic = {
     created_at: string;
 };
 
+/**
+ * Author of a session history message.
+ */
 export type SessionMessageRole = 'user' | 'assistant';
 
+/**
+ * An OAuth2 access-token response.
+ */
 export type Token = {
     access_token: string;
     token_type?: string;
 };
 
+/**
+ * Self-service password change, verifying the current password.
+ */
 export type UpdatePassword = {
     current_password: string;
     new_password: string;
 };
 
+/**
+ * Admin payload to create a user with a plaintext password.
+ */
 export type UserCreate = {
     email: string;
     is_active?: boolean;
@@ -236,6 +290,9 @@ export type UserCreate = {
     password: string;
 };
 
+/**
+ * A user as exposed to clients, without the password hash.
+ */
 export type UserPublic = {
     email: string;
     is_active?: boolean;
@@ -245,17 +302,26 @@ export type UserPublic = {
     created_at?: (string | null);
 };
 
+/**
+ * Self-service signup payload.
+ */
 export type UserRegister = {
     email: string;
     password: string;
     full_name?: (string | null);
 };
 
+/**
+ * A page of users with the total count.
+ */
 export type UsersPublic = {
     data: Array<UserPublic>;
     count: number;
 };
 
+/**
+ * Admin payload to update a user; all fields optional.
+ */
 export type UserUpdate = {
     email?: (string | null);
     is_active?: boolean;
@@ -264,6 +330,9 @@ export type UserUpdate = {
     password?: (string | null);
 };
 
+/**
+ * Self-service update of one's own name and email.
+ */
 export type UserUpdateMe = {
     full_name?: (string | null);
     email?: (string | null);

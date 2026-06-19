@@ -53,7 +53,7 @@ def test_generator_extracts_structured_files_and_harvests_external_references(mo
     }
     generator, _agent = _build_generator(monkeypatch, final_state)
 
-    proposal = generator.generate(task="add tests for auth", source_evidence=[], test_evidence=[])
+    proposal = generator.generate(task="add tests for auth", source_documents=[], test_documents=[])
 
     assert [file.path for file in proposal.generated_files] == ["tests/test_auth.py"]
     assert [reference.url for reference in proposal.external_references] == ["https://docs.pytest.org"]
@@ -87,8 +87,8 @@ def test_generator_revises_a_prior_proposal_against_reviewer_findings(monkeypatc
 
     proposal = generator.revise(
         task="add tests for auth",
-        source_evidence=[],
-        test_evidence=[],
+        source_documents=[],
+        test_documents=[],
         prior_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")],
         diff="diff --git a/tests/test_auth.py b/tests/test_auth.py",
         findings=[ReviewFinding(category="coverage", detail="missing unhappy-path test")],
@@ -115,8 +115,8 @@ def test_generator_uses_one_web_search_agent_for_both_generation_and_revision(mo
     monkeypatch.setattr("app.agent.agents.generator.create_agent", fake_create_agent)
 
     generator = ReActTestGenerator(llm=object())
-    generator.generate(task="add tests", source_evidence=[], test_evidence=[])
-    generator.revise(task="add tests", source_evidence=[], test_evidence=[], prior_files=[], diff="", findings=[])
+    generator.generate(task="add tests", source_documents=[], test_documents=[])
+    generator.revise(task="add tests", source_documents=[], test_documents=[], prior_files=[], diff="", findings=[])
 
     # Exactly one agent is constructed, it is web_search-capable, and both passes go through it.
     assert len(created) == 1
@@ -138,8 +138,8 @@ def test_generator_revision_consults_web_search_and_harvests_references(monkeypa
 
     proposal = generator.revise(
         task="add tests for auth",
-        source_evidence=[],
-        test_evidence=[],
+        source_documents=[],
+        test_documents=[],
         prior_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")],
         diff="diff --git a/tests/test_auth.py b/tests/test_auth.py",
         findings=[ReviewFinding(category="versioning", detail="uses a deprecated fixture API")],

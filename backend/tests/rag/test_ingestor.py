@@ -93,16 +93,16 @@ class FakeVectorStore:
         self.delete_calls.append(kwargs)
 
 
-class FakeSourceDocumentStore:
+class FakeRepositoryDocumentStore:
     """Record source-document replacement and cleanup."""
 
     def __init__(self) -> None:
         self.replace_calls = []
         self.delete_calls = []
 
-    def replace_for_repository(self, repository_id, source_documents):
-        self.replace_calls.append((repository_id, source_documents))
-        return source_documents
+    def replace_for_repository(self, repository_id, repository_documents):
+        self.replace_calls.append((repository_id, repository_documents))
+        return repository_documents
 
     def delete_by_repository(self, repository_id):
         self.delete_calls.append(repository_id)
@@ -115,7 +115,7 @@ def _resources() -> WeaviateResources:
 
 def _bare_ingestor(documents, resources):
     """Build an ingestor without loading the real tokenizer."""
-    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
+    ingestor = DocumentIngestor(resources, FakeRepositoryDocumentStore())
     ingestor._load = lambda *args: documents
     ingestor._split = lambda *args: documents
     return ingestor
@@ -179,13 +179,13 @@ def test_empty_ingestion_is_rejected_without_writes() -> None:
         ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", "a" * 40, uuid.uuid4())
 
     assert resources.vector_store.add_calls == []
-    assert ingestor.source_document_store.replace_calls == []
+    assert ingestor.repository_document_store.replace_calls == []
 
 
 def test_repository_deletion_is_idempotent_when_tenant_is_missing() -> None:
     """Do not create a tenant solely to delete absent repository chunks."""
     resources = _resources()
-    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
+    ingestor = DocumentIngestor(resources, FakeRepositoryDocumentStore())
     user_id = uuid.uuid4()
 
     ingestor.delete_repository(uuid.uuid4(), user_id=user_id)
@@ -198,7 +198,7 @@ def test_repository_deletion_is_idempotent_when_tenant_is_missing() -> None:
 def test_repository_deletion_uses_existing_user_tenant() -> None:
     """Delete repository chunks only within the owner's existing tenant."""
     resources = _resources()
-    ingestor = DocumentIngestor(resources, FakeSourceDocumentStore())
+    ingestor = DocumentIngestor(resources, FakeRepositoryDocumentStore())
     user_id = uuid.uuid4()
     collection = resources.client.collections.get(settings.WEAVIATE_COLLECTION)
     collection.tenants.names.add(str(user_id))
@@ -219,4 +219,4 @@ def test_ingestion_uses_shared_resources_when_write_fails() -> None:
         ingestor.ingest(Path("/repo"), repository_id, "main", "a" * 40, uuid.uuid4())
 
     assert ingestor.resources is resources
-    assert ingestor.source_document_store.delete_calls == [repository_id]
+    assert ingestor.repository_document_store.delete_calls == [repository_id]

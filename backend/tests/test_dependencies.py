@@ -38,7 +38,7 @@ def test_document_retriever_is_scoped_to_current_user(monkeypatch) -> None:
     """The retriever provider binds retrieval to the authenticated user's tenant."""
     user = SimpleNamespace(id=uuid.uuid4())
     weaviate_resources = object()
-    source_document_store = object()
+    repository_document_store = object()
     reranker = object()
     retriever = object()
     captured = {}
@@ -54,9 +54,9 @@ def test_document_retriever_is_scoped_to_current_user(monkeypatch) -> None:
     monkeypatch.setattr(dependencies, "CohereRerank", fake_reranker)
     monkeypatch.setattr(dependencies, "DocumentRetriever", fake_retriever)
 
-    result = dependencies.get_document_retriever(user, weaviate_resources, source_document_store)
+    result = dependencies.get_document_retriever(user, weaviate_resources, repository_document_store)
 
     assert result is retriever
-    assert captured["retriever_args"] == (weaviate_resources, str(user.id), source_document_store, reranker)
+    assert captured["retriever_args"] == (weaviate_resources, str(user.id), repository_document_store, reranker)
     assert captured["reranker_kwargs"]["model"] == dependencies.settings.COHERE_RERANK_MODEL
     assert captured["reranker_kwargs"]["top_n"] == dependencies.settings.TOP_K
