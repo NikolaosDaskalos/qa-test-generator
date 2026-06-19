@@ -30,7 +30,7 @@ def _web_search_message(results) -> ToolMessage:
     return ToolMessage(content=json.dumps({"results": results}), name="web_search", tool_call_id="c1")
 
 
-def _build_generator(monkeypatch, final_state, *, recursion_limit=7):
+def _build_generator(monkeypatch, final_state):
     """Build a generator whose single agent is a FakeAgent returning ``final_state``.
 
     The agent is injected by monkeypatching ``create_agent`` so tests drive the
@@ -38,7 +38,7 @@ def _build_generator(monkeypatch, final_state, *, recursion_limit=7):
     """
     agent = FakeAgent(final_state)
     monkeypatch.setattr("app.agent.agents.generator.create_agent", lambda *a, **k: agent)
-    return ReActTestGenerator(llm=object(), recursion_limit=recursion_limit), agent
+    return ReActTestGenerator(llm=object()), agent
 
 
 def test_generator_extracts_structured_files_and_harvests_external_references(monkeypatch) -> None:
@@ -60,15 +60,22 @@ def test_generator_extracts_structured_files_and_harvests_external_references(mo
     assert [reference.url for reference in proposal.external_references] == ["https://docs.pytest.org"]
 
 
-def test_generator_caps_the_web_search_loop_with_a_recursion_limit(monkeypatch) -> None:
-    """The agent is invoked under the configured recursion limit, bounding the tool loop."""
-    final_state = {"messages": [], "structured_response": _GeneratorResponse(generated_files=[])}
-    generator, agent = _build_generator(monkeypatch, final_state, recursion_limit=5)
+def test_generator_caps_the_web_search_loop_with_a_tool_call_limit(monkeypatch) -> None:
+    """The agent is built with a per-run tool-call limit that stops the loop gracefully."""
+    captured = {}
 
-    generator.generate(task="add tests", source_evidence=[], test_evidence=[])
+    def fake_create_agent(_llm, **kwargs):
+        captured.update(kwargs)
+        return FakeAgent({"messages": [], "structured_response": _GeneratorResponse(generated_files=[])})
 
-    _agent_input, config = agent.invocations[0]
-    assert config["recursion_limit"] == 5
+    monkeypatch.setattr("app.agent.agents.generator.create_agent", fake_create_agent)
+
+    ReActTestGenerator(llm=object())
+
+    middleware = captured["middleware"]
+    assert len(middleware) == 1
+    assert middleware[0].run_limit == 3
+    assert middleware[0].exit_behavior == "continue"
 
 
 def test_generator_revises_a_prior_proposal_against_reviewer_findings(monkeypatch) -> None:
@@ -91,8 +98,7 @@ def test_generator_revises_a_prior_proposal_against_reviewer_findings(monkeypatc
     )
 
     assert [file.path for file in proposal.generated_files] == ["tests/test_auth.py"]
-    agent_input, config = agent.invocations[0]
-    assert config["recursion_limit"] == 7
+    agent_input, _config = agent.invocations[0]
     prompt = agent_input["messages"][0].content
     # The revision prompt grounds the model in the rejected proposal, the diff, and the findings to address.
     assert "missing unhappy-path test" in prompt

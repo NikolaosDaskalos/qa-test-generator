@@ -24,6 +24,7 @@ const useAuth = () => {
     queryKey: ["currentUser"],
     queryFn: UsersService.readUserMe,
     enabled: isLoggedIn(),
+    staleTime: 0,
   })
 
   const signUpMutation = useMutation({
@@ -55,6 +56,7 @@ const useAuth = () => {
 
   const logout = () => {
     localStorage.removeItem("access_token")
+    queryClient.removeQueries({ queryKey: ["currentUser"] })
     navigate({ to: "/login" })
   }
 

@@ -22,7 +22,8 @@ from app.services.coding_runs.revision_budget import can_revise, is_revision_att
 from app.streaming.agent_stream import emit
 from app.services.coding_runs.test_file_validation import verify_test_file_boundary
 from app.enums.coding_run import CodingRunStage
-from app.schemas.agent_stream import ReviewResult, RunFailure, Stage
+from app.schemas.agent_stream import ReviewResult, RunFailure, RunNoChanges, Stage
+from app.schemas.review import ReviewFinding
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,11 @@ REVISION_FAILED = "The test generator could not revise its proposal."
 REVIEW_FAILED = "The patch reviewer could not complete its assessment."
 # The prompt the human-in-the-loop interrupt surfaces while awaiting the owner's decision.
 AWAITING_DECISION_MESSAGE = "Review the generated Test Patch and approve or reject it."
+# An empty proposal scores zero deterministically; the backend, not the model, owns this.
+EMPTY_PATCH_SCORE = 0
+EMPTY_PATCH_FINDING = ReviewFinding(category="coverage", detail="The generator proposed no test changes.")
+# Ready-to-show copy for a run that proposed no test changes across every attempt.
+NO_CHANGES_MESSAGE = "The existing tests already cover all the requested cases, so no new tests were generated."
 
 
 def build_gather_evidence_node(retriever, recorder):
@@ -175,18 +181,31 @@ def build_generate_router():
     return route_after_generate
 
 
-def _escalates_to_owner(review: ReviewResult | None, state, max_revision_attempts: int | None) -> bool:
-    """Whether the post-review path escalates this patch to the owner's decision.
+def _is_empty_patch(state) -> bool:
+    """Whether the current proposal contains no test changes (nothing to apply).
 
-    An accepted patch escalates; a below-threshold patch escalates only once its
-    Revision Budget is spent (otherwise it is revised). A reviewing-stage failure
-    (no review on state) escalates to neither — it routes to the failure sink.
+    An empty proposal is either no proposed files at all or a blank canonical diff;
+    both mean there is nothing to review, escalate, or commit.
     """
-    if review is None:
-        return False
-    if not review.accepted and can_revise(state, limit=max_revision_attempts):
-        return False
-    return True
+    if not (state.get("generated_files") or []):
+        return True
+    return not (state.get("diff") or "").strip()
+
+
+def _post_review_route(review: ReviewResult | None, state, max_revision_attempts: int | None) -> Literal["revise", "escalate", "already_covered"]:
+    """The post-review destination for a non-failed run.
+
+    An empty proposal is never escalated to the owner: it is retried while the Revision
+    Budget allows and, once that budget is spent, reported as the existing tests already
+    covering the request (``already_covered``). A non-empty patch escalates to the owner's
+    decision when it is accepted or its budget is spent, and is otherwise revised.
+    """
+    budget = can_revise(state, limit=max_revision_attempts)
+    if _is_empty_patch(state):
+        return "revise" if budget else "already_covered"
+    if review is not None and not review.accepted and budget:
+        return "revise"
+    return "escalate"
 
 
 def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None, max_revision_attempts: int | None = None):
@@ -222,37 +241,45 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None,
         diff = state.get("diff") or ""
         generated_files = state.get("generated_files") or []
 
-        # The reviewer is an LLM/tool loop: a failure in its model call, structured
-        # response parsing, or web_search loop is a reviewing-stage Run Failure, not
-        # an escaping exception that would leave the run stuck in ``reviewing``.
-        try:
-            review = reviewer.review(
-                task=state["question"],
-                source_evidence=state.get("source_evidence") or [],
-                test_evidence=state.get("test_evidence") or [],
-                generated_files=generated_files,
-                diff=diff,
-            )
-        except Exception:
-            logger.exception("Patch review failed")
-            return fail_state(RunFailure(failed_stage=CodingRunStage.reviewing, reason=REVIEW_FAILED), trace="review_patch")
-        # The reviewer only scores; the backend owns the pass bar.
-        score = review.score
-        findings = list(review.findings)
-        accepted = score >= pass_threshold
-
-        # The score is never the sole gate: the backend independently re-verifies that
-        # every proposal stays within the Test File boundary, overriding a passing score.
-        boundary_finding = verify_test_file_boundary(state.get("checkout_root"), generated_files)
-        if boundary_finding is not None:
+        if _is_empty_patch(state):
+            # An empty proposal scores zero deterministically: the backend never asks the
+            # reviewer to grade nothing and never lets an empty patch pass the threshold.
+            # The post-review router retries it, then reports the tests as already covering.
+            score = EMPTY_PATCH_SCORE
+            findings = [EMPTY_PATCH_FINDING]
             accepted = False
-            findings = [*findings, boundary_finding]
+        else:
+            # The reviewer is an LLM/tool loop: a failure in its model call, structured
+            # response parsing, or web_search loop is a reviewing-stage Run Failure, not
+            # an escaping exception that would leave the run stuck in ``reviewing``.
+            try:
+                review = reviewer.review(
+                    task=state["question"],
+                    source_evidence=state.get("source_evidence") or [],
+                    test_evidence=state.get("test_evidence") or [],
+                    generated_files=generated_files,
+                    diff=diff,
+                )
+            except Exception:
+                logger.exception("Patch review failed")
+                return fail_state(RunFailure(failed_stage=CodingRunStage.reviewing, reason=REVIEW_FAILED), trace="review_patch")
+            # The reviewer only scores; the backend owns the pass bar.
+            score = review.score
+            findings = list(review.findings)
+            accepted = score >= pass_threshold
+
+            # The score is never the sole gate: the backend independently re-verifies that
+            # every proposal stays within the Test File boundary, overriding a passing score.
+            boundary_finding = verify_test_file_boundary(state.get("checkout_root"), generated_files)
+            if boundary_finding is not None:
+                accepted = False
+                findings = [*findings, boundary_finding]
 
         recorder.record_review(coding_run_id, accepted=accepted, findings=findings)
         review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, score=score, threshold=pass_threshold, findings=findings, diff=diff)
         # The terminal ReviewResult rides the stream only when the run escalates to the
-        # owner; a patch bound for one more Revision Attempt stays quiet until re-review.
-        if _escalates_to_owner(review_result, state, max_revision_attempts):
+        # owner; a patch bound for revision or reported as already-covered stays quiet.
+        if _post_review_route(review_result, state, max_revision_attempts) == "escalate":
             emit(review_result)
         return {"review_result": review_result, "trace": ["review_patch"]}
 
@@ -262,23 +289,42 @@ def build_review_patch_node(reviewer, recorder, *, threshold: int | None = None,
 def build_review_router(max_revision_attempts: int | None = None):
     """Build the post-review router that drives the conditional edge off ``review_patch``.
 
-    Reading only the verdict ``review_patch`` wrote to state, it reproduces the three
-    outcomes the old ``review_gate`` owned: a reviewing-stage Run Failure routes to
-    the failure sink; a below-threshold patch with Revision Budget remaining routes
-    back to ``generate_tests`` for one more Revision Attempt; an accepted patch, or a below-threshold one
-    whose budget is exhausted, routes to the owner's human decision. Exhausting the
-    budget escalates — it never fails. The router has no side effects; ``review_patch``
-    already emitted the terminal ``ReviewResult`` on the escalation path.
+    Reading only the verdict ``review_patch`` wrote to state, it routes the four
+    non-trivial outcomes: a reviewing-stage Run Failure routes to the failure sink; a
+    below-threshold (or empty) patch with Revision Budget remaining routes back to
+    ``generate_tests`` for one more Revision Attempt; an accepted patch, or a non-empty
+    below-threshold one whose budget is exhausted, routes to the owner's human decision;
+    and an empty proposal whose budget is exhausted routes to the no-changes terminal
+    rather than escalating nothing to the owner. Exhausting the budget escalates or
+    reports — it never fails. The router has no side effects; ``review_patch`` already
+    emitted the terminal ``ReviewResult`` on the escalation path.
     """
 
-    def route_after_review(state) -> Literal["revise", "escalate", "failed"]:
+    def route_after_review(state) -> Literal["revise", "escalate", "already_covered", "failed"]:
         if state.get("failure") is not None:
             return "failed"
-        if _escalates_to_owner(state.get("review_result"), state, max_revision_attempts):
-            return "escalate"
-        return "revise"
+        return _post_review_route(state.get("review_result"), state, max_revision_attempts)
 
     return route_after_review
+
+
+def build_report_no_changes_node(recorder):
+    """Build the terminal node for a run that proposed no test changes across all attempts.
+
+    The post-review router routes here when the proposal is still empty after the
+    Revision Budget is spent. Rather than escalate an empty patch to the owner, the run
+    is recorded as succeeded and a ready-to-show ``RunNoChanges`` is emitted, reporting
+    that the existing tests already cover the requested cases.
+    """
+
+    def report_no_changes(state) -> dict:
+        coding_run_id = state.get("coding_run_id")
+        recorder.record_no_changes(coding_run_id)
+        outcome = RunNoChanges(coding_run_id=coding_run_id, message=NO_CHANGES_MESSAGE)
+        emit(outcome)
+        return {"no_changes_result": outcome, "trace": ["report_no_changes"]}
+
+    return report_no_changes
 
 
 def build_await_decision_node():

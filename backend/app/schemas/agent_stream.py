@@ -151,4 +151,18 @@ class RunApproved(BaseModel):
     disclaimer: str = REVIEW_DISCLAIMER
 
 
-AgentStreamEvent = Stage | Token | Result | RunStarted | RunFailure | ReviewResult | RunRejected | RunApproved
+class RunNoChanges(BaseModel):
+    """The terminal event when the generator proposes no test changes across all attempts.
+
+    A deliberate, benign outcome — not an error: after the Revision Budget is spent the
+    proposal is still empty, which the system reports as the existing tests already
+    covering the requested cases. Carries the persisted Coding Run and a ready-to-show
+    ``message``; no diff, since there is nothing to apply.
+    """
+
+    type: Literal["run_no_changes"] = "run_no_changes"
+    coding_run_id: uuid.UUID
+    message: str = ""
+
+
+AgentStreamEvent = Stage | Token | Result | RunStarted | RunFailure | ReviewResult | RunRejected | RunApproved | RunNoChanges

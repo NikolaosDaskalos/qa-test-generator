@@ -10,6 +10,7 @@ export type AgentStreamEvent =
   | { type: "run_failure"; [key: string]: unknown }
   | { type: "run_approved"; [key: string]: unknown }
   | { type: "run_rejected"; [key: string]: unknown }
+  | { type: "run_no_changes"; coding_run_id: string; message: string }
   | { type: "transport_error"; message: string }
 
 export async function* askRepositoryQuestionStream({

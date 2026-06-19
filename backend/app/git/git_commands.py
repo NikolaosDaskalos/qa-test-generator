@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 SHA_LENGTH: int = 40
 
+# Identity for commits the backend creates. The container has no global Git
+# identity, so it is supplied per-commit via ``-c`` rather than relying on
+# ``git config``; without it ``git commit`` exits 128 ("Author identity unknown").
+COMMIT_AUTHOR_NAME: str = "QA Test Generator"
+COMMIT_AUTHOR_EMAIL: str = "qa-test-generator@users.noreply.github.com"
+
 
 class GitCommands:
     """Execute Git operations within a user-isolated local checkout.

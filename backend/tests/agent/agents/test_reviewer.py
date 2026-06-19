@@ -42,7 +42,7 @@ def test_reviewer_returns_the_structured_score_and_findings() -> None:
     """The agent's structured response becomes the PatchReview score and findings."""
     findings = [ReviewFinding(category="coverage", detail="missing an unhappy-path test")]
     agent = FakeAgent({"messages": [], "structured_response": PatchReview(score=5, findings=findings)})
-    reviewer = ReActPatchReviewer(llm=object(), agent=agent, recursion_limit=7)
+    reviewer = ReActPatchReviewer(llm=object(), agent=agent)
 
     review = reviewer.review(task="add tests", source_evidence=[], test_evidence=[], generated_files=[], diff="d")
 
@@ -82,12 +82,19 @@ def test_reviewer_prompt_includes_the_task_proposals_and_diff() -> None:
     assert "diff --git" in prompt.content
 
 
-def test_reviewer_caps_the_web_search_loop_with_a_recursion_limit() -> None:
-    """The agent is invoked under the configured recursion limit, bounding the tool loop."""
-    agent = FakeAgent({"messages": [], "structured_response": PatchReview(score=9, findings=[])})
-    reviewer = ReActPatchReviewer(llm=object(), agent=agent, recursion_limit=5)
+def test_reviewer_caps_the_web_search_loop_with_a_tool_call_limit(monkeypatch) -> None:
+    """The default agent is built with a per-run tool-call limit that stops the loop gracefully."""
+    captured = {}
 
-    reviewer.review(task="add tests", source_evidence=[], test_evidence=[], generated_files=[], diff="d")
+    def fake_create_agent(_llm, **kwargs):
+        captured.update(kwargs)
+        return FakeAgent({"messages": [], "structured_response": PatchReview(score=9, findings=[])})
 
-    _agent_input, config = agent.invocations[0]
-    assert config["recursion_limit"] == 5
+    monkeypatch.setattr("app.agent.agents.reviewer.create_agent", fake_create_agent)
+
+    ReActPatchReviewer(llm=object())
+
+    middleware = captured["middleware"]
+    assert len(middleware) == 1
+    assert middleware[0].run_limit == 3
+    assert middleware[0].exit_behavior == "continue"

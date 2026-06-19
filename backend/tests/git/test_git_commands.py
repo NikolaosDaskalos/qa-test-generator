@@ -8,7 +8,7 @@ import pytest
 
 from app.core.config import settings
 from app.errors.git_errors import GitError
-from app.git.git_commands import GitCommands
+from app.git.git_commands import COMMIT_AUTHOR_EMAIL, COMMIT_AUTHOR_NAME, GitCommands
 from app.git.git_process import GitResult
 from app.git.repository_url import parse_repository_url
 
@@ -84,6 +84,39 @@ def test_get_current_commit_sha_resolves_head(monkeypatch) -> None:
 
     assert git.get_current_commit_sha() == "a" * 40
     assert calls == [("git", "rev-parse", "HEAD")]
+
+
+def test_commit_supplies_author_identity(monkeypatch) -> None:
+    """The container has no global Git identity, so commits must carry one inline."""
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, **_kwargs) -> GitResult:
+        calls.append(args)
+        return GitResult(stdout="", stderr="")
+
+    monkeypatch.setattr(git, "_run", fake_run)
+
+    git.commit("Add generated tests")
+
+    assert calls[0] == ("git", "add", ".")
+    assert calls[1] == (
+        "git",
+        "-c",
+        f"user.name={COMMIT_AUTHOR_NAME}",
+        "-c",
+        f"user.email={COMMIT_AUTHOR_EMAIL}",
+        "commit",
+        "-m",
+        "Add generated tests",
+    )
+
+
+def test_commit_rejects_an_empty_message() -> None:
+    git = GitCommands(parse_repository_url("https://github.com/openai/openai-python.git"), uuid.uuid4())
+
+    with pytest.raises(GitError, match="Commit message"):
+        git.commit("")
 
 
 def test_push_rejects_the_remote_default_branch(monkeypatch) -> None:

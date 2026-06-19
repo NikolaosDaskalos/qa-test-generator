@@ -42,6 +42,11 @@ type ChatMessage = {
   review?: ReviewResultView
   decision?: RunDecisionView
   failure?: RunFailureView
+  noChanges?: RunNoChangesView
+}
+
+type RunNoChangesView = {
+  message: string
 }
 
 type ReviewResultView = {
@@ -149,7 +154,13 @@ function CopilotShell() {
       (repository) => repository.id === selectedRepositoryId,
     )
     if (requested) {
-      setActiveRepository(requested)
+      setActiveRepository((current) =>
+        current &&
+        current.id === requested.id &&
+        current.status === requested.status
+          ? current
+          : requested,
+      )
     }
   }, [selectedRepositoryId, repositories])
 
@@ -244,7 +255,13 @@ function CopilotShell() {
         }
       },
     )
-    setActiveRepository(repository)
+    setActiveRepository((current) =>
+      current &&
+      current.id === repository.id &&
+      current.status === repository.status
+        ? current
+        : repository,
+    )
   }, [queryClient, repositoryStatusQuery.data])
 
   useEffect(() => {
@@ -483,6 +500,9 @@ function CopilotShell() {
                     ) : null}
                     {message.failure ? (
                       <RunFailureSummary failure={message.failure} />
+                    ) : null}
+                    {message.noChanges ? (
+                      <RunNoChangesSummary noChanges={message.noChanges} />
                     ) : null}
                     {message.citations.length > 0 ? (
                       <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
@@ -1001,6 +1021,15 @@ function RunFailureSummary({ failure }: { failure: RunFailureView }) {
   )
 }
 
+function RunNoChangesSummary({ noChanges }: { noChanges: RunNoChangesView }) {
+  return (
+    <div className="mt-3 grid gap-1 text-sm">
+      <p className="font-medium">No new tests were generated.</p>
+      <p>{noChanges.message}</p>
+    </div>
+  )
+}
+
 function RunDetails({
   repositorySessionId,
   codingRunId,
@@ -1357,6 +1386,22 @@ async function submitQuestion({
                   failure: {
                     failedStage: event.failed_stage,
                     reason: event.reason,
+                  },
+                }
+              : message,
+          ),
+        )
+      }
+
+      if (event.type === "run_no_changes") {
+        setChatMessages((messages) =>
+          messages.map((message) =>
+            message.id === assistantMessageId
+              ? {
+                  ...message,
+                  codingRunId: event.coding_run_id,
+                  noChanges: {
+                    message: event.message,
                   },
                 }
               : message,

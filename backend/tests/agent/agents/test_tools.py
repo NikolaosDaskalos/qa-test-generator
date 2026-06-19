@@ -28,3 +28,23 @@ def test_web_search_rejects_an_empty_query_without_researching(monkeypatch) -> N
 
     assert emitted == []
     assert json.loads(output) == {"error": "No query provided"}
+
+
+def test_web_search_retries_failures_before_returning_error(monkeypatch) -> None:
+    """Tavily failures reach Tenacity while callers still receive tool-safe JSON."""
+    attempts = []
+
+    def fail(payload) -> None:
+        attempts.append(payload)
+        raise RuntimeError("Tavily unavailable")
+
+    monkeypatch.setattr(tools, "emit", lambda event: None)
+    monkeypatch.setattr(tools, "_tavily_search", SimpleNamespace(invoke=fail))
+
+    output = tools.web_search.invoke({"query": "pytest fixtures best practices"})
+
+    assert len(attempts) == 3
+    assert json.loads(output) == {
+        "error": "Tavily search failed",
+        "details": "Tavily unavailable",
+    }

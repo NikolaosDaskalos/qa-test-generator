@@ -25,6 +25,15 @@ const handleApiError = (error: Error) => {
   }
 }
 const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Don't treat data as instantly stale; without this every query
+      // refetches on each window focus, which hammers endpoints like
+      // /runs/{id} and /runs/{id}/patch in lockstep.
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    },
+  },
   queryCache: new QueryCache({
     onError: handleApiError,
   }),

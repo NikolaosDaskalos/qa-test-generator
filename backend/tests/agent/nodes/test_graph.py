@@ -13,12 +13,12 @@ from langgraph.types import Command
 from app.agent.graph import Classification, build_graph
 from app.agent.nodes.planner import PlannerOutput
 from app.agent.nodes.repository_question import INSUFFICIENT_EVIDENCE_ANSWER
-from app.agent.nodes.test_generation import build_review_patch_node
+from app.agent.nodes.test_generation import NO_CHANGES_MESSAGE, build_review_patch_node
 from app.services.coding_runs.workspace import LocalGitWorkspace
 from app.enums.coding_run import CodingRunStage
 from app.errors.git_errors import GitError
 from app.models.source_document import SourceDocument
-from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, RunStarted, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, RunStarted, Stage
 from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
 from app.schemas.research_intent import ResearchIntent
 from app.schemas.review import PatchReview, ReviewFinding
@@ -143,6 +143,9 @@ class RecordingRecorder:
 
     def approve(self, coding_run_id):
         self.events.append(("approve", coding_run_id))
+
+    def record_no_changes(self, coding_run_id):
+        self.events.append(("record_no_changes", coding_run_id))
 
 
 class FakeGenerator:
@@ -480,16 +483,24 @@ def test_test_generation_retrieve_confines_candidate_paths_to_validated_hints(tm
 # ── test_generation branch: Coding Run persistence ────────────────
 
 
-def test_test_generation_persists_a_queued_run_and_advances_through_generation() -> None:
+def test_test_generation_persists_a_queued_run_and_advances_through_generation(tmp_path) -> None:
     """A routed task creates a Coding Run and advances it planning → retrieving → generating → complete."""
+    (tmp_path / "tests").mkdir()  # an existing test root admits the proposed test file
     recorder = RecordingRecorder()
     session_id = uuid.uuid4()
     repository_id = uuid.uuid4()
     planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
-    graph = _build(FakeClassifierLLM("test_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output))
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")]))
+    graph = _build(
+        FakeClassifierLLM("test_generation"),
+        recorder=recorder,
+        planner_llm=FakePlannerLLM(planner_output),
+        generator=generator,
+        workspace=FakeWorkspace(diff="diff --git a/tests/test_x.py b/tests/test_x.py"),
+    )
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": repository_id, "repository_session_id": session_id, "checkout_root": "/unused"}, config=_config("run-thread")
+        {"question": "add tests", "repository_id": repository_id, "repository_session_id": session_id, "checkout_root": str(tmp_path)}, config=_config("run-thread")
     )
 
     assert [event[0] for event in recorder.events] == [
@@ -1519,6 +1530,87 @@ def test_a_zero_budget_escalates_a_below_threshold_patch_without_revising(tmp_pa
     assert graph.get_state(config).next == ("await_decision",)
 
 
+def test_an_empty_proposal_scores_zero_without_calling_the_reviewer(tmp_path) -> None:
+    """A proposal with no test changes is scored zero by the backend; the reviewer is never asked to grade nothing."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeReviewer(PatchReview(score=10, findings=[]))  # would pass if ever consulted
+    generator = FakeGenerator(GenerationProposal())  # no generated files → empty patch
+    graph = _generation_graph(
+        generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff=""),
+        reviewer=reviewer,
+        max_revision_attempts=0,
+    )
+    config = _config()
+
+    result = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=config,
+    )
+
+    # The empty patch was scored zero and rejected without consulting the reviewer LLM.
+    assert reviewer.calls == []
+    assert [event[2] for event in recorder.events if event[0] == "record_review"] == [False]
+    assert result["review_result"].score == 0
+    assert result["review_result"].accepted is False
+
+
+def test_a_persistently_empty_proposal_is_revised_then_reported_as_already_covered(tmp_path) -> None:
+    """An empty proposal is retried across the Revision Budget, then reported as the tests already covering the request — never escalated, never failed."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    generator = FakeGenerator(GenerationProposal())  # empty on generate and revise
+    graph = _generation_graph(
+        generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff=""),
+        max_revision_attempts=2,
+    )
+    config = _config()
+
+    result = graph.invoke(
+        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        config=config,
+    )
+
+    # The empty proposal was retried for the whole budget, then reported as already covered.
+    assert len(generator.revise_calls) == 2
+    assert result.get("failure") is None
+    assert "__interrupt__" not in result  # never escalated to the owner
+    no_changes = result["no_changes_result"]
+    assert isinstance(no_changes, RunNoChanges)
+    assert no_changes.message == NO_CHANGES_MESSAGE
+    # The terminal run was recorded as a no-changes outcome, never failed.
+    assert ("record_no_changes", recorder.run_id) in recorder.events
+    assert all(event[0] != "fail" for event in recorder.events)
+
+
+def test_an_empty_proposal_with_zero_budget_reports_already_covered_immediately(tmp_path) -> None:
+    """With no Revision Budget, an empty proposal reports already-covered on the first pass and emits a RunNoChanges on the stream."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    generator = FakeGenerator(GenerationProposal())
+    graph = _generation_graph(
+        generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff=""),
+        max_revision_attempts=0,
+    )
+
+    events = _custom_events(
+        graph, {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"}
+    )
+
+    assert generator.revise_calls == []
+    # No ReviewResult is surfaced for an empty patch; the terminal stream event is the no-changes report.
+    assert [event for event in events if isinstance(event, ReviewResult)] == []
+    no_changes = [event for event in events if isinstance(event, RunNoChanges)]
+    assert len(no_changes) == 1
+    assert no_changes[0].message == NO_CHANGES_MESSAGE
+
+
 def test_a_budget_above_one_allows_multiple_revisions_before_escalating(tmp_path) -> None:
     """A Revision Budget greater than one permits several revisions; only once it is spent does the patch escalate."""
     (tmp_path / "tests").mkdir()
@@ -1680,13 +1772,21 @@ def _custom_events(graph, graph_input):
     return [chunk for _mode, chunk in items]
 
 
-def test_test_generation_stream_emits_ordered_stage_and_run_markers() -> None:
+def test_test_generation_stream_emits_ordered_stage_and_run_markers(tmp_path) -> None:
     """Test-generation progress is classifying → planning → retrieving → generating and identifies the run."""
+    (tmp_path / "tests").mkdir()  # an existing test root admits the proposed test file
     recorder = RecordingRecorder()
     planner_output = PlannerOutput(in_scope=True, intents=[ResearchIntent(target="source", description="x")])
-    graph = _build(FakeClassifierLLM("test_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output))
+    generator = FakeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")]))
+    graph = _build(
+        FakeClassifierLLM("test_generation"),
+        recorder=recorder,
+        planner_llm=FakePlannerLLM(planner_output),
+        generator=generator,
+        workspace=FakeWorkspace(diff="diff --git a/tests/test_x.py b/tests/test_x.py"),
+    )
 
-    events = _custom_events(graph, {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": "/unused"})
+    events = _custom_events(graph, {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)})
 
     assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "planning", "retrieving", "generating", "reviewing"]
     run_markers = [event for event in events if isinstance(event, RunStarted)]

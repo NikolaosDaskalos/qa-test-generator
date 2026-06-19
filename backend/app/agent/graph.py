@@ -32,11 +32,12 @@ from app.agent.nodes.test_generation import (
     build_gather_evidence_node,
     build_generate_router,
     build_generate_tests_node,
+    build_report_no_changes_node,
     build_review_patch_node,
     build_review_router,
 )
 from app.services.coding_runs.workspace import LocalGitWorkspace
-from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunRejected, Stage
+from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
 from app.schemas.research_intent import ResearchIntent
 
 Intent = Literal["repository_question", "test_generation"]
@@ -100,6 +101,8 @@ class TestGenerationState(TypedDict):
     human_feedback: str | None
     rejection_result: RunRejected | None
     approval_result: RunApproved | None
+    # The terminal outcome when the generator proposes no test changes across all attempts.
+    no_changes_result: RunNoChanges | None
 
 
 class GraphState(SharedState, RepositoryQuestionState, TestGenerationState):
@@ -202,6 +205,7 @@ def build_graph(
     graph.add_node("await_decision", build_await_decision_node())
     graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
+    graph.add_node("report_no_changes", build_report_no_changes_node(recorder))
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("retrieve", build_retrieve_node(retriever))
     graph.add_node("generate", build_generate_node(llm))
@@ -212,11 +216,14 @@ def build_graph(
     graph.add_edge("gather_evidence", "generate_tests")
     graph.add_conditional_edges("generate_tests", build_generate_router(), {"review": "review_patch", "failed": "fail_run"})
     graph.add_conditional_edges(
-        "review_patch", build_review_router(max_revision_attempts), {"revise": "generate_tests", "escalate": "await_decision", "failed": "fail_run"}
+        "review_patch",
+        build_review_router(max_revision_attempts),
+        {"revise": "generate_tests", "escalate": "await_decision", "already_covered": "report_no_changes", "failed": "fail_run"},
     )
     graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
     graph.add_conditional_edges("approve_patch", build_approval_router(), {"approved": END, "failed": "fail_run"})
     graph.add_edge("discard_patch", END)
+    graph.add_edge("report_no_changes", END)
     graph.add_edge("fail_run", END)
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)

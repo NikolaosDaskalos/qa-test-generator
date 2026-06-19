@@ -50,6 +50,9 @@ class RunRecorder(Protocol):
     def approve(self, coding_run_id: uuid.UUID) -> None:
         """Record an owner's approval of a reviewed run after its branch is pushed."""
 
+    def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
+        """Record a run that proposed no test changes across all attempts as succeeded."""
+
 
 class CodingRunRecorder:
     """Production ``RunRecorder`` backed by the durable ``CodingRunStore``."""
@@ -111,6 +114,9 @@ class CodingRunRecorder:
         if run is not None:
             self.store.approve(run)
 
+    def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
+        self._advance(coding_run_id, CodingRunStatus.succeeded)
+
 
 class NullRunRecorder:
     """A no-op recorder for graph paths exercised without persistence."""
@@ -145,4 +151,7 @@ class NullRunRecorder:
         return None
 
     def approve(self, coding_run_id: uuid.UUID) -> None:
+        return None
+
+    def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
         return None
