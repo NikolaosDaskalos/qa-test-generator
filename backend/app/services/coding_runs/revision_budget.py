@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from app.core.config import settings
+from app.core import settings
 
 REVISION_ATTEMPTS_STATE_KEY = "revision_attempts"
 

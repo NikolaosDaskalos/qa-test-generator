@@ -10,8 +10,7 @@ import json
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agent.agents.generator import ReActTestGenerator, _GeneratorResponse
-from app.schemas.generation import GeneratedFile
-from app.schemas.review import ReviewFinding
+from app.schemas import GeneratedFile, ReviewFinding
 
 
 class FakeAgent:
@@ -82,9 +81,7 @@ def test_generator_revises_a_prior_proposal_against_reviewer_findings(monkeypatc
     """Revision returns the new files and prompts with the prior proposal, the canonical diff, and the findings."""
     final_state = {
         "messages": [],
-        "structured_response": _GeneratorResponse(
-            generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")]
-        ),
+        "structured_response": _GeneratorResponse(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")]),
     }
     generator, agent = _build_generator(monkeypatch, final_state)
 

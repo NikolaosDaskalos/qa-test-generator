@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 class SourceDocumentMetadata(TypedDict):
     """Metadata stored alongside a vector embedding."""
+
     source: str
     file_path: str
     file_name: str

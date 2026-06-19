@@ -8,7 +8,7 @@ Developers need a practical way to explore an unfamiliar Python Repository and g
 
 This course project also needs to demonstrate concrete understanding of retrieval-augmented generation and bounded agentic workflows. The existing backend already supports authenticated repository cloning, Python-aware vector ingestion, hybrid retrieval, basic agent execution, and protected Git pushes, but these capabilities are not yet combined into one repository-scoped workflow.
 
-The user needs a demo in which answers are grounded in one connected Repository, test generation is limited to Test Files, generated changes pass through Patch Review, and Approval can publish a non-default branch without permitting direct modification of the default branch.
+The user needs a demo in which answers are grounded in one connected Repository, code generation is limited to Test Files, generated changes pass through Patch Review, and Approval can publish a non-default branch without permitting direct modification of the default branch.
 
 The authenticated frontend currently exposes leftover template navigation and branding instead of the Repository-centered workflow. Its Repository and Repository Session behavior is difficult to discover, selecting obsolete navigation can lead to a generic error screen, session creation is implicit, and reloading an existing conversation cannot restore its complete history or durable Coding Run results.
 
@@ -18,16 +18,16 @@ Build an authenticated AI Codebase Copilot workspace and FastAPI workflow for pu
 
 A user connects a Repository with a mandatory Repository Credential. The backend clones and indexes the default branch. The user creates a Repository Session permanently bound to that Repository and can then:
 
-- Ask codebase questions answered from Repository Evidence with file citations.
-- Submit a Test-Generation Task that may consult External References for current test-writing guidance.
-- Submit a Test-Generation Task through a bounded LangGraph workflow.
+- Ask codebase questions answered from Repository Documents with file citations.
+- Submit a Code Generation Task that may consult External References for current test-writing guidance.
+- Submit a Code Generation Task through a bounded LangGraph workflow.
 - Receive live progress through an Agent Stream.
 - Review a generated Test Patch and Patch Review findings.
 - Reject the patch or approve a commit and push to a new non-default branch.
 
-Repository Synchronization keeps Repository Evidence aligned with the latest default-branch commit through file-level incremental updates rather than a full re-index.
+Repository Synchronization keeps Repository Documents aligned with the latest default-branch commit through file-level incremental updates rather than a full re-index.
 
-The authenticated product uses an AI-chat-style workspace. Repositories and their nested Repository Sessions live in a collapsible left panel, while the main area presents Repository onboarding, processing status, credential maintenance, a contextual empty state, or the selected chat. Repository Sessions use durable URLs, restore the user's last selection, display complete paginated Session History, and reconstruct Test-Generation Task results from durable Coding Runs.
+The authenticated product uses an AI-chat-style workspace. Repositories and their nested Repository Sessions live in a collapsible left panel, while the main area presents Repository onboarding, processing status, credential maintenance, a contextual empty state, or the selected chat. Repository Sessions use durable URLs, restore the user's last selection, display complete paginated Session History, and reconstruct Code Generation Task results from durable Coding Runs.
 
 The project remains a focused demonstration. It does not install dependencies, execute generated tests, create pull requests, support arbitrary coding tasks, or provide production concurrency guarantees.
 
@@ -41,12 +41,12 @@ The project remains a focused demonstration. It does not install dependencies, e
 6. As a user, I want Repository cloning and initial indexing to run in the background, so that the connection request does not remain blocked.
 7. As a user, I want to see Repository processing status, so that I know whether cloning, indexing, readiness, or failure is current.
 8. As a user, I want Repository failures to contain sanitized reasons, so that I can understand failures without exposing credentials.
-9. As a user, I want the backend to record the indexed default-branch commit, so that Repository Evidence has a known source snapshot.
+9. As a user, I want the backend to record the indexed default-branch commit, so that Repository Documents have a known source snapshot.
 10. As a user, I want to request Repository Synchronization manually, so that I control when the index follows upstream changes.
 11. As a user, I want synchronization to fetch the latest default branch, so that new upstream commits can become available for questions and tasks.
 12. As a user, I want newly added Python files to be indexed incrementally, so that synchronization does not rebuild unrelated vectors.
 13. As a user, I want modified Python files to have their old Code Chunks replaced, so that stale content is not retrieved.
-14. As a user, I want deleted Python files removed from Repository Evidence, so that answers cannot cite code that no longer exists.
+14. As a user, I want deleted Python files removed from Repository Documents, so that answers cannot cite code that no longer exists.
 15. As a user, I want renamed Python files re-indexed under their new path, so that file citations remain correct.
 16. As a user, I want the indexed commit to advance only after synchronization succeeds, so that the stored snapshot never claims a partially updated index.
 17. As a user, I want synchronization status and failure information, so that I can distinguish successful, active, and failed updates.
@@ -58,18 +58,18 @@ The project remains a focused demonstration. It does not install dependencies, e
 23. As a user, I want to ask where a behavior is implemented, so that I can locate relevant files quickly.
 24. As a user, I want to ask how components interact, so that I can understand repository architecture.
 25. As a user, I want follow-up questions to account for recent conversation context, so that I do not have to repeat the subject.
-26. As a user, I want every codebase answer grounded only in the Repository Session's Repository Evidence, so that claims do not come from another connected Repository.
+26. As a user, I want every codebase answer grounded only in the Repository Session's Repository Documents, so that claims do not come from another connected Repository.
 27. As a user, I want file citations with codebase answers, so that I can inspect the supporting source.
-28. As a user, I want the system to state when Repository Evidence is insufficient, so that uncertainty is visible instead of hidden by model guesses.
+28. As a user, I want the system to state when Repository Documents are insufficient, so that uncertainty is visible instead of hidden by model guesses.
 29. As a user, I want ordinary repository questions to avoid web search, so that external information does not contaminate repository claims.
-30. As a user, I want Test-Generation Tasks to consult current documentation or testing best practices when useful, so that generated tests can follow current framework guidance.
-31. As a user, I want Repository Evidence and External References shown separately for Test-Generation Tasks, so that I can distinguish codebase facts from test-writing guidance.
+30. As a user, I want Code Generation Tasks to consult current documentation or testing best practices when useful, so that generated tests can follow current framework guidance.
+31. As a user, I want Repository Documents and External References shown separately for Code Generation Tasks, so that I can distinguish codebase facts from test-writing guidance.
 32. As a user, I want question progress and answer tokens streamed through an Agent Stream, so that the interface provides immediate feedback.
-33. As a user, I want to submit a free-text Test-Generation Task, so that I can describe the code behavior that needs tests.
-34. As a user, I want Test-Generation Tasks limited to adding or improving tests, so that the demo does not silently become a general code-editing agent.
-35. As a user, I want the planner to produce Research Intents, so that retrieval targets definitions, callers, related tests, configuration, and conventions.
+33. As a user, I want to submit a free-text Code Generation Task, so that I can describe the code behavior that needs tests.
+34. As a user, I want Code Generation Tasks limited to adding or improving tests, so that the demo does not silently become a general code-editing agent.
+35. As a user, I want the planner to produce Retrieval Requests, so that retrieval targets definitions, callers, related tests, configuration, and conventions.
 36. As a user, I want planner-suggested paths treated as untrusted hints, so that the LLM cannot read arbitrary filesystem locations.
-37. As a user, I want test generation to use only validated Repository Evidence, so that generated tests reflect the connected codebase.
+37. As a user, I want code generation to use only validated Repository Documents, so that generated tests reflect the connected codebase.
 38. As a user, I want the generator to return complete Test File contents, so that the backend does not depend on an LLM producing a perfectly applicable unified diff.
 39. As a user, I want the backend to derive the unified diff with Git, so that the displayed patch accurately reflects written changes.
 40. As a user, I want existing Test Files to be eligible for modification, so that the agent can improve current coverage.
@@ -77,14 +77,14 @@ The project remains a focused demonstration. It does not install dependencies, e
 42. As a user, I want paths outside the checkout rejected, so that a generated patch cannot escape the Repository.
 43. As a user, I want symlink targets rejected, so that path validation cannot be bypassed.
 44. As a user, I want non-Python files rejected from a Test Patch, so that the demo remains within its Python scope.
-45. As a user, I want application and source files rejected from a Test Patch, so that test generation cannot alter production behavior.
+45. As a user, I want application and source files rejected from a Test Patch, so that code generation cannot alter production behavior.
 46. As a user, I want invented test roots rejected, so that the agent does not impose a new project structure.
 47. As a user, I want Patch Review to verify task alignment, so that the patch addresses the requested testing goal.
 48. As a user, I want Patch Review to check Repository conventions and visible imports, so that generated tests resemble existing tests.
 49. As a user, I want Patch Review to detect unrelated changes, so that the proposal remains narrowly scoped.
 50. As a user, I want Patch Review to verify that only Test Files changed, so that the test-only boundary is enforced twice.
-51. As a user, I want a configurable Revision Budget after Patch Review scores a patch below threshold, so that the workflow can improve weak patches without looping indefinitely.
-52. As a user, I want Revision Budget exhaustion to escalate the best-scoring Test Patch to human review, so that a low score is not misrepresented as a Run Failure.
+51. As a user, I want configurable Generation Retries after Patch Review scores a patch below threshold, so that the workflow can improve weak patches without looping indefinitely.
+52. As a user, I want exhausted Generation Retries to escalate the best-scoring Test Patch to human review, so that a low score is not misrepresented as a Run Failure.
 53. As a user, I want Coding Run stages streamed in real time, so that planning, retrieval, generation, review, and completion are visible.
 54. As a user, I want reviewer findings and the final diff included in the Agent Stream, so that I can make an informed approval decision.
 55. As a user, I want the completed Coding Run persisted, so that its state, patch, review, and failures can be inspected after streaming ends.
@@ -126,7 +126,7 @@ The project remains a focused demonstration. It does not install dependencies, e
 91. As a returning user, I want the workspace to reopen my most recently used accessible Repository Session, so that I can continue where I stopped.
 92. As a user switching Repositories, I want that Repository's last-used session restored when available, so that each Repository retains its own working context.
 93. As a user viewing a ready Repository without a selected session, I want a central “Start a new session” state, so that the next action is clear without automatic creation.
-94. As a user, I want Repository Session creation disabled until its Repository is ready, so that I cannot enter a conversation without Repository Evidence.
+94. As a user, I want Repository Session creation disabled until its Repository is ready, so that I cannot enter a conversation without Repository Documents.
 95. As a user, I want a newly created Repository Session titled “New session,” so that blank conversations have a recognizable placeholder.
 96. As a user, I want the first request to create a short deterministic Repository Session title, so that I can recognize the conversation without a naming dialog or another model call.
 97. As a user, I want Repository Sessions ordered by newest activity, so that my current work stays near the top.
@@ -134,7 +134,7 @@ The project remains a focused demonstration. It does not install dependencies, e
 99. As a user, I want the newest 50 Session History messages loaded initially, so that long conversations open promptly near my latest work.
 100. As a user, I want older Session History loaded when I scroll upward without losing my scroll position, so that I can review a long conversation naturally.
 101. As a user, I want full UI history kept separate from the ten-message AI context window, so that viewing older messages does not silently enlarge prompts.
-102. As a user, I want Test-Generation Tasks recorded in their Repository Session chronology, so that coding work survives reload alongside ordinary questions.
+102. As a user, I want Code Generation Tasks recorded in their Repository Session chronology, so that coding work survives reload alongside ordinary questions.
 103. As a user, I want reloaded coding cards reconstructed from the current durable Coding Run, so that review, failure, Approval, rejection, patch, and branch information is never stale.
 104. As a user, I want Appearance and profile controls to remain at the bottom of the responsive left panel, so that familiar account controls remain consistently available.
 105. As a mobile user, I want Repository and Repository Session navigation to work through the existing sidebar drawer, so that the workspace remains usable on a small screen.
@@ -146,7 +146,7 @@ The project remains a focused demonstration. It does not install dependencies, e
 - Existing credential encryption and sanitized Git error handling remain the authentication boundary.
 - Repository registration schedules clone and initial indexing as a FastAPI background task.
 - Repository Synchronization is manually triggered and also runs as a FastAPI background task.
-- The Repository model records the commit SHA represented by Repository Evidence.
+- The Repository model records the commit SHA represented by Repository Documents.
 - Synchronization compares the indexed commit with the latest default-branch commit using Git rename detection and processes changes at file granularity.
 - Added files are indexed, modified files are deleted and re-indexed, deleted files are removed, and renamed files are removed under the old path and indexed under the new path.
 - The indexed commit SHA changes only after all vector operations complete successfully.
@@ -160,15 +160,15 @@ The project remains a focused demonstration. It does not install dependencies, e
 - A Repository Session requires a Repository identity at creation and cannot be reassigned.
 - Session History is represented by persisted exchanges; the duplicate serialized memory field is removed.
 - The complete Session History is available to the UI through an ownership-scoped paginated read model, while at most the ten most recent messages are supplied to reformulation and planning.
-- Repository questions use Repository Evidence exclusively for claims about code and behavior.
-- Insufficient evidence produces an explicit limitation response rather than an unsupported answer.
-- Web search is unavailable to ordinary Repository questions and may be invoked only on the Test-Generation Task path for current test-writing guidance.
+- Repository questions use Repository Documents exclusively for claims about code and behavior.
+- Insufficient Repository Documents produce an explicit limitation response rather than an unsupported answer.
+- Web search is unavailable to ordinary Repository questions and may be invoked only on the Code Generation Task path for current test-writing guidance.
 - Responses separate Repository sources from External References.
-- Questions and Test-Generation Tasks use synchronous server-sent events.
+- Questions and Code Generation Tasks use synchronous server-sent events.
 - Agent Stream events cover stage progress, generated content, citations or reviewer findings, and the final persisted result.
 - Agent workflows do not use polling, WebSockets, or background execution.
 - Client disconnect during a Coding Run cancels processing, records failure, and triggers checkout cleanup.
-- Test generation is the only coding task supported.
+- Code Generation Tasks may change Test Files only.
 - The LangGraph workflow follows a bounded score-and-escalation progression:
 
   ```text
@@ -176,14 +176,14 @@ The project remains a focused demonstration. It does not install dependencies, e
     -> retrieve
     -> generate
     -> review
-    -> revise while below threshold and Revision Budget remains
+    -> revise while below threshold and Generation Retries remain
     -> review
-    -> awaiting approval when accepted or when Revision Budget is exhausted
+    -> awaiting approval when accepted or when Generation Retries are exhausted
   ```
 
-- Planner output contains Research Intents and optional candidate paths, not unrestricted file-read instructions.
+- Planner output contains Retrieval Requests and optional candidate paths, not unrestricted file-read instructions.
 - Candidate paths are normalized, confined to the Repository checkout, and verified before use.
-- Retrieval determines the actual Repository Evidence supplied to generator and reviewer nodes.
+- Retrieval determines the actual Repository Documents supplied to the code generator and Code Reviewer.
 - The generator returns structured complete-file proposals rather than unified diff text.
 - The backend validates and writes proposed Test Files, then obtains the canonical unified diff from Git.
 - Existing recognized Python Test Files may be modified.
@@ -192,7 +192,7 @@ The project remains a focused demonstration. It does not install dependencies, e
 - Patch Review assesses task satisfaction, consistency with retrieved code and existing tests, visible import validity, unrelated modifications, and the Test File boundary.
 - Patch Review does not execute tests, install dependencies, or claim runtime correctness.
 - Patch Review returns a score and categorized findings; the backend applies the configurable acceptance threshold and independently hard-fails Test File boundary escapes.
-- The configurable Revision Budget defaults to two opportunities. Exhaustion escalates the best-scoring Test Patch to the owner rather than failing the Coding Run.
+- Generation Retries default to two opportunities. Exhaustion escalates the best-scoring Test Patch to the owner rather than failing the Coding Run.
 - The same generator agent performs initial generation and revision and may consult External References on either path.
 - One shared local checkout is used instead of Git worktrees.
 - At most one active Coding Run is permitted per Repository; production-grade concurrency control is not required.
@@ -221,7 +221,7 @@ The project remains a focused demonstration. It does not install dependencies, e
 - A new Repository Session begins as “New session.” Its first normalized user request deterministically supplies a stable title of at most 60 display characters without an LLM call.
 - User requests and resolved Coding Run decisions update Repository Session activity. Lists are ordered by descending activity with deterministic tie-breaking.
 - Full Session History pagination initially returns the latest 50 messages in chronological display order and supports loading older pages upward without changing the AI context window.
-- Per ADR 0005, Session History owns chronology and references durable Coding Runs for Test-Generation Tasks; mutable patch, findings, and lifecycle snapshots are not duplicated into Session History.
+- Per ADR 0005, Session History owns chronology and references durable Coding Runs for Code Generation Tasks; mutable patch, findings, and lifecycle snapshots are not duplicated into Session History.
 - Reloaded coding cards reconstruct their current state from the durable Coding Run record while Repository-question citations remain structurally attached to assistant messages under ADR 0001.
 
 ## Testing Decisions
@@ -235,7 +235,7 @@ The project remains a focused demonstration. It does not install dependencies, e
 - Repository service tests use fake stores, fake Git commands, and fake ingestion resources, following existing service tests. They cover GitHub-only validation, initial processing, incremental synchronization status, commit advancement, and failure preservation.
 - Incremental synchronization tests cover add, modify, delete, rename, no-change, fetch failure, diff failure, vector-write failure, and the rule that indexed commit SHA advances only on full success.
 - Ingestor tests use fake Weaviate resources, following existing RAG ingestion tests. They cover Code Chunk metadata, file-level replacement, deletion by source or parent identity, and user-tenant isolation.
-- Retriever tests use fake vector-store resources, following existing retrieval tests. They verify that Repository identity filters are always applied and that results from another Repository cannot enter Repository Evidence.
+- Retriever tests use fake vector-store resources, following existing retrieval tests. They verify that Repository identity filters are always applied and that Repository Documents from another Repository cannot enter the result.
 - RAG pipeline tests use fake model, retriever, and chain dependencies, following existing pipeline construction tests. They cover repository-scoped construction, the ten-message recent Session History boundary, insufficient-evidence responses, file citations, and the rule that ordinary Repository questions cannot reach web search.
 - LangGraph tests use deterministic fake planner, retriever, generator, reviewer, and event sinks. They cover the accepted path, revision within budget, below-threshold budget exhaustion escalating to human review, generation failure, validation failure, disconnect cancellation, and event ordering.
 - LangGraph tests treat node outputs and state transitions as contracts. They do not call external LLM or Tavily services.
@@ -246,7 +246,7 @@ The project remains a focused demonstration. It does not install dependencies, e
 - Persistence tests follow existing store tests and cover Repository indexed commit state, Repository Session ownership and binding, Session History ordering, Coding Run state, Test Patch persistence, Patch Review findings, and Run Failure fields.
 - Persistence and service tests additionally cover deterministic first-request titles, stable title preservation, activity ordering, complete-history pagination independent from the ten-message AI window, and durable Session History references to Coding Runs.
 - Model and migration tests verify required foreign keys, cascade behavior, uniqueness constraints, enum values, and removal of duplicate session memory.
-- Existing Agent Stream tests remain the regression seam for ensuring Repository questions, Test-Generation Tasks, and Approval or rejection decisions update durable conversation state without changing terminal-event behavior.
+- Existing Agent Stream tests remain the regression seam for ensuring Repository questions, Code Generation Tasks, and Approval or rejection decisions update durable conversation state without changing terminal-event behavior.
 - Tests do not clone real repositories, push real branches, install target Repository dependencies, execute generated tests, call OpenAI, call Tavily, or require a live Weaviate instance.
 - A small manually operated end-to-end demo remains appropriate for course presentation: connect a controlled GitHub Repository, ask a cited question, generate a Test Patch, reject one run, approve another, and verify the non-default remote branch.
 

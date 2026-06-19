@@ -6,14 +6,14 @@ The ``retrieve`` node scopes Repository Evidence to the session's Repository; th
 citations on the shared state.
 """
 
-from app.prompts.rendering import format_evidence
-from app.streaming.agent_stream import emit
-from app.core.config import settings
-from app.prompts.prompts import QA_SYSTEM_PROMPT
-from app.schemas.agent_stream import Citation, Stage
-
 # pyrefly: ignore [missing-import]
 from langchain_core.messages import HumanMessage, SystemMessage
+
+from app.core import settings
+from app.prompts.prompts import QA_SYSTEM_PROMPT
+from app.prompts.rendering import format_evidence
+from app.schemas import Citation, Stage
+from app.streaming import emit
 
 # Returned verbatim when retrieval yields no Repository Evidence, so the answer
 # states the limitation instead of letting the model fill gaps from its own knowledge.
@@ -47,10 +47,7 @@ def build_generate_node(llm):
             return {"answer": INSUFFICIENT_EVIDENCE_ANSWER, "citations": [], "trace": ["generate"]}
 
         context = format_evidence(evidence)
-        messages = [
-            SystemMessage(content=f"{QA_SYSTEM_PROMPT}\n\nContext:\n{context}"),
-            HumanMessage(content=state["question"]),
-        ]
+        messages = [SystemMessage(content=f"{QA_SYSTEM_PROMPT}\n\nContext:\n{context}"), HumanMessage(content=state["question"])]
         collected = ""
         for chunk in llm.stream(messages):
             token = getattr(chunk, "content", "") or ""

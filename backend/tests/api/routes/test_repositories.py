@@ -7,11 +7,11 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.routes.repositories import create_repository, read_repositories, read_repository, router
-from app.core.vector_db import get_weaviate_resources
+from app.core import get_weaviate_resources
 from app.dependencies import get_current_user, get_repository_service
-from app.enums.repository import RepositoryStatus
-from app.models.repository import Repository
-from app.schemas.repository import RepositoryCreate
+from app.enums import RepositoryStatus
+from app.models import Repository
+from app.schemas import RepositoryCreate
 
 
 class FakeRepositoryService:

@@ -14,7 +14,7 @@ persistence because they need the stored assistant message id.
 
 from collections.abc import Iterable, Iterator
 
-from app.schemas.agent_stream import AgentStreamEvent, Token
+from app.schemas import AgentStreamEvent, Token
 
 try:  # pragma: no cover - import guard for environments without the helper
     from langgraph.config import get_stream_writer

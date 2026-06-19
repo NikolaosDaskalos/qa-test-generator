@@ -11,7 +11,7 @@ from sqlalchemy.orm import Mapper
 from sqlalchemy.orm.state import InstanceState
 from sqlmodel import Field, Relationship, SQLModel
 
-from app.enums.session import SessionMessageRole
+from app.enums import SessionMessageRole
 
 if TYPE_CHECKING:
     from app.models.coding_run import CodingRun
@@ -48,12 +48,8 @@ class RepositorySession(SQLModel, table=True):
 
     owner: "User" = Relationship(back_populates="repository_sessions")
     repository: "Repository" = Relationship(back_populates="sessions")
-    history: list["SessionHistory"] = Relationship(
-        back_populates="session", sa_relationship_kwargs={"passive_deletes": "all"}
-    )
-    coding_runs: list["CodingRun"] = Relationship(
-        back_populates="repository_session", sa_relationship_kwargs={"passive_deletes": "all"}
-    )
+    history: list["SessionHistory"] = Relationship(back_populates="session", sa_relationship_kwargs={"passive_deletes": "all"})
+    coding_runs: list["CodingRun"] = Relationship(back_populates="repository_session", sa_relationship_kwargs={"passive_deletes": "all"})
 
 
 class SessionHistory(SQLModel, table=True):

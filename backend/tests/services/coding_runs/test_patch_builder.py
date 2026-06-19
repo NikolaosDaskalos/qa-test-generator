@@ -2,10 +2,8 @@
 
 import uuid
 
+from app.schemas import ExternalReference, GeneratedFile, PatchResult
 from app.services.coding_runs.patch_builder import PatchBuilder, PatchBuildRequest
-from app.schemas.agent_stream import PatchResult
-from app.schemas.generation import ExternalReference, GeneratedFile
-
 from tests.agent.nodes.test_graph import FakeWorkspace, RecordingRecorder, _workspace_factory
 
 

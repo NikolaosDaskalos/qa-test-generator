@@ -8,31 +8,23 @@ import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
-from langchain_cohere import CohereRerank
 from langchain_anthropic import ChatAnthropic
+from langchain_cohere import CohereRerank
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr, ValidationError
 from sqlmodel import Session
 
+from app.agent import build_graph
 from app.agent.agents.generator import ReActTestGenerator
-from app.agent.graph import build_graph
-from app.services.coding_runs.patch_publisher import build_patch_publisher_factory
 from app.agent.agents.reviewer import ReActPatchReviewer
+from app.core import WeaviateResources, engine, get_weaviate_resources, security, settings
+from app.models import User
+from app.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore, SourceDocumentStore
+from app.rag import DocumentIngestor, DocumentRetriever
+from app.schemas import TokenPayload
+from app.services import RepositoryService, RepositorySessionService
+from app.services.coding_runs.patch_publisher import build_patch_publisher_factory
 from app.services.coding_runs.recorder import CodingRunRecorder
-from app.core import security
-from app.core.config import settings
-from app.core.db import engine
-from app.core.vector_db import WeaviateResources, get_weaviate_resources
-from app.models.user import User
-from app.persistence.coding_run_store import CodingRunStore
-from app.persistence.repository_store import RepositoryStore
-from app.persistence.session_store import RepositorySessionStore
-from app.persistence.source_document_store import SourceDocumentStore
-from app.rag.ingestor import DocumentIngestor
-from app.rag.retriever import DocumentRetriever
-from app.schemas.authentication import TokenPayload
-from app.services.repository_service import RepositoryService
-from app.services.session_service import RepositorySessionService
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +91,7 @@ CodingRunStoreDep = Annotated[CodingRunStore, Depends(get_coding_run_store)]
 
 
 def get_repository_session_service(
-        session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep, coding_run_store: CodingRunStoreDep
+    session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep, coding_run_store: CodingRunStoreDep
 ) -> RepositorySessionService:
     """Compose the repository session application service from its stores."""
     return RepositorySessionService(session_store, repository_store, coding_run_store)
@@ -151,13 +143,7 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
 
 def _build_chat_model(model: str, max_tokens: int) -> ChatOpenAI:
     """Build a streaming chat model for the given OpenAI model id."""
-    return ChatOpenAI(
-        model=model,
-        temperature=settings.TEMPERATURE,
-        max_tokens=max_tokens,
-        streaming=True,
-        api_key=settings.OPENAI_API_KEY,
-    )
+    return ChatOpenAI(model=model, temperature=settings.TEMPERATURE, max_tokens=max_tokens, streaming=True, api_key=settings.OPENAI_API_KEY)
 
 
 def get_openai_llm() -> ChatOpenAI:
@@ -189,16 +175,10 @@ ChatAnthropicStrongestDep = Annotated[ChatAnthropic, Depends(get_anthropic_llm)]
 
 
 def get_document_retriever(
-        current_user: CurrentUser,
-        weaviate_resources: WeaviateResourcesDep,
-        source_document_store: SourceDocumentStoreDep,
+    current_user: CurrentUser, weaviate_resources: WeaviateResourcesDep, source_document_store: SourceDocumentStoreDep
 ) -> DocumentRetriever:
     """Build the authenticated user's repository-scoped retriever."""
-    reranker = CohereRerank(
-        model=settings.COHERE_RERANK_MODEL,
-        cohere_api_key=SecretStr(settings.COHERE_API_KEY),
-        top_n=settings.TOP_K,
-    )
+    reranker = CohereRerank(model=settings.COHERE_RERANK_MODEL, cohere_api_key=SecretStr(settings.COHERE_API_KEY), top_n=settings.TOP_K)
     return DocumentRetriever(weaviate_resources, str(current_user.id), source_document_store, reranker)
 
 
@@ -206,13 +186,13 @@ DocumentRetrieverDep = Annotated[DocumentRetriever, Depends(get_document_retriev
 
 
 def get_session_graph(
-        request: Request,
-        chat_model: ChatOpenAIDep,
-        strong_chat_model: ChatOpenAIStrongDep,
-        strongest_chat_model: ChatAnthropicStrongestDep,
-        document_retriever: DocumentRetrieverDep,
-        coding_run_store: CodingRunStoreDep,
-        repository_store: RepositoryStoreDep,
+    request: Request,
+    chat_model: ChatOpenAIDep,
+    strong_chat_model: ChatOpenAIStrongDep,
+    strongest_chat_model: ChatAnthropicStrongestDep,
+    document_retriever: DocumentRetrieverDep,
+    coding_run_store: CodingRunStoreDep,
+    repository_store: RepositoryStoreDep,
 ):
     """Compile the unified intent-routed graph for one request.
 

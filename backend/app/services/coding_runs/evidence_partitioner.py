@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from app.core import settings
+from app.models import SourceDocument
+from app.schemas import ResearchIntent
 from app.services.coding_runs.path_safety import confine_candidate_paths
-from app.core.config import settings
-from app.models.source_document import SourceDocument
-from app.schemas.research_intent import ResearchIntent
 
 
 class EvidenceRetriever(Protocol):

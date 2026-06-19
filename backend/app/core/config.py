@@ -8,7 +8,6 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from charset_normalizer.md import lru_cache
 from cryptography.fernet import Fernet
 from pydantic import AnyUrl, BeforeValidator, EmailStr, Field, HttpUrl, PostgresDsn, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -230,7 +229,7 @@ class Settings(BaseSettings):
 
     @classmethod
     def settings_customise_sources(
-            cls, settings_cls: type[BaseSettings], init_settings: Any, env_settings: Any, dotenv_settings: Any, file_secret_settings: Any
+        cls, settings_cls: type[BaseSettings], init_settings: Any, env_settings: Any, dotenv_settings: Any, file_secret_settings: Any
     ) -> tuple[Any, ...]:
         """Prioritize dotenv values over process environment variables."""
         # .env file takes priority over system/process environment variables

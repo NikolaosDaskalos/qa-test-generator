@@ -4,9 +4,9 @@ These pin the display rules for how Code Chunk source labels and proposed Test
 File contents appear in an LLM prompt, directly and without any model loop.
 """
 
+from app.models import SourceDocument
 from app.prompts.rendering import format_evidence, format_files
-from app.models.source_document import SourceDocument
-from app.schemas.generation import GeneratedFile
+from app.schemas import GeneratedFile
 
 
 def _source(source: str, content: str) -> SourceDocument:
@@ -22,9 +22,7 @@ def test_format_evidence_labels_a_document_with_its_source() -> None:
 
 def test_format_evidence_separates_documents_in_order() -> None:
     """Multiple documents render in order, joined by a blank-line ``---`` separator."""
-    rendered = format_evidence(
-        [_source("app/auth.py", "def login(): ..."), _source("app/users.py", "def create(): ...")]
-    )
+    rendered = format_evidence([_source("app/auth.py", "def login(): ..."), _source("app/users.py", "def create(): ...")])
 
     assert rendered == "[Source: app/auth.py]\ndef login(): ...\n\n---\n\n[Source: app/users.py]\ndef create(): ..."
 
@@ -53,10 +51,7 @@ def test_format_files_labels_a_file_with_its_path() -> None:
 def test_format_files_separates_files_in_order() -> None:
     """Multiple files render in order, joined by the same blank-line ``---`` separator."""
     rendered = format_files(
-        [
-            GeneratedFile(path="tests/test_auth.py", content="def test_login(): ..."),
-            GeneratedFile(path="tests/test_users.py", content="def test_create(): ..."),
-        ]
+        [GeneratedFile(path="tests/test_auth.py", content="def test_login(): ..."), GeneratedFile(path="tests/test_users.py", content="def test_create(): ...")]
     )
 
     assert rendered == "[File: tests/test_auth.py]\ndef test_login(): ...\n\n---\n\n[File: tests/test_users.py]\ndef test_create(): ..."

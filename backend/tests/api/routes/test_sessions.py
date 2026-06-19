@@ -9,12 +9,9 @@ from fastapi.testclient import TestClient
 
 from app.api.routes.sessions import router
 from app.dependencies import get_current_user, get_repository_session_service, get_session_graph
-from app.enums.coding_run import CodingRunStage, CodingRunStatus
-from app.enums.session import SessionMessageRole
-from app.models.coding_run import CodingRun
-from app.models.session import RepositorySession, SessionHistory
-from app.schemas.agent_stream import Citation, Result, RunApproved, RunRejected, Stage, Token
-from app.schemas.session import RepositorySessionPublic, RepositorySessionsPublic
+from app.enums import CodingRunStage, CodingRunStatus, SessionMessageRole
+from app.models import CodingRun, RepositorySession, SessionHistory
+from app.schemas import Citation, RepositorySessionPublic, RepositorySessionsPublic, Result, RunApproved, RunRejected, Stage, Token
 
 
 class FakeRepositorySessionService:
@@ -147,9 +144,7 @@ def test_list_sessions_requires_authentication() -> None:
 def test_list_sessions_surfaces_repository_validation_error_from_the_service() -> None:
     user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
     repository_session = RepositorySession(owner_id=user.id, repository_id=uuid.uuid4())
-    service = FakeRepositorySessionService(
-        repository_session, list_raises=HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
-    )
+    service = FakeRepositorySessionService(repository_session, list_raises=HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found"))
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_repository_session_service] = lambda: service

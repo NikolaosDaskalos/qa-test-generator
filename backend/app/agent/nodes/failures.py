@@ -7,7 +7,7 @@ router checks ``state["failure"]`` first and routes a ``"failed"`` literal to th
 single ``fail_run`` sink, which records, stamps, and emits the failure.
 """
 
-from app.schemas.agent_stream import RunFailure
+from app.schemas import RunFailure
 
 
 def fail_state(failure: RunFailure, *, trace: str) -> dict:

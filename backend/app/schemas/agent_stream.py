@@ -16,7 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.enums.coding_run import CodingRunStage
+from app.enums import CodingRunStage
 from app.schemas.generation import ExternalReference, GeneratedFile
 from app.schemas.review import ReviewFinding
 

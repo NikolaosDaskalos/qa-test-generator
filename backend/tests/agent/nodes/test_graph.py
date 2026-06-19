@@ -10,18 +10,31 @@ from pathlib import Path
 
 from langgraph.types import Command
 
-from app.agent.graph import Classification, build_graph
+from app.agent import Classification, build_graph
 from app.agent.nodes.planner import PlannerOutput
 from app.agent.nodes.repository_question import INSUFFICIENT_EVIDENCE_ANSWER
 from app.agent.nodes.test_generation import NO_CHANGES_MESSAGE, build_review_patch_node
-from app.services.coding_runs.workspace import LocalGitWorkspace
-from app.enums.coding_run import CodingRunStage
+from app.enums import CodingRunStage
 from app.errors.git_errors import GitError
-from app.models.source_document import SourceDocument
-from app.schemas.agent_stream import Citation, PatchResult, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, RunStarted, Stage
-from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
-from app.schemas.research_intent import ResearchIntent
-from app.schemas.review import PatchReview, ReviewFinding
+from app.models import SourceDocument
+from app.schemas import (
+    Citation,
+    ExternalReference,
+    GeneratedFile,
+    GenerationProposal,
+    PatchResult,
+    PatchReview,
+    ResearchIntent,
+    ReviewFinding,
+    ReviewResult,
+    RunApproved,
+    RunFailure,
+    RunNoChanges,
+    RunRejected,
+    RunStarted,
+    Stage,
+)
+from app.services.coding_runs.workspace import LocalGitWorkspace
 
 
 class FakeClassifierLLM:
@@ -500,7 +513,8 @@ def test_test_generation_persists_a_queued_run_and_advances_through_generation(t
     )
 
     final = graph.invoke(
-        {"question": "add tests", "repository_id": repository_id, "repository_session_id": session_id, "checkout_root": str(tmp_path)}, config=_config("run-thread")
+        {"question": "add tests", "repository_id": repository_id, "repository_session_id": session_id, "checkout_root": str(tmp_path)},
+        config=_config("run-thread"),
     )
 
     assert [event[0] for event in recorder.events] == [
@@ -1536,17 +1550,17 @@ def test_an_empty_proposal_scores_zero_without_calling_the_reviewer(tmp_path) ->
     recorder = RecordingRecorder()
     reviewer = FakeReviewer(PatchReview(score=10, findings=[]))  # would pass if ever consulted
     generator = FakeGenerator(GenerationProposal())  # no generated files → empty patch
-    graph = _generation_graph(
-        generator=generator,
-        recorder=recorder,
-        workspace=FakeWorkspace(diff=""),
-        reviewer=reviewer,
-        max_revision_attempts=0,
-    )
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=""), reviewer=reviewer, max_revision_attempts=0)
     config = _config()
 
     result = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=config,
     )
 
@@ -1562,16 +1576,17 @@ def test_a_persistently_empty_proposal_is_revised_then_reported_as_already_cover
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     generator = FakeGenerator(GenerationProposal())  # empty on generate and revise
-    graph = _generation_graph(
-        generator=generator,
-        recorder=recorder,
-        workspace=FakeWorkspace(diff=""),
-        max_revision_attempts=2,
-    )
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=""), max_revision_attempts=2)
     config = _config()
 
     result = graph.invoke(
-        {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"},
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
         config=config,
     )
 
@@ -1592,15 +1607,17 @@ def test_an_empty_proposal_with_zero_budget_reports_already_covered_immediately(
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
     generator = FakeGenerator(GenerationProposal())
-    graph = _generation_graph(
-        generator=generator,
-        recorder=recorder,
-        workspace=FakeWorkspace(diff=""),
-        max_revision_attempts=0,
-    )
+    graph = _generation_graph(generator=generator, recorder=recorder, workspace=FakeWorkspace(diff=""), max_revision_attempts=0)
 
     events = _custom_events(
-        graph, {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path), "indexed_commit_sha": "abc"}
+        graph,
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
     )
 
     assert generator.revise_calls == []
@@ -1786,7 +1803,9 @@ def test_test_generation_stream_emits_ordered_stage_and_run_markers(tmp_path) ->
         workspace=FakeWorkspace(diff="diff --git a/tests/test_x.py b/tests/test_x.py"),
     )
 
-    events = _custom_events(graph, {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)})
+    events = _custom_events(
+        graph, {"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)}
+    )
 
     assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "planning", "retrieving", "generating", "reviewing"]
     run_markers = [event for event in events if isinstance(event, RunStarted)]

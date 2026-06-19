@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 from app.agent.agents import tools
-from app.schemas.agent_stream import Stage
+from app.schemas import Stage
 
 
 def test_web_search_emits_researching_and_returns_results(monkeypatch) -> None:
@@ -44,7 +44,4 @@ def test_web_search_retries_failures_before_returning_error(monkeypatch) -> None
     output = tools.web_search.invoke({"query": "pytest fixtures best practices"})
 
     assert len(attempts) == 3
-    assert json.loads(output) == {
-        "error": "Tavily search failed",
-        "details": "Tavily unavailable",
-    }
+    assert json.loads(output) == {"error": "Tavily search failed", "details": "Tavily unavailable"}

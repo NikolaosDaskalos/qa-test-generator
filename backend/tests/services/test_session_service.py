@@ -5,12 +5,10 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from app.enums.repository import RepositoryStatus
-from app.models.repository import Repository
-from app.models.session import RepositorySession
-from app.models.user import User
-from app.schemas.session import RepositorySessionCreate
-from app.services.session_service import RepositorySessionService
+from app.enums import RepositoryStatus
+from app.models import Repository, RepositorySession, User
+from app.schemas import RepositorySessionCreate
+from app.services import RepositorySessionService
 
 
 class FakeRepositoryStore:
@@ -181,10 +179,7 @@ def test_create_session_uses_blank_placeholder_title() -> None:
     session_store = FakeRepositorySessionStore()
     service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
 
-    created = service.create_session(
-        session_in=RepositorySessionCreate(repository_id=repository.id, title="Client supplied title"),
-        user=_user(owner_id),
-    )
+    created = service.create_session(session_in=RepositorySessionCreate(repository_id=repository.id, title="Client supplied title"), user=_user(owner_id))
 
     assert created.title == "New session"
     assert session_store.saved[0].title == "New session"

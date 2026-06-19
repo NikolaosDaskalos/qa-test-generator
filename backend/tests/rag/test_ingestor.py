@@ -7,10 +7,9 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.documents import Document
 
-from app.core.config import settings
-from app.core.vector_db import WeaviateResources
+from app.core import WeaviateResources, settings
 from app.errors.rag_errors import IngestorError
-from app.rag.ingestor import DocumentIngestor
+from app.rag import DocumentIngestor
 
 
 class FakeTenants:

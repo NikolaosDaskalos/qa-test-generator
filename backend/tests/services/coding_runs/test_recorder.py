@@ -6,15 +6,11 @@ from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine
 
+from app.enums import CodingRunStage, CodingRunStatus
+from app.models import CodingRun, Repository, RepositorySession, User
+from app.persistence import CodingRunStore
+from app.schemas import ExternalReference, GeneratedFile, ReviewFinding
 from app.services.coding_runs.recorder import CodingRunRecorder
-from app.enums.coding_run import CodingRunStage, CodingRunStatus
-from app.models.coding_run import CodingRun
-from app.models.repository import Repository
-from app.models.session import RepositorySession
-from app.models.user import User
-from app.persistence.coding_run_store import CodingRunStore
-from app.schemas.generation import ExternalReference, GeneratedFile
-from app.schemas.review import ReviewFinding
 
 
 def _engine():

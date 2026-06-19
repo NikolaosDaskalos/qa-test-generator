@@ -12,7 +12,7 @@ import uuid
 from base64 import b64encode
 from pathlib import Path
 
-from app.core.config import settings
+from app.core import settings
 from app.errors.git_errors import GitError
 from app.git.git_process import GitResult, run_git
 from app.git.repository_url import ParsedRepositoryUrl, parse_repository_url
@@ -40,7 +40,7 @@ class GitCommands:
         """Build the checkout path for a Git repository owned by an application user."""
         self.parsed_repository_url = parsed_repository_url
         self.repo_path = (
-                settings.REPO_PATH / str(user_id) / self.parsed_repository_url.host / self.parsed_repository_url.owner / self.parsed_repository_url.name
+            settings.REPO_PATH / str(user_id) / self.parsed_repository_url.host / self.parsed_repository_url.owner / self.parsed_repository_url.name
         )
 
     def clone(self, token: str) -> GitResult | None:
@@ -234,11 +234,7 @@ class GitCommands:
             )
             encoded_credentials = b64encode(f"{self._credential_username()}:{token}".encode()).decode()
             environment.update(
-                {
-                    "GIT_CONFIG_COUNT": "1",
-                    "GIT_CONFIG_KEY_0": "http.extraHeader",
-                    "GIT_CONFIG_VALUE_0": f"Authorization: Basic {encoded_credentials}",
-                }
+                {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader", "GIT_CONFIG_VALUE_0": f"Authorization: Basic {encoded_credentials}"}
             )
 
         return run_git(*args, cwd=cwd, env=environment, token=token)

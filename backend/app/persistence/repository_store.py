@@ -5,9 +5,9 @@ from datetime import datetime
 
 from sqlmodel import Session, func, select
 
-from app.enums.repository import RepositoryStatus
+from app.enums import RepositoryStatus
 from app.errors.git_errors import GitError
-from app.models.repository import Repository
+from app.models import Repository
 
 
 class RepositoryStore:

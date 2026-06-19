@@ -26,8 +26,4 @@ def build_tool_call_limit_middleware() -> ToolCallLimitMiddleware:
     limit is hit but lets the model finish and still return its structured
     response — never a mid-flight stop that would drop that response.
     """
-    return ToolCallLimitMiddleware(
-        tool_name=web_search.name,
-        run_limit=TOOL_CALL_RUN_LIMIT,
-        exit_behavior="continue",
-    )
+    return ToolCallLimitMiddleware(tool_name=web_search.name, run_limit=TOOL_CALL_RUN_LIMIT, exit_behavior="continue")

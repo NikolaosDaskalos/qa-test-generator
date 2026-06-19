@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from app.schemas import GeneratedFile
 from app.services.coding_runs.test_file_validation import RejectedTestFile, discover_test_roots, validate_test_file, verify_test_file_boundary
-from app.schemas.generation import GeneratedFile
 
 
 def test_new_test_file_beneath_an_existing_top_level_root_is_accepted(tmp_path: Path) -> None:

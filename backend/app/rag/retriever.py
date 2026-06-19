@@ -9,11 +9,10 @@ from langchain_core.documents import Document
 from weaviate.classes.aggregate import GroupByAggregate
 from weaviate.classes.query import Filter, HybridFusion
 
-from app.core.config import settings
-from app.core.vector_db import TEXT_PROPERTY, WeaviateResources
+from app.core import TEXT_PROPERTY, WeaviateResources, settings
 from app.errors.rag_errors import RetrieverError
-from app.models.source_document import SourceDocument
-from app.persistence.source_document_store import SourceDocumentStore
+from app.models import SourceDocument
+from app.persistence import SourceDocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +44,7 @@ class DocumentRetriever:
         logger.info("Document search completed tenant=%s result_count=%s", self.tenant, len(results))
         return results
 
-    def retrieve_evidence(
-            self, query: str, *, repository_id: uuid.UUID, k: int, alpha: float, parent_limit: int
-    ) -> list[SourceDocument]:
+    def retrieve_evidence(self, query: str, *, repository_id: uuid.UUID, k: int, alpha: float, parent_limit: int) -> list[SourceDocument]:
         """Rerank candidate Code Chunks and hydrate their parent documents."""
         candidates = [document for document, _ in self.search_with_scores(query, repository_id=repository_id, k=k, alpha=alpha)]
         if not candidates:

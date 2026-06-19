@@ -16,11 +16,11 @@ import logging
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 
-from app.prompts.rendering import format_evidence, format_files
 from app.agent.agents.middleware import build_tool_call_limit_middleware
 from app.agent.agents.tools import web_search
-from app.schemas.review import PatchReview
 from app.prompts.prompts import REVIEWER_SYSTEM_PROMPT
+from app.prompts.rendering import format_evidence, format_files
+from app.schemas import PatchReview
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,7 @@ class ReActPatchReviewer:
 
     def __init__(self, llm, *, agent=None) -> None:
         self._agent = agent or create_agent(
-            llm,
-            tools=[web_search],
-            system_prompt=REVIEWER_SYSTEM_PROMPT,
-            response_format=PatchReview,
-            middleware=[build_tool_call_limit_middleware()],
+            llm, tools=[web_search], system_prompt=REVIEWER_SYSTEM_PROMPT, response_format=PatchReview, middleware=[build_tool_call_limit_middleware()]
         )
 
     def review(self, *, task: str, source_evidence: list, test_evidence: list, generated_files: list, diff: str) -> PatchReview:

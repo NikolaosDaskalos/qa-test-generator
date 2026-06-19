@@ -13,8 +13,8 @@ import uuid
 from pathlib import Path
 from typing import Protocol
 
-from app.git.git_process import run_git
-from app.schemas.generation import GeneratedFile
+from app.git import run_git
+from app.schemas import GeneratedFile
 
 # Temporary branches are namespaced and uniquely suffixed, so they are always
 # distinct from the Repository's default branch.

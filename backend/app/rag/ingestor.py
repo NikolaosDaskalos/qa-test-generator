@@ -1,7 +1,6 @@
 """Load, split, and persist Git repository documents in Weaviate."""
 
 import logging
-import os
 import uuid
 from collections.abc import Sequence
 from functools import cached_property
@@ -15,13 +14,13 @@ from transformers import AutoTokenizer
 from weaviate.classes.query import Filter
 from weaviate.classes.tenants import Tenant
 
-from app.core.config import settings
-from app.core.vector_db import WeaviateResources
+from app.core import WeaviateResources, settings
 from app.errors.rag_errors import IngestorError
 from app.models import SourceDocument
-from app.persistence.source_document_store import SourceDocumentStore
+from app.persistence import SourceDocumentStore
 
 logger = logging.getLogger(__name__)
+
 
 class DocumentIngestor:
     """Loads an existing local Git clone and stores Python chunks in Weaviate."""
@@ -60,11 +59,7 @@ class DocumentIngestor:
         # todo sanitize the docs before persist them
 
         source_docs = [
-            SourceDocument(
-                repository_id=repository_id,
-                content=doc.page_content,
-                doc_metadata=doc.metadata | {"commit_sha": commit_sha, "branch": branch},
-            )
+            SourceDocument(repository_id=repository_id, content=doc.page_content, doc_metadata=doc.metadata | {"commit_sha": commit_sha, "branch": branch})
             for doc in raw_docs
         ]
 
@@ -73,13 +68,7 @@ class DocumentIngestor:
 
         try:
             for raw_doc, source_doc in zip(raw_docs, source_docs, strict=True):
-                raw_doc.metadata.update(
-                    {
-                        "parent_id": str(source_doc.id),
-                        "repository_id": repository_key,
-                        "branch": branch,
-                        "commit_sha": commit_sha}
-                )
+                raw_doc.metadata.update({"parent_id": str(source_doc.id), "repository_id": repository_key, "branch": branch, "commit_sha": commit_sha})
 
             chunked_docs = self._split(raw_docs)
             ids = [str(uuid.uuid5(repository_id, f"{commit_sha}:{doc.metadata['source']}:{index}")) for index, doc in enumerate(chunked_docs)]
@@ -91,7 +80,8 @@ class DocumentIngestor:
             raise
 
         logger.info(
-            f"Repository ingestion completed repository_id={repository_id} user_id={user_id} document_count={len(raw_docs)} chunk_count={len(chunked_docs)}")
+            f"Repository ingestion completed repository_id={repository_id} user_id={user_id} document_count={len(raw_docs)} chunk_count={len(chunked_docs)}"
+        )
 
         return len(chunked_docs)
 

@@ -6,11 +6,8 @@ from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine
 
-from app.enums.coding_run import CodingRunStatus
-from app.models.coding_run import CodingRun
-from app.models.repository import Repository
-from app.models.session import RepositorySession
-from app.models.user import User
+from app.enums import CodingRunStatus
+from app.models import CodingRun, Repository, RepositorySession, User
 
 
 def _engine():
@@ -36,7 +33,9 @@ def test_coding_run_is_reachable_from_its_session_and_its_repository_through_it(
     engine = _engine()
     with Session(engine) as db:
         owner = User(id=uuid.uuid4(), email="owner@example.com", hashed_password="not-used")
-        repository = Repository(id=uuid.uuid4(), user_id=owner.id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+        repository = Repository(
+            id=uuid.uuid4(), user_id=owner.id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai"
+        )
         repository_session = RepositorySession(id=uuid.uuid4(), owner_id=owner.id, repository_id=repository.id)
         db.add_all([owner, repository, repository_session])
         db.commit()

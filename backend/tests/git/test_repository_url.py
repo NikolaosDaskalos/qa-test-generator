@@ -1,6 +1,6 @@
 import pytest
 
-from app.git.repository_url import SUPPORTED_REPOSITORY_HOSTS, parse_repository_url
+from app.git import SUPPORTED_REPOSITORY_HOSTS, parse_repository_url
 
 
 def test_ssh_and_https_urls_have_the_same_canonical_identity() -> None:

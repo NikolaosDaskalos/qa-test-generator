@@ -6,17 +6,9 @@ from datetime import UTC, datetime
 
 from sqlmodel import Session, col, func, select
 
-from app.core.config import settings
-from app.enums.session import SessionMessageRole
-from app.models.session import (
-    LEGACY_NEW_SESSION_TITLE,
-    MAX_DERIVED_SESSION_TITLE_LENGTH,
-    NEW_SESSION_TITLE,
-    CitationData,
-    RepositorySession,
-    SessionHistory,
-)
-
+from app.core import settings
+from app.enums import SessionMessageRole
+from app.models import LEGACY_NEW_SESSION_TITLE, MAX_DERIVED_SESSION_TITLE_LENGTH, NEW_SESSION_TITLE, CitationData, RepositorySession, SessionHistory
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _PLACEHOLDER_TITLES = {NEW_SESSION_TITLE, LEGACY_NEW_SESSION_TITLE}
@@ -39,16 +31,14 @@ class RepositorySessionStore:
         """Load a session by id, or ``None`` if absent."""
         return self.session.get(RepositorySession, repository_session_id)
 
-    def get_page(
-        self, *, skip: int, limit: int, owner_id: uuid.UUID | None = None, repository_id: uuid.UUID | None = None
-    ) -> list[RepositorySession]:
+    def get_page(self, *, skip: int, limit: int, owner_id: uuid.UUID | None = None, repository_id: uuid.UUID | None = None) -> list[RepositorySession]:
         """Return a page of sessions, most-recently-active first, optionally scoped by owner/repository."""
         statement = self._scoped(select(RepositorySession), owner_id=owner_id, repository_id=repository_id)
         statement = statement.order_by(col(RepositorySession.updated_at).desc(), col(RepositorySession.id)).offset(skip).limit(limit)
         return list(self.session.exec(statement).all())
 
     def append_exchange(
-            self, repository_session_id: uuid.UUID, *, user_message: str, assistant_message: str, assistant_citations: list[CitationData] | None = None
+        self, repository_session_id: uuid.UUID, *, user_message: str, assistant_message: str, assistant_citations: list[CitationData] | None = None
     ) -> tuple[SessionHistory, SessionHistory]:
         """Append a user/assistant message pair at the next positions under a row lock.
 
@@ -109,10 +99,12 @@ class RepositorySessionStore:
 
     def get_recent_history(self, repository_session_id: uuid.UUID) -> list[SessionHistory]:
         """Return the last ``SESSION_HISTORY_LIMIT`` messages in chronological order."""
-        statement = (select(SessionHistory)
-                     .where(SessionHistory.session_id == repository_session_id)
-                     .order_by(col(SessionHistory.position).desc())
-                     .limit(settings.SESSION_HISTORY_LIMIT))
+        statement = (
+            select(SessionHistory)
+            .where(SessionHistory.session_id == repository_session_id)
+            .order_by(col(SessionHistory.position).desc())
+            .limit(settings.SESSION_HISTORY_LIMIT)
+        )
         return list(reversed(self.session.exec(statement).all()))
 
 

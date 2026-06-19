@@ -8,15 +8,13 @@ from typing import Any
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 
-from app.core.security import decrypt_repository_token, encrypt_repository_token
-from app.core.vector_db import WeaviateResources
-from app.enums.repository import RepositoryProvider, RepositoryStatus
+from app.core import WeaviateResources, decrypt_repository_token, encrypt_repository_token
+from app.enums import RepositoryProvider, RepositoryStatus
 from app.errors.git_errors import GitError
-from app.git.repository_url import ParsedRepositoryUrl
-from app.models.repository import Repository
-from app.models.user import User
-from app.schemas.repository import RepositoryCreate, RepositoryUpdate
-from app.services.repository_service import RepositoryService
+from app.git import ParsedRepositoryUrl
+from app.models import Repository, User
+from app.schemas import RepositoryCreate, RepositoryUpdate
+from app.services import RepositoryService
 
 
 class FakeRepositoryStore:

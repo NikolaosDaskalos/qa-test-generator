@@ -18,11 +18,11 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
-from app.prompts.rendering import format_evidence, format_files
 from app.agent.agents.middleware import build_tool_call_limit_middleware
 from app.agent.agents.tools import web_search
 from app.prompts.prompts import GENERATOR_SYSTEM_PROMPT
-from app.schemas.generation import ExternalReference, GeneratedFile, GenerationProposal
+from app.prompts.rendering import format_evidence, format_files
+from app.schemas import ExternalReference, GeneratedFile, GenerationProposal
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +42,7 @@ class ReActTestGenerator:
 
     def __init__(self, llm) -> None:
         self._agent = create_agent(
-            llm,
-            tools=[web_search],
-            system_prompt=GENERATOR_SYSTEM_PROMPT,
-            response_format=_GeneratorResponse,
-            middleware=[build_tool_call_limit_middleware()],
+            llm, tools=[web_search], system_prompt=GENERATOR_SYSTEM_PROMPT, response_format=_GeneratorResponse, middleware=[build_tool_call_limit_middleware()]
         )
 
     def generate(self, *, task: str, source_evidence: list, test_evidence: list) -> GenerationProposal:

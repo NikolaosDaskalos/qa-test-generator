@@ -14,10 +14,9 @@ exception and never a raw state dict — and the thin graph node emits it.
 import logging
 import uuid
 
+from app.enums import CodingRunStage
+from app.schemas import ReviewFinding, RunApproved, RunFailure, RunRejected
 from app.services.coding_runs.workspace import GenerationWorkspace
-from app.enums.coding_run import CodingRunStage
-from app.schemas.agent_stream import RunApproved, RunFailure, RunRejected
-from app.schemas.review import ReviewFinding
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +39,7 @@ class DecisionFinalizer:
         self._recorder = recorder
 
     def approve(
-        self,
-        *,
-        publisher,
-        workspace: GenerationWorkspace,
-        coding_run_id: uuid.UUID,
-        generation_branch: str,
-        diff: str,
-        indexed_commit_sha: str,
+        self, *, publisher, workspace: GenerationWorkspace, coding_run_id: uuid.UUID, generation_branch: str, diff: str, indexed_commit_sha: str
     ) -> RunApproved | RunFailure:
         """Commit, push, record approved, and restore the checkout; map Git errors to a typed failure."""
         try:

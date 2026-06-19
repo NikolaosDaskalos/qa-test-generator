@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.enums.repository import RepositoryProvider, RepositoryStatus
+from app.enums import RepositoryProvider, RepositoryStatus
 
 
 class RepositoryUpdate(BaseModel):

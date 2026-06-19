@@ -10,11 +10,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.agent.nodes.failures import fail_state
-from app.enums.coding_run import CodingRunStage
+from app.enums import CodingRunStage
 from app.prompts.prompts import PLANNER_SYSTEM_PROMPT
-from app.schemas.agent_stream import RunFailure, RunStarted, Stage
-from app.schemas.research_intent import ResearchIntent
-from app.streaming.agent_stream import emit
+from app.schemas import ResearchIntent, RunFailure, RunStarted, Stage
+from app.streaming import emit
 
 # Used when the planner rejects scope without a specific, sanitized reason.
 DEFAULT_REJECTION_REASON = "This request is outside the scope of adding or improving tests."
@@ -28,10 +27,7 @@ class PlannerOutput(BaseModel):
         default_factory=list,
         description="Evidence-gathering intents to execute when the request is in scope; include both source and test evidence when useful.",
     )
-    reason: str | None = Field(
-        default=None,
-        description="Short user-safe explanation when the request is out of scope; leave null for in-scope requests.",
-    )
+    reason: str | None = Field(default=None, description="Short user-safe explanation when the request is out of scope; leave null for in-scope requests.")
 
 
 def build_plan_node(planner_llm, recorder):

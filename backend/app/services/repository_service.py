@@ -9,19 +9,14 @@ from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
-from app.core.db import engine
-from app.core.security import encrypt_repository_token
-from app.core.vector_db import WeaviateResources
-from app.enums.repository import RepositoryProvider, RepositoryStatus
+from app.core import WeaviateResources, encrypt_repository_token, engine
+from app.enums import RepositoryProvider, RepositoryStatus
 from app.errors.git_errors import GitError
-from app.git.git_commands import GitCommands
-from app.git.repository_url import ParsedRepositoryUrl, parse_repository_url
-from app.models.repository import Repository
-from app.models.user import User
-from app.persistence.repository_store import RepositoryStore
-from app.persistence.source_document_store import SourceDocumentStore
-from app.rag.ingestor import DocumentIngestor
-from app.schemas.repository import RepositoriesPublic, RepositoryCreate, RepositoryUpdate
+from app.git import GitCommands, ParsedRepositoryUrl, parse_repository_url
+from app.models import Repository, User
+from app.persistence import RepositoryStore, SourceDocumentStore
+from app.rag import DocumentIngestor
+from app.schemas import RepositoriesPublic, RepositoryCreate, RepositoryUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -168,10 +163,7 @@ class RepositoryService:
 
             self.repository_store.begin_indexing(repository)
             logger.info(
-                "Repository status changed repository_id=%s status=%s default_branch=%s",
-                repository.id,
-                RepositoryStatus.indexing.value,
-                default_branch,
+                "Repository status changed repository_id=%s status=%s default_branch=%s", repository.id, RepositoryStatus.indexing.value, default_branch
             )
             chunk_count = self.ingestor.ingest(git.repo_path, repository.id, default_branch, checkout_commit_sha, repository.user_id)
             if chunk_count == 0:

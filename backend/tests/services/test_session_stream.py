@@ -7,15 +7,10 @@ import pytest
 from fastapi import HTTPException
 from langgraph.types import Command
 
-from app.enums.coding_run import CodingRunStatus
-from app.models.coding_run import CodingRun
-from app.models.repository import Repository
-from app.models.session import RepositorySession, SessionHistory
-from app.models.user import User
-from app.schemas.agent_stream import Citation, Result, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
-from app.schemas.review import ReviewFinding
-from app.schemas.session import HumanDecisionRequest
-from app.services.session_service import RepositorySessionService
+from app.enums import CodingRunStatus
+from app.models import CodingRun, Repository, RepositorySession, SessionHistory, User
+from app.schemas import Citation, HumanDecisionRequest, Result, ReviewFinding, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
+from app.services import RepositorySessionService
 
 
 class FakeRepositoryStore:
@@ -137,7 +132,6 @@ def test_stream_session_emits_run_failure_terminal_for_rejected_task():
     # A rejected task never persists a session exchange.
     assert session_store.appended == []
     assert session_store.activity == [(repository_session.id, "refactor")]
-
 
 
 def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():

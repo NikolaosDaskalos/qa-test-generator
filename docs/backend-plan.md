@@ -2,7 +2,7 @@
 
 ## Goal
 
-Demonstrate repository-grounded RAG and a bounded LangGraph test-generation workflow using FastAPI, LangChain, Weaviate, Git, and an LLM. This is a course demo, not a production or concurrent system.
+Demonstrate repository-grounded RAG and a bounded LangGraph code-generation workflow using FastAPI, LangChain, Weaviate, Git, and an LLM. This is a course demo, not a production or concurrent system.
 
 ## Demo Journey
 
@@ -10,8 +10,8 @@ Demonstrate repository-grounded RAG and a bounded LangGraph test-generation work
 2. The backend clones its default branch and indexes Python files in Weaviate.
 3. The user creates a repository session bound permanently to that repository.
 4. The user asks codebase questions and receives repository-grounded answers with file citations.
-5. The user submits a free-text test-generation task.
-6. A LangGraph workflow plans, retrieves evidence, generates complete test files, reviews them, and may revise once.
+5. The user submits a free-text Code Generation Task.
+6. A LangGraph workflow plans, retrieves Repository Documents, generates complete test files, reviews them, and may revise once.
 7. The backend streams progress and the final diff through server-sent events.
 8. The user rejects the patch or approves a commit and push to a new non-default branch.
 
@@ -60,14 +60,14 @@ Advance `indexed_commit_sha` only after every vector operation succeeds. Expose 
 - Persist each exchange as session history.
 - Use at most the six latest history messages for reformulation.
 - Remove the duplicate JSON memory field from the session model.
-- Answer codebase questions only from repository evidence.
-- If evidence is insufficient, state that the repository does not provide enough evidence.
+- Answer codebase questions only from Repository Documents.
+- If the retrieved Repository Documents are insufficient, state that the Repository does not provide enough information.
 - Tavily may run only when the user explicitly requests documentation, best practices, or external guidance.
 - Present repository sources and external references as separate groups.
 
 Question endpoints use a synchronous SSE response for stage updates, answer tokens, citations, and the final persisted result.
 
-## Test-Generation Graph
+## Code-Generation Graph
 
 Use a bounded LangGraph workflow:
 
@@ -81,9 +81,9 @@ plan
   -> await human approval or fail
 ```
 
-The planner emits search intents and optional candidate paths. Candidate paths are hints only; the backend validates them and retrieval supplies the actual context. The LLM receives no unrestricted filesystem tool.
+The planner emits Retrieval Requests and optional candidate paths. Candidate paths are hints only; the backend validates them and retrieval supplies the actual Repository Documents. The LLM receives no unrestricted filesystem tool.
 
-The generator returns complete file contents:
+The code generator returns complete file contents:
 
 ```json
 {
@@ -113,7 +113,7 @@ Reject:
 - Application or source files.
 - A newly invented test root.
 
-The reviewer checks task alignment, repository conventions, imports visible in repository evidence, unrelated changes, and whether only test files changed. Tests are not executed and dependencies are not installed.
+The Code Reviewer checks task alignment, repository conventions, imports visible in Repository Documents, unrelated changes, and whether only test files changed. Tests are not executed and dependencies are not installed.
 
 ## Checkout And Approval
 

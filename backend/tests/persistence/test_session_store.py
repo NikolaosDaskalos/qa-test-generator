@@ -2,8 +2,8 @@
 
 import threading
 import uuid
-from datetime import UTC, datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import event
@@ -11,13 +11,10 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.pool import NullPool, StaticPool
 from sqlmodel import Session, create_engine, delete, select
 
-from app.core.config import settings
-from app.enums.repository import RepositoryProvider
-from app.enums.session import SessionMessageRole
-from app.models.repository import Repository
-from app.models.session import RepositorySession, SessionHistory
-from app.models.user import User
-from app.persistence.session_store import RepositorySessionStore
+from app.core import settings
+from app.enums import RepositoryProvider, SessionMessageRole
+from app.models import Repository, RepositorySession, SessionHistory, User
+from app.persistence import RepositorySessionStore
 
 
 def _engine():
@@ -221,12 +218,7 @@ def test_first_user_exchange_titles_session_and_updates_activity() -> None:
         )
         db.add(
             RepositorySession(
-                id=repository_session_id,
-                owner_id=owner_id,
-                repository_id=repository_id,
-                title="New session",
-                created_at=created_at,
-                updated_at=created_at,
+                id=repository_session_id, owner_id=owner_id, repository_id=repository_id, title="New session", created_at=created_at, updated_at=created_at
             )
         )
         db.commit()
@@ -261,20 +253,14 @@ def test_later_exchange_updates_activity_without_overwriting_derived_title() -> 
         )
         db.add(
             RepositorySession(
-                id=repository_session_id,
-                owner_id=owner_id,
-                repository_id=repository_id,
-                title="Where is login tested?",
-                updated_at=previous_activity,
+                id=repository_session_id, owner_id=owner_id, repository_id=repository_id, title="Where is login tested?", updated_at=previous_activity
             )
         )
         db.commit()
         store = RepositorySessionStore(db)
 
         store.append_exchange(
-            repository_session_id,
-            user_message="Generate pytest coverage for password reset.",
-            assistant_message="I will start a Coding Run.",
+            repository_session_id, user_message="Generate pytest coverage for password reset.", assistant_message="I will start a Coding Run."
         )
 
         reloaded = store.get_by_id(repository_session_id)
@@ -299,11 +285,7 @@ def test_record_activity_updates_time_without_changing_title() -> None:
         )
         db.add(
             RepositorySession(
-                id=repository_session_id,
-                owner_id=owner_id,
-                repository_id=repository_id,
-                title="Where is login tested?",
-                updated_at=previous_activity,
+                id=repository_session_id, owner_id=owner_id, repository_id=repository_id, title="Where is login tested?", updated_at=previous_activity
             )
         )
         db.commit()

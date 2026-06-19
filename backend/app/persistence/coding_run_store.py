@@ -4,8 +4,8 @@ import uuid
 
 from sqlmodel import Session
 
-from app.enums.coding_run import CodingRunStage, CodingRunStatus
-from app.models.coding_run import CodingRun
+from app.enums import CodingRunStage, CodingRunStatus
+from app.models import CodingRun
 
 
 class CodingRunStore:

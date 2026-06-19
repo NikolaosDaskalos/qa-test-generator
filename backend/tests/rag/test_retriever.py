@@ -7,11 +7,10 @@ import pytest
 from langchain_core.documents import Document
 from weaviate.classes.query import HybridFusion
 
-from app.core.config import settings
-from app.core.vector_db import WeaviateResources
+from app.core import WeaviateResources, settings
 from app.errors.rag_errors import RetrieverError
-from app.models.source_document import SourceDocument
-from app.rag.retriever import DocumentRetriever
+from app.models import SourceDocument
+from app.rag import DocumentRetriever
 
 
 class FakeTenants:
@@ -198,9 +197,7 @@ def test_retrieve_evidence_reranks_candidates_and_hydrates_the_top_parent() -> N
     second_parent = SourceDocument(repository_id=repository_id, content="complete second file", doc_metadata={"source": "second.py"})
     first_chunk = Document(page_content="first chunk", metadata={"parent_id": str(first_parent.id)})
     second_chunk = Document(page_content="second chunk", metadata={"parent_id": str(second_parent.id)})
-    retriever, _, _, reranker = _retriever(
-        results=[(first_chunk, 0.9), (second_chunk, 0.8)], source_documents=[first_parent, second_parent]
-    )
+    retriever, _, _, reranker = _retriever(results=[(first_chunk, 0.9), (second_chunk, 0.8)], source_documents=[first_parent, second_parent])
 
     evidence = retriever.retrieve_evidence("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=1)
 
@@ -218,12 +215,7 @@ def test_retrieve_evidence_ignores_invalid_parent_ids_and_stably_deduplicates() 
     first_parent_chunk = Document(page_content="best first chunk", metadata={"parent_id": str(first_parent.id)})
     second_parent_chunk = Document(page_content="best second chunk", metadata={"parent_id": str(second_parent.id)})
     retriever, _, _, _ = _retriever(
-        results=[
-            (lower_ranked_duplicate, 0.6),
-            (invalid_parent, 0.7),
-            (first_parent_chunk, 0.8),
-            (second_parent_chunk, 0.9),
-        ],
+        results=[(lower_ranked_duplicate, 0.6), (invalid_parent, 0.7), (first_parent_chunk, 0.8), (second_parent_chunk, 0.9)],
         source_documents=[first_parent, second_parent],
     )
 
@@ -242,8 +234,7 @@ def test_retrieve_evidence_skips_missing_and_cross_repository_parents() -> None:
     missing_chunk = Document(page_content="missing chunk", metadata={"parent_id": str(missing_parent_id)})
     mismatched_chunk = Document(page_content="mismatched chunk", metadata={"parent_id": str(mismatched_parent.id)})
     retriever, _, _, _ = _retriever(
-        results=[(valid_chunk, 0.7), (missing_chunk, 0.8), (mismatched_chunk, 0.9)],
-        source_documents=[valid_parent, mismatched_parent],
+        results=[(valid_chunk, 0.7), (missing_chunk, 0.8), (mismatched_chunk, 0.9)], source_documents=[valid_parent, mismatched_parent]
     )
 
     evidence = retriever.retrieve_evidence("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2)
@@ -256,17 +247,13 @@ def test_retrieve_evidence_returns_empty_when_candidates_or_reranking_are_empty(
     repository_id = uuid.uuid4()
     no_candidates_retriever, _, _, unused_reranker = _retriever(results=[])
 
-    assert no_candidates_retriever.retrieve_evidence(
-        "find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2
-    ) == []
+    assert no_candidates_retriever.retrieve_evidence("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2) == []
     assert unused_reranker.call is None
 
     candidate = Document(page_content="candidate", metadata={"parent_id": str(uuid.uuid4())})
     no_reranks_retriever, _, _, used_reranker = _retriever(results=[(candidate, 0.9)], reranked_documents=[])
 
-    assert no_reranks_retriever.retrieve_evidence(
-        "find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2
-    ) == []
+    assert no_reranks_retriever.retrieve_evidence("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2) == []
     assert used_reranker.call == ([candidate], "find behavior")
 
 

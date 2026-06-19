@@ -9,10 +9,9 @@ is the production adapter over ``CodingRunStore``; tests substitute a fake.
 import uuid
 from typing import Protocol
 
-from app.enums.coding_run import CodingRunStage, CodingRunStatus
-from app.persistence.coding_run_store import CodingRunStore
-from app.schemas.generation import ExternalReference, GeneratedFile
-from app.schemas.review import ReviewFinding
+from app.enums import CodingRunStage, CodingRunStatus
+from app.persistence import CodingRunStore
+from app.schemas import ExternalReference, GeneratedFile, ReviewFinding
 
 
 class RunRecorder(Protocol):

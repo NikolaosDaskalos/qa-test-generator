@@ -24,7 +24,5 @@ class User(SQLModel, table=True):
     hashed_password: str
     created_at: datetime | None = Field(default_factory=lambda: datetime.now(UTC), sa_type=DateTime(timezone=True))  # type: ignore
 
-    repository_sessions: list["RepositorySession"] = Relationship(
-        back_populates="owner", sa_relationship_kwargs={"passive_deletes": "all"}
-    )
+    repository_sessions: list["RepositorySession"] = Relationship(back_populates="owner", sa_relationship_kwargs={"passive_deletes": "all"})
     repositories: list["Repository"] = Relationship(back_populates="user", cascade_delete=True)

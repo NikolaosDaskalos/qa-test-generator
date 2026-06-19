@@ -11,7 +11,7 @@ import app.models.repository  # noqa: F401
 import app.models.session  # noqa: F401
 import app.models.source_document  # noqa: F401
 import app.models.user  # noqa: F401
-from app.core.config import settings
+from app.core import settings
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

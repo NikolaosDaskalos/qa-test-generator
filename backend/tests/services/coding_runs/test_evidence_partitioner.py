@@ -2,9 +2,9 @@
 
 import uuid
 
+from app.models import SourceDocument
+from app.schemas import ResearchIntent
 from app.services.coding_runs.evidence_partitioner import EvidencePartitioner, EvidencePartitionRequest
-from app.models.source_document import SourceDocument
-from app.schemas.research_intent import ResearchIntent
 
 
 class QueryRetriever:
@@ -27,19 +27,13 @@ def test_partition_routes_retrieved_evidence_by_research_intent_target() -> None
     """Research Intents retrieve under the Repository and route source vs. test evidence."""
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
-        {
-            "auth implementation": [_source(repository_id, "app/auth.py", "impl")],
-            "auth tests": [_source(repository_id, "tests/test_auth.py", "test")],
-        }
+        {"auth implementation": [_source(repository_id, "app/auth.py", "impl")], "auth tests": [_source(repository_id, "tests/test_auth.py", "test")]}
     )
     partitioner = EvidencePartitioner(retriever)
 
     result = partitioner.partition(
         EvidencePartitionRequest(
-            research_intents=[
-                ResearchIntent(target="source", description="auth implementation"),
-                ResearchIntent(target="test", description="auth tests"),
-            ],
+            research_intents=[ResearchIntent(target="source", description="auth implementation"), ResearchIntent(target="test", description="auth tests")],
             repository_id=repository_id,
         )
     )

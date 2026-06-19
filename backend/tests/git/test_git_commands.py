@@ -6,11 +6,9 @@ from typing import Any
 
 import pytest
 
-from app.core.config import settings
+from app.core import settings
 from app.errors.git_errors import GitError
-from app.git.git_commands import COMMIT_AUTHOR_EMAIL, COMMIT_AUTHOR_NAME, GitCommands
-from app.git.git_process import GitResult
-from app.git.repository_url import parse_repository_url
+from app.git import COMMIT_AUTHOR_EMAIL, COMMIT_AUTHOR_NAME, GitCommands, GitResult, parse_repository_url
 
 
 def test_git_repository_checkout_paths_are_isolated_by_user(monkeypatch, tmp_path: Path) -> None:
@@ -64,12 +62,7 @@ def test_validate_remote_access_uses_authenticated_ls_remote(monkeypatch) -> Non
 
     git.validate_remote_access("replacement-token")
 
-    assert calls == [
-        (
-            ("git", "ls-remote", "https://github.com/openai/openai-python.git"),
-            {"cwd": Path.cwd(), "token": "replacement-token"}
-        )
-    ]
+    assert calls == [(("git", "ls-remote", "https://github.com/openai/openai-python.git"), {"cwd": Path.cwd(), "token": "replacement-token"})]
 
 
 def test_get_current_commit_sha_resolves_head(monkeypatch) -> None:
@@ -100,16 +93,7 @@ def test_commit_supplies_author_identity(monkeypatch) -> None:
     git.commit("Add generated tests")
 
     assert calls[0] == ("git", "add", ".")
-    assert calls[1] == (
-        "git",
-        "-c",
-        f"user.name={COMMIT_AUTHOR_NAME}",
-        "-c",
-        f"user.email={COMMIT_AUTHOR_EMAIL}",
-        "commit",
-        "-m",
-        "Add generated tests",
-    )
+    assert calls[1] == ("git", "-c", f"user.name={COMMIT_AUTHOR_NAME}", "-c", f"user.email={COMMIT_AUTHOR_EMAIL}", "commit", "-m", "Add generated tests")
 
 
 def test_commit_rejects_an_empty_message() -> None:

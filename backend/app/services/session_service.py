@@ -7,17 +7,12 @@ from typing import Any
 from fastapi import HTTPException, status
 from langgraph.types import Command
 
-from app.streaming.agent_stream import map_graph_stream
-from app.enums.repository import RepositoryStatus
-from app.models.coding_run import CodingRun
-from app.models.session import RepositorySession, SessionHistory
-from app.models.user import User
-from app.persistence.coding_run_store import CodingRunStore
-from app.persistence.repository_store import RepositoryStore
-from app.persistence.session_store import RepositorySessionStore
-from app.schemas.agent_stream import AgentStreamEvent, Result, RunApproved, RunRejected
-from app.schemas.session import HumanDecisionRequest, RepositorySessionCreate, RepositorySessionsPublic
+from app.enums import RepositoryStatus
+from app.models import CodingRun, RepositorySession, SessionHistory, User
+from app.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore
+from app.schemas import AgentStreamEvent, HumanDecisionRequest, RepositorySessionCreate, RepositorySessionsPublic, Result, RunApproved, RunRejected
 from app.services.repository_session_execution import RepositorySessionExecution
+from app.streaming import map_graph_stream
 
 
 class RepositorySessionService:
@@ -117,13 +112,7 @@ class RepositorySessionService:
         )
         return self._stream_session(context, question, graph, thread_id)
 
-    def _stream_session(
-        self,
-        context: RepositorySessionExecution,
-        question: str,
-        graph: Any,
-        thread_id: str,
-    ) -> Generator[AgentStreamEvent, None, None]:
+    def _stream_session(self, context: RepositorySessionExecution, question: str, graph: Any, thread_id: str) -> Generator[AgentStreamEvent, None, None]:
         """Stream a fresh turn, persisting the exchange and emitting the terminal ``Result`` for answers."""
         repository_session = context.repository_session
         config = {"configurable": {"thread_id": thread_id}}

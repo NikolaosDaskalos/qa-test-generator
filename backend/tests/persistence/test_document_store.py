@@ -2,8 +2,8 @@
 
 import uuid
 
-from app.models.source_document import SourceDocument
-from app.persistence.source_document_store import SourceDocumentStore
+from app.models import SourceDocument
+from app.persistence import SourceDocumentStore
 
 
 class FakeSession:

@@ -6,8 +6,8 @@ from sqlmodel import Session, create_engine, select
 
 from app import crud
 from app.core.config import settings
-from app.models.user import User
-from app.schemas.user import UserCreate
+from app.models import User
+from app.schemas import UserCreate
 
 logger = logging.getLogger(__name__)
 

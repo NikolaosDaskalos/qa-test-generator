@@ -8,9 +8,8 @@ model or network call.
 from langchain_core.messages import HumanMessage
 
 from app.agent.agents.reviewer import ReActPatchReviewer
-from app.models.source_document import SourceDocument
-from app.schemas.generation import GeneratedFile
-from app.schemas.review import PatchReview, ReviewFinding
+from app.models import SourceDocument
+from app.schemas import GeneratedFile, PatchReview, ReviewFinding
 
 
 class FakeAgent:

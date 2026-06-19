@@ -9,10 +9,9 @@ Failure, never an escaping exception and never a raw state dict.
 
 import uuid
 
-from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 from app.errors.git_errors import GitError
-from app.schemas.agent_stream import RunApproved, RunFailure, RunRejected
-from app.schemas.review import ReviewFinding
+from app.schemas import ReviewFinding, RunApproved, RunFailure, RunRejected
+from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 
 
 class TimelinePublisher:

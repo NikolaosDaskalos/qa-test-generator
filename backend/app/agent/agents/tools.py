@@ -14,9 +14,9 @@ from typing import Any
 from langchain_core.tools import tool
 from langchain_tavily import TavilySearch
 
-from app.streaming.agent_stream import emit
-from app.core.config import settings
-from app.schemas.agent_stream import Stage
+from app.core import settings
+from app.schemas import Stage
+from app.streaming import emit
 
 logger = logging.getLogger(__name__)
 

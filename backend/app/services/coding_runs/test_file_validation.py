@@ -15,9 +15,8 @@ carrying a user-safe reason.
 import os
 from pathlib import Path, PurePosixPath
 
+from app.schemas import GeneratedFile, ReviewFinding
 from app.services.coding_runs.path_safety import confine_candidate_path
-from app.schemas.generation import GeneratedFile
-from app.schemas.review import ReviewFinding
 
 # Directory names that constitute a test root.
 TEST_ROOT_NAMES = {"tests", "test"}

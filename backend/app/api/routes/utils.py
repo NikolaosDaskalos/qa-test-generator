@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic.networks import EmailStr
 
 from app.dependencies import get_current_active_superuser
-from app.schemas.authentication import Message
+from app.schemas import Message
 from app.utils import generate_test_email, send_email
 
 logger = logging.getLogger(__name__)

@@ -2,11 +2,11 @@
 
 from datetime import UTC, datetime
 
-from app.core.security import encrypt_repository_token
-from app.enums.repository import RepositoryStatus
+from app.core import encrypt_repository_token
+from app.enums import RepositoryStatus
 from app.errors.git_errors import GitError
-from app.models.repository import Repository
-from app.persistence.repository_store import RepositoryStore
+from app.models import Repository
+from app.persistence import RepositoryStore
 
 
 class FakeSession:
@@ -150,9 +150,7 @@ def test_fail_uses_fallback_for_non_domain_errors_and_caps_length() -> None:
     repository_store = RepositoryStore(session)
     repository = _repository()
 
-    reason = repository_store.fail(
-        repository, RuntimeError("psycopg leaked internal detail"), credential=None, fallback="Repository vector deletion failed"
-    )
+    reason = repository_store.fail(repository, RuntimeError("psycopg leaked internal detail"), credential=None, fallback="Repository vector deletion failed")
 
     assert reason == "Repository vector deletion failed"
 

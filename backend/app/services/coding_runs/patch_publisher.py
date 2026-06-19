@@ -11,10 +11,9 @@ import uuid
 from collections.abc import Callable
 from typing import Protocol
 
-from app.core.security import decrypt_repository_token
-from app.git.git_commands import GitCommands
-from app.git.repository_url import parse_repository_url
-from app.models.repository import Repository
+from app.core import decrypt_repository_token
+from app.git import GitCommands, parse_repository_url
+from app.models import Repository
 
 
 class PatchPublisher(Protocol):

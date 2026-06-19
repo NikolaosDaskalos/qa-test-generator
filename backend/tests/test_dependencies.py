@@ -23,11 +23,7 @@ def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:
     monkeypatch.setattr(dependencies, "build_graph", fake_build_graph)
 
     result = dependencies.get_session_graph(
-        request=request,
-        chat_model=chat_model,
-        document_retriever=retriever,
-        coding_run_store=coding_run_store,
-        repository_store=repository_store,
+        request=request, chat_model=chat_model, document_retriever=retriever, coding_run_store=coding_run_store, repository_store=repository_store
     )
 
     assert result is graph
@@ -61,11 +57,6 @@ def test_document_retriever_is_scoped_to_current_user(monkeypatch) -> None:
     result = dependencies.get_document_retriever(user, weaviate_resources, source_document_store)
 
     assert result is retriever
-    assert captured["retriever_args"] == (
-        weaviate_resources,
-        str(user.id),
-        source_document_store,
-        reranker,
-    )
+    assert captured["retriever_args"] == (weaviate_resources, str(user.id), source_document_store, reranker)
     assert captured["reranker_kwargs"]["model"] == dependencies.settings.COHERE_RERANK_MODEL
     assert captured["reranker_kwargs"]["top_n"] == dependencies.settings.TOP_K

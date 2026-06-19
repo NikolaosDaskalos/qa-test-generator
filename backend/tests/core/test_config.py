@@ -7,7 +7,7 @@ import pytest
 from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
-from app.core.config import PROJECT_PATH, Settings
+from app.core import PROJECT_PATH, Settings
 
 
 def build_settings(tmp_path: Path, **updates: Any) -> Settings:

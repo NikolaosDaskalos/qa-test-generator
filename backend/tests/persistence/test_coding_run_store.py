@@ -6,12 +6,9 @@ from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine
 
-from app.enums.coding_run import CodingRunStage, CodingRunStatus
-from app.models.coding_run import CodingRun
-from app.models.repository import Repository
-from app.models.session import RepositorySession
-from app.models.user import User
-from app.persistence.coding_run_store import CodingRunStore
+from app.enums import CodingRunStage, CodingRunStatus
+from app.models import CodingRun, Repository, RepositorySession, User
+from app.persistence import CodingRunStore
 
 
 def _engine():

@@ -3,8 +3,8 @@
 import typing
 import uuid
 
-from app.streaming.agent_stream import map_graph_stream
-from app.schemas.agent_stream import AgentStreamEvent, PatchResult, RunStarted, Stage, Token
+from app.schemas import AgentStreamEvent, PatchResult, RunStarted, Stage, Token
+from app.streaming import map_graph_stream
 
 
 class _Message:

@@ -5,9 +5,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-from app.enums.session import SessionMessageRole
-from app.models.repository import Repository
-from app.models.session import RepositorySession, SessionHistory
+from app.enums import SessionMessageRole
+from app.models import Repository, RepositorySession, SessionHistory
 
 
 @dataclass(frozen=True)
@@ -20,9 +19,7 @@ class RepositorySessionExecution:
     indexed_commit_sha: str | None
 
     @classmethod
-    def assemble(
-        cls, *, repository_session: RepositorySession, repository: Repository | None, history: list[SessionHistory]
-    ) -> "RepositorySessionExecution":
+    def assemble(cls, *, repository_session: RepositorySession, repository: Repository | None, history: list[SessionHistory]) -> "RepositorySessionExecution":
         """Resolve the bound Repository's checkout fields, falling back to ``None`` when it is missing."""
         return cls(
             repository_session=repository_session,
@@ -44,7 +41,4 @@ class RepositorySessionExecution:
 
     def _to_messages(self) -> list[BaseMessage]:
         """Project the recent Session History window into LangChain messages for the graph spine."""
-        return [
-            AIMessage(content=row.content) if row.role == SessionMessageRole.assistant else HumanMessage(content=row.content)
-            for row in self.history
-        ]
+        return [AIMessage(content=row.content) if row.role == SessionMessageRole.assistant else HumanMessage(content=row.content) for row in self.history]

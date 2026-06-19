@@ -9,10 +9,8 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 
-from app.core.checkpointer import close_checkpointer, open_checkpointer
-from app.api.main import api_router
-from app.core import vector_db
-from app.core.config import settings
+from app.api import api_router
+from app.core import close_checkpointer, open_checkpointer, settings, vector_db
 
 logger = logging.getLogger(__name__)
 

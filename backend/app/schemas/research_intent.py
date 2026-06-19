@@ -19,6 +19,5 @@ class ResearchIntent(BaseModel):
     target: ResearchTarget = Field(description="Kind of repository evidence to retrieve: source implementation code or existing test code.")
     description: str = Field(description="Natural-language query describing the exact evidence needed for the test-generation task.")
     candidate_paths: list[str] = Field(
-        default_factory=list,
-        description="Optional repository-relative path hints that may contain relevant evidence; omit unsafe or absolute paths.",
+        default_factory=list, description="Optional repository-relative path hints that may contain relevant evidence; omit unsafe or absolute paths."
     )

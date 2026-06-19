@@ -12,12 +12,9 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import configure_mappers
 from sqlmodel import Session, SQLModel, select
 
-from app.enums.repository import RepositoryProvider, RepositoryStatus
-from app.models.repository import Repository
-from app.models.session import RepositorySession, SessionHistory
-from app.models.source_document import SourceDocument
-from app.models.user import User
-from app.schemas.repository import RepositoryCreate, RepositoryPublic
+from app.enums import RepositoryProvider, RepositoryStatus
+from app.models import Repository, RepositorySession, SessionHistory, SourceDocument, User
+from app.schemas import RepositoryCreate, RepositoryPublic
 
 
 @compiles(JSONB, "sqlite")

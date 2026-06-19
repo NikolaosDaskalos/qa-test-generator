@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
-from app.enums.repository import RepositoryProvider, RepositoryStatus
+from app.enums import RepositoryProvider, RepositoryStatus
 
 if TYPE_CHECKING:
     from app.models import RepositorySession, SourceDocument, User
@@ -43,7 +43,5 @@ class Repository(SQLModel, table=True):
         sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
     )
     user: "User" = Relationship(back_populates="repositories")
-    sessions: list["RepositorySession"] = Relationship(
-        back_populates="repository", sa_relationship_kwargs={"passive_deletes": "all"}
-    )
+    sessions: list["RepositorySession"] = Relationship(back_populates="repository", sa_relationship_kwargs={"passive_deletes": "all"})
     source_documents: list["SourceDocument"] = Relationship(back_populates="repository", sa_relationship_kwargs={"passive_deletes": "all"})

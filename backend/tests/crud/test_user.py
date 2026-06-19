@@ -3,9 +3,9 @@ from pwdlib.hashers.bcrypt import BcryptHasher
 from sqlmodel import Session
 
 from app import crud
-from app.core.security import verify_password
-from app.models.user import User
-from app.schemas.user import UserCreate, UserUpdate
+from app.core import verify_password
+from app.models import User
+from app.schemas import UserCreate, UserUpdate
 from tests.utils.utils import random_email, random_lower_string
 
 
@@ -123,9 +123,7 @@ def test_authenticate_user_with_bcrypt_upgrades_to_argon2(db: Session) -> None:
     # Verify the hash was upgraded to argon2
     assert authenticated_user.hashed_password.startswith("$argon2")
 
-    verified, updated_hash = verify_password(
-        password, authenticated_user.hashed_password
-    )
+    verified, updated_hash = verify_password(password, authenticated_user.hashed_password)
     assert verified
     # Should not need another update since it's already argon2
     assert updated_hash is None
