@@ -4,7 +4,7 @@ import uuid
 
 from app.schemas import ExternalReference, GeneratedFile, PatchResult
 from app.services.coding_runs.patch_builder import PatchBuilder, PatchBuildRequest
-from tests.agent.nodes.test_graph import FakeWorkspace, RecordingRecorder, _workspace_factory
+from tests.agents.nodes.test_graph import FakeWorkspace, RecordingRecorder, _workspace_factory
 
 
 class RaisingDiffWorkspace(FakeWorkspace):

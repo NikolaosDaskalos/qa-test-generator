@@ -10,7 +10,7 @@ out-of-scope (or uncommitted) request is rejected here as a terminal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from app.agent.nodes.failures import fail_state
+from app.agents.nodes.failures import fail_state
 from app.enums import CodingRunStage
 from app.prompts.prompts import PLANNER_SYSTEM_PROMPT
 from app.schemas import RetrievalRequest, RunFailure, RunStarted, Stage

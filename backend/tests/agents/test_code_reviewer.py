@@ -7,7 +7,7 @@ model or network call.
 
 from langchain_core.messages import HumanMessage
 
-from app.agent.agents.code_reviewer import CodeReviewer
+from app.agents.code_reviewer import CodeReviewer
 from app.models import RepositoryDocument
 from app.schemas import GeneratedFile, PatchReview, ReviewFinding
 
@@ -89,7 +89,7 @@ def test_code_reviewer_caps_the_web_search_loop_with_a_tool_call_limit(monkeypat
         captured.update(kwargs)
         return FakeAgent({"messages": [], "structured_response": PatchReview(score=9, findings=[])})
 
-    monkeypatch.setattr("app.agent.agents.code_reviewer.create_agent", fake_create_agent)
+    monkeypatch.setattr("app.agents.code_reviewer.create_agent", fake_create_agent)
 
     CodeReviewer(llm=object())
 

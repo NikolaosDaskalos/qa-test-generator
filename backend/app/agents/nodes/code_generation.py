@@ -13,7 +13,7 @@ from typing import Literal
 
 from langgraph.types import interrupt
 
-from app.agent.nodes.failures import fail_state
+from app.agents.nodes.failures import fail_state
 from app.core import settings
 from app.enums import CodingRunStage
 from app.schemas import ReviewFinding, ReviewResult, RunFailure, RunNoChanges, Stage

@@ -3,7 +3,7 @@
 import json
 from types import SimpleNamespace
 
-from app.agent.agents import tools
+from app.agents import tools
 from app.schemas import Stage
 
 

@@ -10,10 +10,10 @@ from pathlib import Path
 
 from langgraph.types import Command
 
-from app.agent import Classification, build_graph
-from app.agent.nodes.code_generation import NO_CHANGES_MESSAGE, build_review_patch_node
-from app.agent.nodes.planner import PlannerOutput
-from app.agent.nodes.repository_question import INSUFFICIENT_DOCUMENTS_ANSWER
+from app.agents import Classification, build_graph
+from app.agents.nodes.code_generation import NO_CHANGES_MESSAGE, build_review_patch_node
+from app.agents.nodes.planner import PlannerOutput
+from app.agents.nodes.repository_question import INSUFFICIENT_DOCUMENTS_ANSWER
 from app.enums import CodingRunStage
 from app.errors.git_errors import GitError
 from app.models import RepositoryDocument

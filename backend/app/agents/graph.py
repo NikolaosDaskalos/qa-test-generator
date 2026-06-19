@@ -19,7 +19,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
-from app.agent.nodes.code_generation import (
+from app.agents.nodes.code_generation import (
     build_approval_router,
     build_approve_patch_node,
     build_await_decision_node,
@@ -31,8 +31,8 @@ from app.agent.nodes.code_generation import (
     build_review_patch_node,
     build_review_router,
 )
-from app.agent.nodes.planner import build_plan_node
-from app.agent.nodes.repository_question import build_generate_node, build_retrieve_node
+from app.agents.nodes.planner import build_plan_node
+from app.agents.nodes.repository_question import build_generate_node, build_retrieve_node
 from app.schemas import Citation, PatchResult, RetrievalRequest, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
 from app.services.coding_runs.patch_publisher import NullPatchPublisher
 from app.services.coding_runs.recorder import NullRunRecorder

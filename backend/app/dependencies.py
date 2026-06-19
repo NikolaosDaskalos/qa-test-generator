@@ -14,9 +14,9 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr, ValidationError
 from sqlmodel import Session
 
-from app.agent import build_graph
-from app.agent.agents.code_generator import CodeGenerator
-from app.agent.agents.code_reviewer import CodeReviewer
+from app.agents import build_graph
+from app.agents.code_generator import CodeGenerator
+from app.agents.code_reviewer import CodeReviewer
 from app.core import WeaviateResources, engine, get_weaviate_resources, security, settings
 from app.models import User
 from app.persistence import CodingRunStore, RepositoryDocumentStore, RepositorySessionStore, RepositoryStore

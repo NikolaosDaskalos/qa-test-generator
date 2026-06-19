@@ -1,6 +1,6 @@
 """Specify the planner's Repository Document retrieval contract."""
 
-from app.agent.nodes.planner import PlannerOutput
+from app.agents.nodes.planner import PlannerOutput
 from app.schemas import RetrievalRequest
 
 

@@ -23,7 +23,7 @@
   - [Backend `app/core/`](#backend-appcore)
   - [Backend `app/api/`](#backend-appapi)
   - [Backend `app/api/routes/`](#backend-appapiroutes)
-  - [Backend `app/agent/`](#backend-appagent)
+  - [Backend `app/agents/`](#backend-appagents)
   - [Backend `app/alembic/`](#backend-appalembic)
   - [Backend `app/email-templates/`](#backend-appemail-templates)
   - [Backend `scripts/`](#backend-scripts)
@@ -699,7 +699,7 @@ full-stack-fastapi-template/
 
 ---
 
-### Backend `app/agent/`
+### Backend `app/agents/`
 
 #### `graph.py`
 **Τι είναι:** Ο κεντρικός AI Search Agent.  

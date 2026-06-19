@@ -9,7 +9,7 @@ import json
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.agent.agents.code_generator import CodeGenerator, _GeneratorResponse
+from app.agents.code_generator import CodeGenerator, _GeneratorResponse
 from app.schemas import GeneratedFile, ReviewFinding
 
 
@@ -36,7 +36,7 @@ def _build_generator(monkeypatch, final_state):
     generator through its public ``generate``/``revise`` interface with no real model.
     """
     agent = FakeAgent(final_state)
-    monkeypatch.setattr("app.agent.agents.code_generator.create_agent", lambda *a, **k: agent)
+    monkeypatch.setattr("app.agents.code_generator.create_agent", lambda *a, **k: agent)
     return CodeGenerator(llm=object()), agent
 
 
@@ -67,7 +67,7 @@ def test_code_generator_caps_the_web_search_loop_with_a_tool_call_limit(monkeypa
         captured.update(kwargs)
         return FakeAgent({"messages": [], "structured_response": _GeneratorResponse(generated_files=[])})
 
-    monkeypatch.setattr("app.agent.agents.code_generator.create_agent", fake_create_agent)
+    monkeypatch.setattr("app.agents.code_generator.create_agent", fake_create_agent)
 
     CodeGenerator(llm=object())
 
@@ -112,7 +112,7 @@ def test_code_generator_uses_one_web_search_agent_for_both_generation_and_revisi
         created.append({"agent": agent, "tools": tools or [], "system_prompt": kwargs["system_prompt"]})
         return agent
 
-    monkeypatch.setattr("app.agent.agents.code_generator.create_agent", fake_create_agent)
+    monkeypatch.setattr("app.agents.code_generator.create_agent", fake_create_agent)
 
     generator = CodeGenerator(llm=object())
     generator.generate(task="add tests", source_documents=[], test_documents=[])

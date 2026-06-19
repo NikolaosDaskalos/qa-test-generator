@@ -7,7 +7,7 @@ duplicated in each agent.
 
 from langchain.agents.middleware import ToolCallLimitMiddleware
 
-from app.agent.agents.tools import web_search
+from app.agents.tools import web_search
 
 # Max ``web_search`` calls allowed per single ``invoke()`` run.
 TOOL_CALL_RUN_LIMIT = 3
