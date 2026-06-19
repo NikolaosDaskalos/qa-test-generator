@@ -6,7 +6,7 @@ accepted
 
 ## Context and decision
 
-Test-Generation Tasks and their review, failure, approval, or rejection results must remain visible in their original position after a Repository Session is reopened. Session History will persist the user's request and a reference to the durable Coding Run, then the read model will reconstruct the coding card from the Coding Run record. It will not duplicate mutable patch, review, or status snapshots inside Session History; this preserves one record of truth and prevents reloaded conversations from presenting stale run state.
+Code Generation Tasks and their review, failure, approval, or rejection results must remain visible in their original position after a Repository Session is reopened. Session History will persist the user's request and a reference to the durable Coding Run, then the read model will reconstruct the coding card from the Coding Run record. It will not duplicate mutable patch, review, or status snapshots inside Session History; this preserves one record of truth and prevents reloaded conversations from presenting stale run state.
 
 ## Considered options
 
