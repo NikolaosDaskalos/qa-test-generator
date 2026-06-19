@@ -9,8 +9,8 @@ is the production adapter over ``CodingRunStore``; tests substitute a fake.
 import uuid
 from typing import Protocol
 
+from app.db.persistence import CodingRunStore
 from app.enums import CodingRunStage, CodingRunStatus
-from app.persistence import CodingRunStore
 from app.schemas import ExternalReference, GeneratedFile, ReviewFinding
 
 

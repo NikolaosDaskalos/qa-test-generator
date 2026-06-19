@@ -9,7 +9,7 @@ command line itself (``GitCommands`` owns that guarantee and is tested separatel
 import uuid
 
 from app.core import encrypt_repository_token
-from app.models import Repository
+from app.db.models import Repository
 from app.services.coding_runs.patch_publisher import GitPatchPublisher, build_patch_publisher_factory
 
 

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 from langchain_core.documents import Document
 
-from app.core import WeaviateResources
-from app.models import RepositoryDocument
+from app.db.models import RepositoryDocument
+from app.integrations.weaviate import WeaviateResources
 from app.rag import DocumentRetriever
 
 

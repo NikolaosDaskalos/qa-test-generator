@@ -11,7 +11,8 @@ from starlette.middleware.cors import CORSMiddleware
 
 from app.api import api_router
 from app.api.exception_handlers import register_exception_handlers
-from app.core import close_checkpointer, open_checkpointer, settings, vector_db
+from app.core import close_checkpointer, open_checkpointer, settings
+from app.integrations.weaviate import close_weaviate, initialize_weaviate
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ else:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize Weaviate and the session-graph checkpointer at startup; close both on shutdown."""
     logger.info("Application startup started")
-    vector_db.initialize_weaviate()
+    initialize_weaviate()
     checkpointer, checkpointer_pool = open_checkpointer()
     app.state.session_checkpointer = checkpointer
     logger.info("Application startup completed")
@@ -41,7 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         logger.info("Application shutdown started")
         close_checkpointer(checkpointer_pool)
-        vector_db.close_weaviate()
+        close_weaviate()
         logger.info("Application shutdown completed")
 
 

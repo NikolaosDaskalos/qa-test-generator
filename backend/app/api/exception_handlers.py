@@ -7,8 +7,8 @@ same ``{"detail": ...}`` body and status codes FastAPI uses for ``HTTPException`
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.errors.repository_errors import RepositoryError
-from app.errors.session_errors import SessionError
+from app.core.errors.repository_errors import RepositoryError
+from app.core.errors.session_errors import SessionError
 
 
 def register_exception_handlers(app: FastAPI) -> None:

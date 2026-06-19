@@ -4,7 +4,7 @@ import uuid
 
 from sqlmodel import Session, col, delete, select
 
-from app.models import RepositoryDocument
+from app.db.models import RepositoryDocument
 
 
 class RepositoryDocumentStore:

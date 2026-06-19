@@ -14,9 +14,9 @@ from sqlmodel import Field, Relationship, SQLModel
 from app.enums import SessionMessageRole
 
 if TYPE_CHECKING:
-    from app.models.coding_run import CodingRun
-    from app.models.repository import Repository
-    from app.models.user import User
+    from app.db.models.coding_run import CodingRun
+    from app.db.models.repository import Repository
+    from app.db.models.user import User
 
 
 NEW_SESSION_TITLE = "New session"

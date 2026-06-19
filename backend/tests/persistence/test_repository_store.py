@@ -3,10 +3,10 @@
 from datetime import UTC, datetime
 
 from app.core import encrypt_repository_token
+from app.core.errors.git_errors import GitError
+from app.db.models import Repository
+from app.db.persistence import RepositoryStore
 from app.enums import RepositoryStatus
-from app.errors.git_errors import GitError
-from app.models import Repository
-from app.persistence import RepositoryStore
 
 
 class FakeSession:

@@ -7,8 +7,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.core import get_password_hash
+from app.db.models import User
 from app.dependencies import SessionDep
-from app.models import User
 from app.schemas import UserPublic
 
 logger = logging.getLogger(__name__)

@@ -13,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.errors.git_errors import GitError
+from app.core.errors.git_errors import GitError
 
 logger = logging.getLogger(__name__)
 

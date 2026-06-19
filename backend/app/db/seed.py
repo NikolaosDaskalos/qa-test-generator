@@ -1,17 +1,15 @@
-"""The shared SQLModel engine and initial-data seeding."""
+"""Seed the relational database with required initial data."""
 
 import logging
 
-from sqlmodel import Session, create_engine, select
+from sqlmodel import Session, select
 
 from app import crud
 from app.core.config import settings
-from app.models import User
+from app.db.models import User
 from app.schemas import UserCreate
 
 logger = logging.getLogger(__name__)
-
-engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
 
 
 def init_db(session: Session) -> None:

@@ -5,8 +5,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
+from app.db.models import Repository, RepositorySession, SessionHistory
 from app.enums import SessionMessageRole
-from app.models import Repository, RepositorySession, SessionHistory
 
 
 @dataclass(frozen=True)

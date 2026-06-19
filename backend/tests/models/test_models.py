@@ -12,8 +12,8 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import configure_mappers
 from sqlmodel import Session, SQLModel, select
 
+from app.db.models import Repository, RepositoryDocument, RepositorySession, SessionHistory, User
 from app.enums import RepositoryProvider, RepositoryStatus
-from app.models import Repository, RepositoryDocument, RepositorySession, SessionHistory, User
 from app.schemas import RepositoryCreate, RepositoryPublic
 
 
@@ -76,7 +76,7 @@ def test_all_database_models_are_registered() -> None:
 def test_importing_one_model_registers_all_relationship_targets() -> None:
     backend_dir = Path(__file__).resolve().parents[2]
     result = subprocess.run(
-        [sys.executable, "-c", ("from sqlalchemy.orm import configure_mappers;from app.models.user import User;configure_mappers()")],
+        [sys.executable, "-c", ("from sqlalchemy.orm import configure_mappers;from app.db.models.user import User;configure_mappers()")],
         cwd=backend_dir,
         check=False,
         capture_output=True,

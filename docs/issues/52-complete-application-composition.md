@@ -1,6 +1,6 @@
 # Complete application composition and shared infrastructure
 
-Status: ready-for-agent
+Status: completed
 Type: AFK
 User stories: None - structural refactor preserving existing authenticated behavior
 
@@ -12,14 +12,14 @@ The final structure must keep `agents` and `rag` explicit, keep `core` limited t
 
 ## Acceptance criteria
 
-- [ ] Database session setup, records, and persistence adapters have one predictable `db` structure without duplicate legacy modules.
-- [ ] Concrete Git, Weaviate, LLM, and web-search clients have explicit integration placement while LangChain agents remain under `agents` and RAG behavior remains under `rag`.
-- [ ] `core` contains only shared configuration, security, exceptions, and application lifecycle concerns.
-- [ ] FastAPI dependency providers and application startup form a clear composition root with no request-scoped resources captured by background work.
-- [ ] Authentication, users, email utilities, startup checks, migrations, and generated contracts continue to work through their final imports.
-- [ ] Legacy pass-through packages and compatibility re-exports are removed after all callers migrate.
-- [ ] Automated import-direction checks prevent HTTP or infrastructure concerns from leaking back into feature workflows.
-- [ ] The complete backend and frontend regression suites pass without endpoint, persistence, Agent Stream, or user-visible behavior changes.
+- [x] Database session setup, records, and persistence adapters have one predictable `db` structure without duplicate legacy modules.
+- [x] Concrete Git, Weaviate, LLM, and web-search clients have explicit integration placement while LangChain agents remain under `agents` and RAG behavior remains under `rag`.
+- [x] `core` contains only shared configuration, security, exceptions, and application lifecycle concerns.
+- [x] FastAPI dependency providers and application startup form a clear composition root with no request-scoped resources captured by background work.
+- [x] Authentication, users, email utilities, startup checks, migrations, and generated contracts continue to work through their final imports.
+- [x] Legacy pass-through packages and compatibility re-exports are removed after all callers migrate.
+- [x] Automated import-direction checks prevent HTTP or infrastructure concerns from leaking back into feature workflows.
+- [x] The complete backend and frontend regression suites pass without endpoint, persistence, Agent Stream, or user-visible behavior changes.
 
 ## Blocked by
 

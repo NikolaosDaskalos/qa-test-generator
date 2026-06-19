@@ -55,20 +55,14 @@ def test_document_retriever_is_scoped_to_current_user(monkeypatch) -> None:
     retriever = object()
     captured = {}
 
-    def fake_reranker(**kwargs):
-        captured["reranker_kwargs"] = kwargs
-        return reranker
-
     def fake_retriever(resources, tenant, store, received_reranker):
         captured["retriever_args"] = (resources, tenant, store, received_reranker)
         return retriever
 
-    monkeypatch.setattr(dependencies, "CohereRerank", fake_reranker)
+    monkeypatch.setattr(dependencies, "create_reranker", lambda: reranker)
     monkeypatch.setattr(dependencies, "DocumentRetriever", fake_retriever)
 
     result = dependencies.get_document_retriever(user, weaviate_resources, repository_document_store)
 
     assert result is retriever
     assert captured["retriever_args"] == (weaviate_resources, str(user.id), repository_document_store, reranker)
-    assert captured["reranker_kwargs"]["model"] == dependencies.settings.COHERE_RERANK_MODEL
-    assert captured["reranker_kwargs"]["top_n"] == dependencies.settings.TOP_K

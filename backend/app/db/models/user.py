@@ -9,8 +9,8 @@ from sqlalchemy import DateTime
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
-    from app.models.repository import Repository
-    from app.models.session import RepositorySession
+    from app.db.models.repository import Repository
+    from app.db.models.session import RepositorySession
 
 
 class User(SQLModel, table=True):

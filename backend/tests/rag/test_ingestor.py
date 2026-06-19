@@ -7,8 +7,9 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.documents import Document
 
-from app.core import WeaviateResources, settings
-from app.errors.rag_errors import IngestorError
+from app.core import settings
+from app.core.errors.rag_errors import IngestorError
+from app.integrations.weaviate import WeaviateResources
 from app.rag import DocumentIngestor
 
 

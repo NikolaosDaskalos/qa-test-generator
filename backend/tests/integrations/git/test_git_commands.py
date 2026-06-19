@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from app.core import settings
-from app.errors.git_errors import GitError
+from app.core.errors.git_errors import GitError
 from app.integrations.git import COMMIT_AUTHOR_EMAIL, COMMIT_AUTHOR_NAME, GitCommands, GitResult, parse_repository_url
 
 

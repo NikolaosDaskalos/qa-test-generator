@@ -10,7 +10,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from app.enums import RepositoryProvider, RepositoryStatus
 
 if TYPE_CHECKING:
-    from app.models import RepositoryDocument, RepositorySession, User
+    from app.db.models import RepositoryDocument, RepositorySession, User
 
 
 class Repository(SQLModel, table=True):

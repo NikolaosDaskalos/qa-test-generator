@@ -4,10 +4,10 @@ import uuid
 
 import pytest
 
+from app.core.errors.repository_errors import RepositoryAccessForbidden, RepositoryNotFound
+from app.core.errors.session_errors import RepositoryNotReady, RepositorySessionAccessForbidden
+from app.db.models import Repository, RepositorySession, User
 from app.enums import RepositoryStatus
-from app.errors.repository_errors import RepositoryAccessForbidden, RepositoryNotFound
-from app.errors.session_errors import RepositoryNotReady, RepositorySessionAccessForbidden
-from app.models import Repository, RepositorySession, User
 from app.schemas import RepositorySessionCreate
 from app.services import RepositorySessionService
 

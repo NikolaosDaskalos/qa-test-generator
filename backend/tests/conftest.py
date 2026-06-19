@@ -4,9 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, delete
 
-from app.core import engine, init_db, settings
+from app.core import settings
+from app.db import engine, init_db
+from app.db.models import User
 from app.main import app
-from app.models import User
 from tests.utils.user import authentication_token_from_email
 from tests.utils.utils import get_superuser_token_headers
 

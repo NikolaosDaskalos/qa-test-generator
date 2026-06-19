@@ -5,11 +5,11 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-# Imported from the submodule (not the `app.core` surface): crud is pulled in
-# during app.core package initialization via app.core.db, so importing the
-# package surface here would be a circular import.
+# Import the submodule directly rather than the `app.core` surface so this
+# persistence helper does not pull in the checkpointer and lifecycle machinery
+# the package __init__ exposes.
 from app.core.security import get_password_hash, verify_password
-from app.models import User
+from app.db.models import User
 from app.schemas import UserCreate, UserUpdate
 
 logger = logging.getLogger(__name__)

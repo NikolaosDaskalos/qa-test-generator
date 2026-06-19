@@ -8,10 +8,9 @@ from typing import Any
 import pytest
 from fastapi import BackgroundTasks
 
-from app.core import WeaviateResources, decrypt_repository_token, encrypt_repository_token
-from app.enums import RepositoryProvider, RepositoryStatus
-from app.errors.git_errors import GitError
-from app.errors.repository_errors import (
+from app.core import decrypt_repository_token, encrypt_repository_token
+from app.core.errors.git_errors import GitError
+from app.core.errors.repository_errors import (
     DuplicateRepository,
     InvalidRepositoryCredential,
     InvalidRepositoryUrl,
@@ -20,8 +19,10 @@ from app.errors.repository_errors import (
     RepositoryNotFound,
     RepositoryProcessing,
 )
+from app.db.models import Repository, User
+from app.enums import RepositoryProvider, RepositoryStatus
 from app.integrations.git import ParsedRepositoryUrl
-from app.models import Repository, User
+from app.integrations.weaviate import WeaviateResources
 from app.schemas import RepositoryCreate, RepositoryUpdate
 from app.services import RepositoryService
 

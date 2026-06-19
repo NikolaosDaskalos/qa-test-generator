@@ -4,8 +4,8 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Response, status
 
+from app.db.models import Repository
 from app.dependencies import CurrentUser, RepositoryServiceDep, WeaviateResourcesDep
-from app.models import Repository
 from app.schemas import RepositoriesPublic, RepositoryCreate, RepositoryPublic, RepositoryUpdate
 
 router = APIRouter(prefix="/repositories", tags=["repositories"])

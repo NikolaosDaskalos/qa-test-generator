@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.core import settings
-from app.models import RepositoryDocument
+from app.db.models import RepositoryDocument
 from app.schemas import RetrievalRequest
 from app.services.coding_runs.path_safety import confine_candidate_paths
 

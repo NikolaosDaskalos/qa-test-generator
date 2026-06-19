@@ -9,7 +9,7 @@ Failure, never an escaping exception and never a raw state dict.
 
 import uuid
 
-from app.errors.git_errors import GitError
+from app.core.errors.git_errors import GitError
 from app.schemas import ReviewFinding, RunApproved, RunFailure, RunRejected
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 

@@ -9,17 +9,19 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from langchain_anthropic import ChatAnthropic
-from langchain_cohere import CohereRerank
 from langchain_openai import ChatOpenAI
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 from sqlmodel import Session
 
 from app.agents import build_graph
 from app.agents.code_generator import CodeGenerator
 from app.agents.code_reviewer import CodeReviewer
-from app.core import WeaviateResources, engine, get_weaviate_resources, security, settings
-from app.models import User
-from app.persistence import CodingRunStore, RepositoryDocumentStore, RepositorySessionStore, RepositoryStore
+from app.core import security, settings
+from app.db import engine
+from app.db.models import User
+from app.db.persistence import CodingRunStore, RepositoryDocumentStore, RepositorySessionStore, RepositoryStore
+from app.integrations.llm import create_anthropic_chat_model, create_chat_model, create_reranker
+from app.integrations.weaviate import WeaviateResources, get_weaviate_resources
 from app.rag import DocumentIngestor, DocumentRetriever
 from app.schemas import TokenPayload
 from app.services import RepositoryService, RepositorySessionService
@@ -141,32 +143,19 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
     return current_user
 
 
-def _build_chat_model(model: str, max_tokens: int) -> ChatOpenAI:
-    """Build a streaming chat model for the given OpenAI model id."""
-    return ChatOpenAI(model=model, temperature=settings.TEMPERATURE, max_tokens=max_tokens, streaming=True, api_key=settings.OPENAI_API_KEY)
-
-
 def get_openai_llm() -> ChatOpenAI:
     """Build the default streaming chat model (gpt-4o-mini)."""
-    return _build_chat_model(settings.LLM_MODEL, settings.LLM_MAX_TOKENS)
+    return create_chat_model(settings.LLM_MODEL, settings.LLM_MAX_TOKENS)
 
 
 def get_openai_llm_strong() -> ChatOpenAI:
     """Build the strong streaming chat model (gpt-4o)."""
-    return _build_chat_model(settings.LLM_MODEL_STRONG, settings.STRONG_LLM_MAX_TOKENS)
+    return create_chat_model(settings.LLM_MODEL_STRONG, settings.STRONG_LLM_MAX_TOKENS)
 
 
 def get_anthropic_llm() -> ChatAnthropic:
     """Build the strongest streaming chat model (Claude Haiku 4.5, via Anthropic)."""
-    return ChatAnthropic(
-        model_name=settings.LLM_MODEL_STRONGEST,
-        temperature=settings.TEMPERATURE,
-        max_tokens_to_sample=settings.STRONGEST_LLM_MAX_TOKENS,
-        streaming=True,
-        api_key=settings.ANTHROPIC_API_KEY,
-        timeout=None,
-        stop=None,
-    )
+    return create_anthropic_chat_model(settings.LLM_MODEL_STRONGEST, settings.STRONGEST_LLM_MAX_TOKENS)
 
 
 ChatOpenAIDep = Annotated[ChatOpenAI, Depends(get_openai_llm)]
@@ -178,7 +167,7 @@ def get_document_retriever(
     current_user: CurrentUser, weaviate_resources: WeaviateResourcesDep, repository_document_store: RepositoryDocumentStoreDep
 ) -> DocumentRetriever:
     """Build the authenticated user's repository-scoped retriever."""
-    reranker = CohereRerank(model=settings.COHERE_RERANK_MODEL, cohere_api_key=SecretStr(settings.COHERE_API_KEY), top_n=settings.TOP_K)
+    reranker = create_reranker()
     return DocumentRetriever(weaviate_resources, str(current_user.id), repository_document_store, reranker)
 
 

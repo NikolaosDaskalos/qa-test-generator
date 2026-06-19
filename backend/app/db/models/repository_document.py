@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
-    from app.models.repository import Repository
+    from app.db.models.repository import Repository
 
 
 class RepositoryDocumentMetadata(TypedDict):

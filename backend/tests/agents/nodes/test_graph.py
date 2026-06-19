@@ -14,9 +14,9 @@ from app.agents import Classification, build_graph
 from app.agents.nodes.code_generation import NO_CHANGES_MESSAGE, build_review_patch_node
 from app.agents.nodes.planner import PlannerOutput
 from app.agents.nodes.repository_question import INSUFFICIENT_DOCUMENTS_ANSWER
+from app.core.errors.git_errors import GitError
+from app.db.models import RepositoryDocument
 from app.enums import CodingRunStage
-from app.errors.git_errors import GitError
-from app.models import RepositoryDocument
 from app.schemas import (
     Citation,
     ExternalReference,

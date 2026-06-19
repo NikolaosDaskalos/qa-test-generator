@@ -14,10 +14,11 @@ from transformers import AutoTokenizer
 from weaviate.classes.query import Filter
 from weaviate.classes.tenants import Tenant
 
-from app.core import WeaviateResources, settings
-from app.errors.rag_errors import IngestorError
-from app.models import RepositoryDocument
-from app.persistence import RepositoryDocumentStore
+from app.core import settings
+from app.core.errors.rag_errors import IngestorError
+from app.db.models import RepositoryDocument
+from app.db.persistence import RepositoryDocumentStore
+from app.integrations.weaviate import WeaviateResources
 
 logger = logging.getLogger(__name__)
 

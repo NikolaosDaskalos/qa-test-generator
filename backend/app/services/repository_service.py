@@ -5,14 +5,12 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from fastapi import BackgroundTasks
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
-from app.core import WeaviateResources, encrypt_repository_token, engine
-from app.enums import RepositoryProvider, RepositoryStatus
-from app.errors.git_errors import GitError
-from app.errors.repository_errors import (
+from app.core import encrypt_repository_token
+from app.core.errors.git_errors import GitError
+from app.core.errors.repository_errors import (
     DuplicateRepository,
     InvalidRepositoryCredential,
     InvalidRepositoryUrl,
@@ -21,11 +19,15 @@ from app.errors.repository_errors import (
     RepositoryNotFound,
     RepositoryProcessing,
 )
+from app.db import engine
+from app.db.models import Repository, User
+from app.db.persistence import RepositoryDocumentStore, RepositoryStore
+from app.enums import RepositoryProvider, RepositoryStatus
 from app.integrations.git import GitCommands, ParsedRepositoryUrl, parse_repository_url
-from app.models import Repository, User
-from app.persistence import RepositoryDocumentStore, RepositoryStore
+from app.integrations.weaviate import WeaviateResources
 from app.rag import DocumentIngestor
 from app.schemas import RepositoriesPublic, RepositoryCreate, RepositoryUpdate
+from app.services.background import BackgroundScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +57,7 @@ class RepositoryService:
         return self._get_accessible(repository_id, user)
 
     def create_repository(
-        self, *, repository_in: RepositoryCreate, user: User, background_tasks: BackgroundTasks, weaviate_resources: WeaviateResources
+        self, *, repository_in: RepositoryCreate, user: User, background_tasks: BackgroundScheduler, weaviate_resources: WeaviateResources
     ) -> Repository:
         """Validate, persist, and enqueue a Git repository for processing."""
         try:

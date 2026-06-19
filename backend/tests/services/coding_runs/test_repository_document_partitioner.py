@@ -2,7 +2,7 @@
 
 import uuid
 
-from app.models import RepositoryDocument
+from app.db.models import RepositoryDocument
 from app.schemas import RetrievalRequest
 from app.services.coding_runs.repository_document_partitioner import RepositoryDocumentPartitioner, RepositoryDocumentPartitionRequest
 

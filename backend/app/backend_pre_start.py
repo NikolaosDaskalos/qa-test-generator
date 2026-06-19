@@ -9,7 +9,9 @@ from tenacity import after_log, before_log, retry, stop_after_attempt, wait_fixe
 from weaviate.classes.config import Configure, DataType, Property, Vectorizers
 from weaviate.client import WeaviateClient
 
-from app.core import METADATA_PROPERTIES, TEXT_PROPERTY, create_weaviate_client, engine, settings
+from app.core import settings
+from app.db import engine
+from app.integrations.weaviate import METADATA_PROPERTIES, TEXT_PROPERTY, create_weaviate_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

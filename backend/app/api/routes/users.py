@@ -9,8 +9,8 @@ from sqlmodel import col, func, select
 
 from app import crud
 from app.core import get_password_hash, settings, verify_password
+from app.db.models import User
 from app.dependencies import CurrentUser, SessionDep, get_current_active_superuser
-from app.models import User
 from app.schemas import Message, UpdatePassword, UserCreate, UserPublic, UserRegister, UsersPublic, UserUpdate, UserUpdateMe
 from app.utils import generate_new_account_email, send_email
 

@@ -10,7 +10,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from app.enums import CodingRunStage, CodingRunStatus
 
 if TYPE_CHECKING:
-    from app.models.session import RepositorySession
+    from app.db.models.session import RepositorySession
 
 
 class CodingRun(SQLModel, table=True):

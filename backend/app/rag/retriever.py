@@ -9,10 +9,11 @@ from langchain_core.documents import Document
 from weaviate.classes.aggregate import GroupByAggregate
 from weaviate.classes.query import Filter, HybridFusion
 
-from app.core import TEXT_PROPERTY, WeaviateResources, settings
-from app.errors.rag_errors import RetrieverError
-from app.models import RepositoryDocument
-from app.persistence import RepositoryDocumentStore
+from app.core import settings
+from app.core.errors.rag_errors import RetrieverError
+from app.db.models import RepositoryDocument
+from app.db.persistence import RepositoryDocumentStore
+from app.integrations.weaviate import TEXT_PROPERTY, WeaviateResources
 
 logger = logging.getLogger(__name__)
 

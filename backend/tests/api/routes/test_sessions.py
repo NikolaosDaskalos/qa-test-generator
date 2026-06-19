@@ -9,10 +9,10 @@ from fastapi.testclient import TestClient
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.routes.sessions import router
+from app.core.errors.session_errors import RepositorySessionNotFound
+from app.db.models import CodingRun, RepositorySession, SessionHistory
 from app.dependencies import get_current_user, get_repository_session_service, get_session_graph
 from app.enums import CodingRunStage, CodingRunStatus, SessionMessageRole
-from app.errors.session_errors import RepositorySessionNotFound
-from app.models import CodingRun, RepositorySession, SessionHistory
 from app.schemas import Citation, RepositorySessionPublic, RepositorySessionsPublic, Result, RunApproved, RunRejected, Stage, Token
 
 

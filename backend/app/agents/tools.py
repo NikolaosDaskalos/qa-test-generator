@@ -8,24 +8,18 @@ JSON error payload rather than raising so the agent loop stays alive.
 
 import json
 import logging
-import os
 from typing import Any
 
 from langchain_core.tools import tool
-from langchain_tavily import TavilySearch
 
-from app.core import settings
+from app.integrations.web_search import create_web_search_client
 from app.schemas import Stage
 from app.streaming import emit
 
 logger = logging.getLogger(__name__)
 
 
-if settings.TAVILY_API_KEY:
-    os.environ["TAVILY_API_KEY"] = settings.TAVILY_API_KEY
-
-
-_tavily_search = TavilySearch(max_results=3, topic="general", include_answer=True, include_raw_content=False, include_images=False)
+_tavily_search = create_web_search_client()
 
 
 @tool

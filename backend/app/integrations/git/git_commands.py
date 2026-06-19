@@ -13,7 +13,7 @@ from base64 import b64encode
 from pathlib import Path
 
 from app.core import settings
-from app.errors.git_errors import GitError
+from app.core.errors.git_errors import GitError
 from app.integrations.git.git_process import GitResult, run_git
 from app.integrations.git.repository_url import ParsedRepositoryUrl, parse_repository_url
 

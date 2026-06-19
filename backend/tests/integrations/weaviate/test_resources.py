@@ -2,7 +2,9 @@
 
 import pytest
 
-from app.core import settings, vector_db, weaviate_client
+from app.core import settings
+from app.integrations.weaviate import client as weaviate_client
+from app.integrations.weaviate import resources as vector_db
 
 
 class FakeClient:

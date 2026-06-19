@@ -7,8 +7,8 @@ import uuid
 
 from langchain_core.messages import AIMessage, HumanMessage
 
+from app.db.models import Repository, RepositorySession, SessionHistory
 from app.enums import SessionMessageRole
-from app.models import Repository, RepositorySession, SessionHistory
 from app.services import RepositorySessionExecution
 
 

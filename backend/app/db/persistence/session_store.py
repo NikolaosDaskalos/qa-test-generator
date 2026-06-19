@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from sqlmodel import Session, col, func, select
 
 from app.core import settings
+from app.db.models import LEGACY_NEW_SESSION_TITLE, MAX_DERIVED_SESSION_TITLE_LENGTH, NEW_SESSION_TITLE, CitationData, RepositorySession, SessionHistory
 from app.enums import SessionMessageRole
-from app.models import LEGACY_NEW_SESSION_TITLE, MAX_DERIVED_SESSION_TITLE_LENGTH, NEW_SESSION_TITLE, CitationData, RepositorySession, SessionHistory
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _PLACEHOLDER_TITLES = {NEW_SESSION_TITLE, LEGACY_NEW_SESSION_TITLE}

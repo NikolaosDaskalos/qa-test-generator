@@ -12,9 +12,9 @@ from sqlalchemy.pool import NullPool, StaticPool
 from sqlmodel import Session, create_engine, delete, select
 
 from app.core import settings
+from app.db.models import Repository, RepositorySession, SessionHistory, User
+from app.db.persistence import RepositorySessionStore
 from app.enums import RepositoryProvider, SessionMessageRole
-from app.models import Repository, RepositorySession, SessionHistory, User
-from app.persistence import RepositorySessionStore
 
 
 def _engine():

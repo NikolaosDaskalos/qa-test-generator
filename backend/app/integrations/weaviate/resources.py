@@ -10,7 +10,7 @@ from pydantic import SecretStr
 from weaviate.client import WeaviateClient
 
 from app.core.config import settings
-from app.core.weaviate_client import METADATA_PROPERTIES, TEXT_PROPERTY, create_weaviate_client
+from app.integrations.weaviate.client import METADATA_PROPERTIES, TEXT_PROPERTY, create_weaviate_client
 
 logger = logging.getLogger(__name__)
 

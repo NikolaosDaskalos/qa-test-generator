@@ -6,8 +6,8 @@ from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine
 
+from app.db.models import CodingRun, Repository, RepositorySession, User
 from app.enums import CodingRunStatus
-from app.models import CodingRun, Repository, RepositorySession, User
 
 
 def _engine():

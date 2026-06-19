@@ -8,7 +8,7 @@ model or network call.
 from langchain_core.messages import HumanMessage
 
 from app.agents.code_reviewer import CodeReviewer
-from app.models import RepositoryDocument
+from app.db.models import RepositoryDocument
 from app.schemas import GeneratedFile, PatchReview, ReviewFinding
 
 

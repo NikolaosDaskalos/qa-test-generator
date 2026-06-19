@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app import crud
 from app.core import settings, verify_password
-from app.models import User
+from app.db.models import User
 from app.schemas import UserCreate
 from tests.utils.user import create_random_user
 from tests.utils.utils import random_email, random_lower_string

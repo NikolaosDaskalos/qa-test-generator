@@ -2,8 +2,8 @@
 
 import uuid
 
-from app.models import RepositoryDocument
-from app.persistence import RepositoryDocumentStore
+from app.db.models import RepositoryDocument
+from app.db.persistence import RepositoryDocumentStore
 
 
 class FakeSession:

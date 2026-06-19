@@ -7,9 +7,10 @@ import pytest
 from langchain_core.documents import Document
 from weaviate.classes.query import HybridFusion
 
-from app.core import WeaviateResources, settings
-from app.errors.rag_errors import RetrieverError
-from app.models import RepositoryDocument
+from app.core import settings
+from app.core.errors.rag_errors import RetrieverError
+from app.db.models import RepositoryDocument
+from app.integrations.weaviate import WeaviateResources
 from app.rag import DocumentRetriever
 
 
