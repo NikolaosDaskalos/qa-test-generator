@@ -9,8 +9,8 @@ A public or private GitHub-hosted Python codebase connected to the copilot for i
 _Avoid_: Project, codebase connection
 
 **Repository Credential**:
-A mandatory GitHub token used for clone, fetch, and approved non-default branch pushes. Public repositories use the same credential flow as private repositories.
-_Avoid_: Optional token, anonymous connection
+A mandatory GitHub token used for clone, fetch, approved non-default branch pushes, and opening the Pull Request that proposes an approved branch. Public repositories use the same credential flow as private repositories. The same credential authenticates both the Git protocol operations and the GitHub API operations; opening a Pull Request additionally requires the token to carry pull-request write permission.
+_Avoid_: Optional token, anonymous connection, a separate API credential
 
 **Repository Session**:
 A conversation and task workspace bound to exactly one Repository for its lifetime. Working with another Repository requires a new Repository Session.
@@ -33,8 +33,16 @@ The file-level update that aligns Repository Documents with the latest commit of
 _Avoid_: Full re-index, metadata-only rename
 
 **Synchronization Request**:
-A user-initiated request to run Repository Synchronization in the background and report its status or failure. Scheduled and webhook-triggered synchronization are outside the demo scope.
+A user-initiated request to run Repository Synchronization in the background and report its status or failure. Scheduled and webhook-triggered synchronization are outside the demo scope. The system may *notice* that a Synchronization Request is worthwhile (see Sync Availability) but never raises one on the user's behalf.
 _Avoid_: Automatic sync, webhook sync
+
+**Sync Availability**:
+A read-only background signal that running a Synchronization Request would do work, because the Repository's remote default-branch head has advanced beyond its indexed commit. It is observed by polling the remote head with `git ls-remote` — which never opens the local checkout, so observing it is not a Checkout Operation — and derived by comparing the last observed upstream head against the indexed commit. Observing Sync Availability never runs Repository Synchronization, never mutates the checkout or Repository Documents, and never changes Repository status or `failed_reason`; a failed poll leaves the last known signal untouched. It only surfaces a "sync now" affordance for the owner to act on.
+_Avoid_: Automatic synchronization, polling-triggered sync, a Checkout Operation, advancing the indexed commit, flipping Repository status on a failed poll
+
+**Checkout Operation**:
+Any operation that mutates a Repository's single local checkout — cloning and indexing, Repository Synchronization, or a Coding Run. At most one Checkout Operation is in progress for a Repository at a time; a concurrent request for the same Repository is rejected, while a Checkout Operation on a different Repository proceeds independently. Repository questions read only indexed Repository Documents, never engage this exclusion, and stay available while a Checkout Operation runs. This generalizes the single-active-Coding-Run rule to the whole checkout, and is distinct from the Repository's readiness for questions, which a running Coding Run leaves intact.
+_Avoid_: Per-operation locks that let two writers share a checkout, serializing Repository questions, blocking a different Repository, treating the question path as a Checkout Operation
 
 **External Reference**:
 Web-sourced documentation or testing guidance the code generator may consult for a test framework's current syntax and best practices. It must be clearly separated from Repository Documents and can never support claims about the Repository's code or behavior — only how tests are written. Web search is reachable solely on the code-generation path; ordinary Repository questions never reach it.
@@ -81,9 +89,13 @@ The synchronous server-sent event response for a Repository question or Code Gen
 _Avoid_: WebSocket, polling workflow, error event for a deliberate outcome
 
 **Approval**:
-The user's authorization to commit an accepted Test Patch to a new non-default branch and push that branch to the Repository remote. Approval never permits a push to the Repository's default branch.
-_Avoid_: Merge, pull-request approval
+The user's authorization to commit an accepted Test Patch to a new non-default branch, push that branch to the Repository remote, and open a Pull Request from it into the Repository's default branch. Approval never permits a push to, or a merge into, the Repository's default branch — it only proposes one for the owner to merge on GitHub.
+_Avoid_: Merge, backend-side merge, direct default-branch write
+
+**Pull Request**:
+The GitHub pull request the backend opens from an approved generated branch into the Repository's default branch. Its body carries the Patch Review — the score and the categorized findings — so the owner inspects the proposed Test Files and the assessment together on GitHub. The backend opens it through the GitHub API using the Repository Credential; whether and when to merge it is the owner's decision on GitHub and is outside the demo scope. Pull-request creation runs only on the Approval path, after the branch is successfully pushed.
+_Avoid_: Auto-merge, backend-side merge, gh-CLI invocation, a pull request on the question or rejection path
 
 **Run Failure**:
-A terminal Coding Run outcome identified by the stage that failed and a sanitized reason, reserved for unexpected stage errors: generation errors, patch validation errors, Git commit errors, and Git push errors, kept distinguishable without becoming separate run statuses. A Test Patch scored below threshold is not a Run Failure — it escalates to human review.
+A terminal Coding Run outcome identified by the stage that failed and a sanitized reason, reserved for unexpected stage errors: generation errors, patch validation errors, Git commit errors, Git push errors, and pull-request creation errors, kept distinguishable without becoming separate run statuses. A pull-request creation error is distinct from a push error: the generated branch is already on the remote, so the failure reports that the branch exists but the Pull Request could not be opened. A Test Patch scored below threshold is not a Run Failure — it escalates to human review.
 _Avoid_: Generic failure, provider error dump, failing the run on a low review score

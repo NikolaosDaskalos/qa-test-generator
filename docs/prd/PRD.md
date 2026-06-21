@@ -25,7 +25,7 @@ A user connects a Repository with a mandatory Repository Credential. The backend
 - Review a generated Test Patch and Patch Review findings.
 - Reject the patch or approve a commit and push to a new non-default branch.
 
-Repository Synchronization keeps Repository Documents aligned with the latest default-branch commit through file-level incremental updates rather than a full re-index.
+Repository Synchronization keeps Repository Documents aligned with the latest default-branch commit through file-level incremental updates rather than a full re-index. A read-only background loop detects when the remote default branch has moved ahead of the indexed commit (Sync Availability) and shows the user a "sync now" message; the user then triggers the Synchronization Request endpoint, which runs the actual synchronization. Detection never synchronizes on its own.
 
 The authenticated product uses an AI-chat-style workspace. Repositories and their nested Repository Sessions live in a collapsible left panel, while the main area presents Repository onboarding, processing status, credential maintenance, a contextual empty state, or the selected chat. Repository Sessions use durable URLs, restore the user's last selection, display complete paginated Session History, and reconstruct Code Generation Task results from durable Coding Runs.
 
@@ -138,6 +138,19 @@ The project remains a focused demonstration. It does not install dependencies, e
 103. As a user, I want reloaded coding cards reconstructed from the current durable Coding Run, so that review, failure, Approval, rejection, patch, and branch information is never stale.
 104. As a user, I want Appearance and profile controls to remain at the bottom of the responsive left panel, so that familiar account controls remain consistently available.
 105. As a mobile user, I want Repository and Repository Session navigation to work through the existing sidebar drawer, so that the workspace remains usable on a small screen.
+106. As a Repository owner, I want Approval to open a Pull Request from the approved branch into my default branch, so that I can review and merge generated tests with GitHub's normal review flow instead of opening the PR by hand.
+107. As a Repository owner, I want the Pull Request opened only after the branch is successfully pushed, so that the PR always references a branch that exists on the remote.
+108. As a Repository owner, I want the Pull Request body to contain the Patch Review score, the pass threshold, and the categorized findings, so that I can judge the proposed Test Files and the assessment together on GitHub.
+109. As a Repository owner, I want the Pull Request to target my Repository's default branch as its base, so that the proposal lands where I merge my work.
+110. As a Repository owner, I want Approval to never push to or merge my default branch, so that proposing tests can never overwrite protected history.
+111. As a Repository owner, I want merging the Pull Request to remain my decision on GitHub, so that nothing is merged on my behalf.
+112. As a Repository owner, I want the response to Approval to tell me the Pull Request's URL, so that I can jump straight to reviewing it.
+113. As a Repository owner, I want pull-request creation to use the same Repository Credential as clone, fetch, and push, so that I do not configure a second secret.
+114. As a Repository owner, I want a clear failure when my credential lacks pull-request write permission, so that I can fix the token scope rather than guess.
+115. As a Repository owner, I want a pull-request creation failure reported as its own failure stage distinct from a push failure, so that I understand the branch was pushed and only the Pull Request is missing.
+116. As a Repository owner, I want the Repository Credential never exposed in pull-request creation errors or logs, so that approving tests cannot leak my token.
+117. As a Repository owner connected to GitHub Enterprise, I want pull-request creation to honor a configurable API base URL, so that the feature works against my GitHub host.
+118. As a Repository owner, I want no Pull Request, issue, or comment created on the question or rejection paths, so that only an explicit Approval writes to GitHub.
 
 ## Implementation Decisions
 
@@ -146,6 +159,7 @@ The project remains a focused demonstration. It does not install dependencies, e
 - Existing credential encryption and sanitized Git error handling remain the authentication boundary.
 - Repository registration schedules clone and initial indexing as a FastAPI background task.
 - Repository Synchronization is manually triggered and also runs as a FastAPI background task.
+- Per ADR 0008, a read-only background loop polls the remote default-branch head with `git ls-remote` to detect **Sync Availability** — that the remote has advanced beyond the indexed commit. Detection only surfaces a "sync now" message to the user through the Repository read model; it never opens the checkout, never advances the indexed commit, and never runs Repository Synchronization. Bringing the index up to date remains a user action: the user triggers the existing Synchronization Request endpoint, which performs the actual sync against the latest remote.
 - The Repository model records the commit SHA represented by Repository Documents.
 - Synchronization compares the indexed commit with the latest default-branch commit using Git rename detection and processes changes at file granularity.
 - Added files are indexed, modified files are deleted and re-indexed, deleted files are removed, and renamed files are removed under the old path and indexed under the new path.
@@ -223,6 +237,11 @@ The project remains a focused demonstration. It does not install dependencies, e
 - Full Session History pagination initially returns the latest 50 messages in chronological display order and supports loading older pages upward without changing the AI context window.
 - Per ADR 0005, Session History owns chronology and references durable Coding Runs for Code Generation Tasks; mutable patch, findings, and lifecycle snapshots are not duplicated into Session History.
 - Reloaded coding cards reconstruct their current state from the durable Coding Run record while Repository-question citations remain structurally attached to assistant messages under ADR 0001.
+- Per ADR 0006, Approval opens a Pull Request from the pushed generated branch into the Repository's default branch, after a successful push, carrying the Patch Review score, threshold, and findings in the PR body.
+- GitHub API access uses the PyGithub library, constructed with the Repository Credential and a configurable API base URL (default `https://api.github.com`, overridable for GitHub Enterprise). The `gh` CLI and hand-rolled HTTP clients are not used.
+- Pull-request creation extends the existing `PatchPublisher` port (which the approve node already uses for commit and push) with an `open_pull_request` operation; the production adapter owns the credential and the network, and the existing fake keeps graph and node tests offline.
+- PyGithub failures translate to a new sanitized `GitHubError` mirroring `GitError`, with the Repository Credential redacted. Pull-request creation failure is a Run Failure on a distinct `github_pull_request` stage, separate from `git_push`.
+- The Approval response surfaces the created Pull Request's URL to the owner; default-branch protection in the push path is unchanged.
 
 ## Testing Decisions
 
@@ -241,6 +260,7 @@ The project remains a focused demonstration. It does not install dependencies, e
 - LangGraph tests treat node outputs and state transitions as contracts. They do not call external LLM or Tavily services.
 - Patch validation tests operate on temporary Repository checkouts and cover existing Test Files, new files in existing test roots, path traversal, absolute paths, symlinks, non-Python files, source files, and invented test roots.
 - Git command tests mock subprocess execution, following existing Git tests. They cover checkout restoration, temporary branch creation, diff generation, commit, push, default-branch rejection, token redaction, and local branch cleanup.
+- Pull-request creation tests substitute a fake PyGithub client (no network), following the fake-store and fake-Git-commands pattern. They cover opening the PR with the default branch as base, the Patch Review rendered in the PR body, the returned PR URL, the push-then-PR ordering, credential redaction in errors, a permission-denied failure mapped to the `github_pull_request` stage, and that no Pull Request is created on the question or rejection paths.
 - Coding Run service tests cover every permitted and rejected state transition.
 - Failure tests verify structured failure stages and sanitized user-visible reasons without requiring exact provider error text.
 - Persistence tests follow existing store tests and cover Repository indexed commit state, Repository Session ownership and binding, Session History ordering, Coding Run state, Test Patch persistence, Patch Review findings, and Run Failure fields.
@@ -257,9 +277,10 @@ The project remains a focused demonstration. It does not install dependencies, e
 - General feature implementation, bug fixing, refactoring, or application-code modification.
 - Test execution, dependency installation, virtual-environment creation, coverage analysis, linting, and type checking inside connected repositories.
 - Runtime verification of generated tests.
-- Automatic pull-request creation or provider-specific GitHub API integration.
+- Merging the Pull Request, auto-merge, draft pull requests, requesting reviewers or assignees, and remote generated-branch deletion. (Opening the Pull Request on Approval is in scope per ADR 0006.)
+- Creating GitHub issues or pull-request comments, and any GitHub writes on the question or rejection paths.
 - GitHub Actions creation, management, or check-status integration.
-- Automatic synchronization through schedules, polling, webhooks, or push events.
+- Automatic synchronization — running a Checkout Operation that mutates the checkout and index — through schedules, webhooks, or push events. Polling is used only to detect Sync Availability and show the user a "sync now" message; it never synchronizes on the user's behalf. The user always triggers the Synchronization Request endpoint to perform the actual sync.
 - GraphRAG, call graphs, import graphs, and symbol-level relationship indexing.
 - AST unit-per-symbol chunking and line-level citations.
 - Full re-indexing during normal Repository Synchronization.
@@ -290,5 +311,5 @@ The project remains a focused demonstration. It does not install dependencies, e
 - Patch Review communicates evidence-based confidence but must not imply that generated tests pass, because execution is explicitly excluded.
 - Complete Session History is a presentation concern distinct from AI context: the UI may page through every persisted entry while reformulation and planning receive only the latest ten messages.
 - ADR 0005 records the decision to reference durable Coding Runs from Session History and reconstruct current coding cards rather than persisting duplicate snapshots.
-- A successfully pushed generated branch is the terminal integration artifact. The user may create a pull request manually through GitHub.
+- Approval pushes the generated branch and opens a Pull Request into the default branch, carrying the Patch Review in its body (ADR 0006). The Pull Request is the terminal integration artifact; reviewing and merging it remain the owner's decision on GitHub.
 - The implementation plan and domain glossary remain the controlling references for terminology and scope.
