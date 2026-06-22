@@ -75,6 +75,36 @@ def test_session_graph_supplies_every_production_runtime_adapter(monkeypatch) ->
     assert captured["checkpointer"] is request.app.state.session_checkpointer
 
 
+def test_session_graph_resolves_the_review_policy_from_settings_once(monkeypatch) -> None:
+    """Composition resolves the Patch Review policy from configuration and threads it into the graph.
+
+    The default production policy is a threshold of seven and two Generation Retries; the
+    graph receives this resolved policy rather than each node reading global settings later.
+    """
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(session_checkpointer=object())))
+    captured = {}
+
+    monkeypatch.setattr(dependencies, "build_graph", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(dependencies, "CodeGenerator", lambda model: ("code_generator", model))
+    monkeypatch.setattr(dependencies, "CodeReviewer", lambda model: ("code_reviewer", model))
+    monkeypatch.setattr(dependencies, "CodingRunRecorder", lambda store: ("recorder", store))
+    monkeypatch.setattr(dependencies, "build_patch_publisher_factory", lambda store: ("publisher_factory", store))
+
+    dependencies.get_session_graph(
+        request=request,
+        chat_model=object(),
+        strong_chat_model=object(),
+        strongest_chat_model=object(),
+        document_retriever=object(),
+        coding_run_store=object(),
+        repository_store=object(),
+    )
+
+    policy = captured["review_policy"]
+    assert policy.pass_threshold == 7
+    assert policy.max_generation_retries == 2
+
+
 def test_document_retriever_is_scoped_to_current_user(monkeypatch) -> None:
     """The retriever provider binds retrieval to the authenticated user's tenant."""
     user = SimpleNamespace(id=uuid.uuid4())

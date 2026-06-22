@@ -172,7 +172,7 @@ def build_graph(
     workspace_factory,
     publisher_factory,
     checkpointer,
-    max_generation_retries=None,
+    review_policy,
 ):
     """Compile the unified intent-routed graph.
 
@@ -190,6 +190,12 @@ def build_graph(
     the ``CodingRunRecorder``, the local checkout workspace factory, and the Git
     patch publisher. Tests deliberately choose their null, fake, local, or
     in-memory adapters according to the behavior under test (ADR-0002).
+
+    The Patch Review policy is likewise resolved once and required here: the same
+    ``review_policy`` (the pass threshold and the Generation Retries limit) is
+    threaded into both ``review_patch`` and its post-review router, so a Test Patch
+    is scored, retried, escalated, or reported as already covered under one coherent
+    configuration rather than each consumer reading global settings on its own.
     """
     recorder = run_recorder
     workspaces = workspace_factory
@@ -199,7 +205,7 @@ def build_graph(
     graph.add_node("plan", build_plan_node(planner_llm, recorder))
     graph.add_node("gather_documents", build_gather_documents_node(retriever, recorder))
     graph.add_node("generate_code", build_generate_code_node(code_generator, workspaces, recorder))
-    graph.add_node("review_patch", build_review_patch_node(code_reviewer, recorder, max_generation_retries=max_generation_retries))
+    graph.add_node("review_patch", build_review_patch_node(code_reviewer, recorder, policy=review_policy))
     graph.add_node("await_decision", build_await_decision_node())
     graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
@@ -215,7 +221,7 @@ def build_graph(
     graph.add_conditional_edges("generate_code", build_generate_router(), {"review": "review_patch", "failed": "fail_run"})
     graph.add_conditional_edges(
         "review_patch",
-        build_review_router(max_generation_retries),
+        build_review_router(review_policy),
         {"revise": "generate_code", "escalate": "await_decision", "already_covered": "report_no_changes", "failed": "fail_run"},
     )
     graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})

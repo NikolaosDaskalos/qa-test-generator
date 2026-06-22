@@ -14,11 +14,11 @@ from typing import Literal
 from langgraph.types import interrupt
 
 from app.agents.nodes.failures import fail_state
-from app.core import settings
 from app.enums import CodingRunStage
 from app.schemas import ReviewFinding, ReviewResult, RunFailure, RunNoChanges, Stage
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 from app.services.coding_runs.generation_retries import can_retry_generation, is_generation_retry, spend_generation_retry
+from app.services.coding_runs.review_policy import ReviewPolicy
 from app.services.coding_runs.patch_builder import PatchBuilder, PatchBuildRequest
 from app.services.coding_runs.repository_document_partitioner import RepositoryDocumentPartitioner, RepositoryDocumentPartitionRequest
 from app.services.coding_runs.test_file_validation import verify_test_file_boundary
@@ -190,7 +190,7 @@ def _is_empty_patch(state) -> bool:
     return not (state.get("diff") or "").strip()
 
 
-def _post_review_route(review: ReviewResult | None, state, max_generation_retries: int | None) -> Literal["revise", "escalate", "already_covered"]:
+def _post_review_route(review: ReviewResult | None, state, policy: ReviewPolicy) -> Literal["revise", "escalate", "already_covered"]:
     """The post-review destination for a non-failed run.
 
     An empty proposal is never escalated to the owner: it is retried while Generation
@@ -198,7 +198,7 @@ def _post_review_route(review: ReviewResult | None, state, max_generation_retrie
     the request (``already_covered``). A non-empty patch escalates to the owner's decision
     when it is accepted or Generation Retries are exhausted, and is otherwise revised.
     """
-    retry_available = can_retry_generation(state, limit=max_generation_retries)
+    retry_available = can_retry_generation(state, limit=policy.max_generation_retries)
     if _is_empty_patch(state):
         return "revise" if retry_available else "already_covered"
     if review is not None and not review.accepted and retry_available:
@@ -206,14 +206,14 @@ def _post_review_route(review: ReviewResult | None, state, max_generation_retrie
     return "escalate"
 
 
-def build_review_patch_node(code_reviewer, recorder, *, threshold: int | None = None, max_generation_retries: int | None = None):
+def build_review_patch_node(code_reviewer, recorder, *, policy: ReviewPolicy):
     """Build the node that statically reviews a generated Test Patch before approval.
 
     Review is document-grounded static assessment only: the reviewer never executes
     the generated tests, installs dependencies, or implies runtime correctness. The
     reviewer returns a quality ``score`` (0–10); the backend — not the model — owns
-    the pass decision, accepting the patch when ``score >= threshold`` (the
-    configurable ``REVIEW_PASS_THRESHOLD``). The backend independently re-verifies
+    the pass decision, accepting the patch when ``score >= threshold`` (the resolved
+    ``policy.pass_threshold``, fixed once at composition). The backend independently re-verifies
     the Test File boundary, so a patch that escapes Test-File scope is rejected even
     when its score passes. The decision is persisted (accepted → awaiting approval,
     rejected → changes requested) and surfaced as a ``ReviewResult`` carrying the
@@ -222,13 +222,13 @@ def build_review_patch_node(code_reviewer, recorder, *, threshold: int | None = 
     The node returns plain state — never a ``Command`` — leaving post-review routing
     to an explicit conditional edge (see ``build_review_router``). It does emit the
     terminal ``ReviewResult`` whenever the run escalates to the owner (an accepted
-    patch, or a below-threshold one with the Generation Retries — bounded by
-    ``max_generation_retries`` — exhausted), so the escalated patch surfaces its score
+    patch, or a below-threshold one with the Generation Retries — bounded by the
+    resolved ``ReviewPolicy`` — exhausted), so the escalated patch surfaces its score
     on the Agent Stream; a patch bound for one more Generation Retry stays quiet until
     its re-review.
     """
 
-    pass_threshold = settings.REVIEW_PASS_THRESHOLD if threshold is None else threshold
+    pass_threshold = policy.pass_threshold
 
     def review_patch(state) -> dict:
         coding_run_id = state.get("coding_run_id")
@@ -277,14 +277,14 @@ def build_review_patch_node(code_reviewer, recorder, *, threshold: int | None = 
         review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, score=score, threshold=pass_threshold, findings=findings, diff=diff)
         # The terminal ReviewResult rides the stream only when the run escalates to the
         # owner; a patch bound for revision or reported as already-covered stays quiet.
-        if _post_review_route(review_result, state, max_generation_retries) == "escalate":
+        if _post_review_route(review_result, state, policy) == "escalate":
             emit(review_result)
         return {"review_result": review_result, "trace": ["review_patch"]}
 
     return review_patch
 
 
-def build_review_router(max_generation_retries: int | None = None):
+def build_review_router(policy: ReviewPolicy):
     """Build the post-review router that drives the conditional edge off ``review_patch``.
 
     Reading only the verdict ``review_patch`` wrote to state, it routes the four
@@ -301,7 +301,7 @@ def build_review_router(max_generation_retries: int | None = None):
     def route_after_review(state) -> Literal["revise", "escalate", "already_covered", "failed"]:
         if state.get("failure") is not None:
             return "failed"
-        return _post_review_route(state.get("review_result"), state, max_generation_retries)
+        return _post_review_route(state.get("review_result"), state, policy)
 
     return route_after_review
 

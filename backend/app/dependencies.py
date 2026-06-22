@@ -27,6 +27,7 @@ from app.schemas import TokenPayload
 from app.services import RepositoryService, RepositorySessionService
 from app.services.coding_runs.patch_publisher import build_patch_publisher_factory
 from app.services.coding_runs.recorder import CodingRunRecorder
+from app.services.coding_runs.review_policy import ReviewPolicy
 from app.services.coding_runs.workspace import LocalGitWorkspace
 
 logger = logging.getLogger(__name__)
@@ -206,6 +207,7 @@ def get_session_graph(
         workspace_factory=LocalGitWorkspace,
         publisher_factory=build_patch_publisher_factory(repository_store),
         checkpointer=request.app.state.session_checkpointer,
+        review_policy=ReviewPolicy.from_settings(),
     )
 
 

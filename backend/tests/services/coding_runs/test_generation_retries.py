@@ -1,3 +1,5 @@
+import pytest
+
 from app.services.coding_runs.generation_retries import can_retry_generation, generation_retries, is_generation_retry, spend_generation_retry
 
 
@@ -26,3 +28,10 @@ def test_spending_increments_the_count_for_a_state_update() -> None:
 
 def test_a_spent_state_reads_as_a_generation_retry() -> None:
     assert is_generation_retry({"generation_retries": 1}) is True
+
+
+def test_can_retry_generation_requires_an_explicit_limit() -> None:
+    # The limit is resolved once at composition; the helper never falls back to
+    # global settings when it is omitted.
+    with pytest.raises(TypeError):
+        can_retry_generation({})  # type: ignore[call-arg]

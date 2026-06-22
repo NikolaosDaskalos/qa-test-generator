@@ -16,6 +16,7 @@ from app.agents import Classification, build_graph
 from app.agents.nodes.code_generation import NO_CHANGES_MESSAGE, build_review_patch_node
 from app.agents.nodes.planner import PlannerOutput
 from app.agents.nodes.repository_question import INSUFFICIENT_DOCUMENTS_ANSWER
+from app.services.coding_runs.review_policy import ReviewPolicy
 from app.core.errors.git_errors import GitError
 from app.db.models import RepositoryDocument
 from app.enums import CodingRunStage
@@ -328,7 +329,10 @@ def _build(
     code_reviewer=None,
     publisher=None,
     max_generation_retries=None,
+    review_policy=None,
 ):
+    if review_policy is None:
+        review_policy = ReviewPolicy(pass_threshold=7, max_generation_retries=2 if max_generation_retries is None else max_generation_retries)
     return build_graph(
         classifier_llm=classifier_llm,
         retriever=retriever if retriever is not None else FakeRetriever(),
@@ -340,7 +344,7 @@ def _build(
         workspace_factory=_workspace_factory(workspace),
         publisher_factory=_publisher_factory(publisher),
         checkpointer=MemorySaver(),
-        max_generation_retries=max_generation_retries,
+        review_policy=review_policy,
     )
 
 
@@ -360,8 +364,9 @@ def test_build_graph_requires_every_runtime_adapter() -> None:
         workspace_factory=_workspace_factory(),
         publisher_factory=_publisher_factory(),
         checkpointer=MemorySaver(),
+        review_policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2),
     )
-    for adapter in ("run_recorder", "workspace_factory", "publisher_factory", "checkpointer"):
+    for adapter in ("run_recorder", "workspace_factory", "publisher_factory", "checkpointer", "review_policy"):
         incomplete = {key: value for key, value in complete.items() if key != adapter}
         with pytest.raises(TypeError):
             build_graph(**incomplete)
@@ -588,7 +593,7 @@ def test_code_generation_marks_failure_at_planning_when_out_of_scope() -> None:
 # ── code_generation branch: generation & patch ────────────────────
 
 
-def _generation_graph(*, code_generator, recorder=None, workspace=None, code_reviewer=None, publisher=None, max_generation_retries=None):
+def _generation_graph(*, code_generator, recorder=None, workspace=None, code_reviewer=None, publisher=None, max_generation_retries=None, review_policy=None):
     planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="x")])
     return _build(
         FakeClassifierLLM("code_generation"),
@@ -599,6 +604,7 @@ def _generation_graph(*, code_generator, recorder=None, workspace=None, code_rev
         code_reviewer=code_reviewer,
         publisher=publisher,
         max_generation_retries=max_generation_retries,
+        review_policy=review_policy,
     )
 
 
@@ -766,7 +772,7 @@ def test_branch_preparation_failure_is_a_generating_run_failure(tmp_path) -> Non
 # ── code_generation branch: patch review ──────────────────────────
 
 
-def _reviewed_graph(*, code_reviewer, recorder=None, files=None, diff="diff --git a/tests/test_auth.py b/tests/test_auth.py", max_generation_retries=None):
+def _reviewed_graph(*, code_reviewer, recorder=None, files=None, diff="diff --git a/tests/test_auth.py b/tests/test_auth.py", max_generation_retries=None, review_policy=None):
     files = files if files is not None else [GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]
     generator = FakeCodeGenerator(GenerationProposal(generated_files=files))
     return _generation_graph(
@@ -775,6 +781,7 @@ def _reviewed_graph(*, code_reviewer, recorder=None, files=None, diff="diff --gi
         workspace=FakeWorkspace(diff=diff),
         code_reviewer=code_reviewer,
         max_generation_retries=max_generation_retries,
+        review_policy=review_policy,
     )
 
 
@@ -1241,7 +1248,7 @@ def test_score_above_threshold_is_accepted_by_the_backend(tmp_path) -> None:
     """The backend, not the model, decides the pass: a score above the threshold is accepted."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, threshold=7)
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
 
     result = node(_review_state(tmp_path, recorder))
 
@@ -1254,7 +1261,7 @@ def test_score_at_threshold_is_accepted_by_the_backend(tmp_path) -> None:
     """A score exactly at the threshold passes: the pass bar is ``score >= threshold``."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=7, findings=[])), recorder, threshold=7)
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=7, findings=[])), recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
 
     result = node(_review_state(tmp_path, recorder))
 
@@ -1265,7 +1272,7 @@ def test_score_below_threshold_is_not_accepted_by_the_backend(tmp_path) -> None:
     """A score under the threshold fails the pass decision, leaving routing to request a revision."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=6, findings=[])), recorder, threshold=7)
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=6, findings=[])), recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
 
     result = node(_review_state(tmp_path, recorder))
 
@@ -1278,7 +1285,7 @@ def test_review_result_carries_the_score_and_the_threshold_it_was_judged_against
     """The ReviewResult surfaces the reviewer's score and the threshold the backend judged it against."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, threshold=7)
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
 
     review = node(_review_state(tmp_path, recorder))["review_result"]
 
@@ -1292,7 +1299,7 @@ def test_backend_independently_rejects_out_of_scope_files_even_when_the_score_pa
     (tmp_path / "app" / "auth.py").write_text("real application code")
     recorder = RecordingRecorder()
     reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
-    node = build_review_patch_node(reviewer, recorder, threshold=7)
+    node = build_review_patch_node(reviewer, recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
     state = {
         "coding_run_id": recorder.run_id,
         "question": "add tests",
@@ -1502,6 +1509,7 @@ def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_
         workspace_factory=lambda checkout_root: LocalGitWorkspace(checkout_root),
         publisher_factory=_publisher_factory(),
         checkpointer=MemorySaver(),
+        review_policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2),
     )
 
     final = graph.invoke(
@@ -1599,6 +1607,37 @@ def test_a_zero_budget_escalates_a_below_threshold_patch_without_revising(tmp_pa
     assert result.get("failure") is None
     assert result["__interrupt__"][0].value["score"] == 4
     assert graph.get_state(config).next == ("await_decision",)
+
+
+def test_build_graph_threads_the_policy_threshold_into_the_review_decision(tmp_path) -> None:
+    """The pass bar is the resolved ReviewPolicy passed to build_graph, not global settings.
+
+    A score of five clears an explicitly selected threshold of four, so the backend
+    accepts a patch the default production threshold of seven would reject — proving the
+    threshold (not just the retry limit) is threaded through graph construction.
+    """
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeCodeReviewer(PatchReview(score=5, findings=[]))
+    graph = _reviewed_graph(
+        code_reviewer=reviewer,
+        recorder=recorder,
+        review_policy=ReviewPolicy(pass_threshold=4, max_generation_retries=0),
+    )
+
+    final = graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=_config(),
+    )
+
+    assert final["review_result"].accepted is True
+    assert final["review_result"].threshold == 4
 
 
 def test_an_empty_proposal_scores_zero_without_calling_the_reviewer(tmp_path) -> None:
