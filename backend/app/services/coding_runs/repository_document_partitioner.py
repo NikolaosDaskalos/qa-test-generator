@@ -19,11 +19,16 @@ class RepositoryDocumentRetriever(Protocol):
 
 @dataclass(frozen=True)
 class RepositoryDocumentPartitionRequest:
-    """Inputs needed to retrieve and partition Repository Documents."""
+    """Inputs needed to retrieve and partition Repository Documents.
+
+    ``checkout_root`` is required: candidate Repository paths are untrusted hints that
+    must always be confined against the checkout before entering agent context, so the
+    Code Generation path supplies one rather than letting confinement be skipped.
+    """
 
     retrieval_requests: list[RetrievalRequest]
     repository_id: uuid.UUID
-    checkout_root: Path | str | None = None
+    checkout_root: Path | str
 
 
 @dataclass(frozen=True)
@@ -42,13 +47,17 @@ class RepositoryDocumentPartitioner:
         self._retriever = retriever
 
     def partition(self, request: RepositoryDocumentPartitionRequest) -> RepositoryDocumentPartition:
+        if not request.checkout_root:
+            raise ValueError("A Code Generation partition requires a checkout root to confine candidate paths against.")
+
         source_documents: list[RepositoryDocument] = []
         test_documents: list[RepositoryDocument] = []
         hints: list[str] = []
+        checkout_root = Path(request.checkout_root)
 
         for retrieval_request in request.retrieval_requests:
-            if request.checkout_root and retrieval_request.candidate_paths:
-                hints.extend(confine_candidate_paths(Path(request.checkout_root), retrieval_request.candidate_paths))
+            if retrieval_request.candidate_paths:
+                hints.extend(confine_candidate_paths(checkout_root, retrieval_request.candidate_paths))
             documents = self._retriever.retrieve_documents(
                 retrieval_request.description,
                 repository_id=request.repository_id,

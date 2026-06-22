@@ -26,6 +26,8 @@ from app.streaming import emit
 
 logger = logging.getLogger(__name__)
 
+# User-safe reason for a retrieving-stage failure when no checkout context is present.
+MISSING_CHECKOUT = "Could not gather repository documents without a prepared checkout."
 # User-safe reasons for a generating-stage failure; never raw exception text.
 BRANCH_PREPARATION_FAILED = "Could not prepare a clean branch to generate tests on."
 GENERATION_FAILED = "The code generator could not produce a valid proposal."
@@ -53,9 +55,15 @@ def build_gather_documents_node(retriever, recorder):
     def gather_documents(state) -> dict:
         recorder.begin_retrieving(state["coding_run_id"])
         emit(Stage(stage="retrieving"))
+        # Candidate Repository paths are untrusted hints that must be confined against the
+        # checkout before entering agent context; a missing checkout cannot silently drop
+        # them, so the Code Generation path fails explicitly at this boundary.
+        checkout_root = state.get("checkout_root")
+        if not checkout_root:
+            return fail_state(RunFailure(failed_stage=CodingRunStage.retrieving, reason=MISSING_CHECKOUT), trace="gather_documents")
         partition = partitioner.partition(
             RepositoryDocumentPartitionRequest(
-                retrieval_requests=state.get("retrieval_requests") or [], repository_id=state["repository_id"], checkout_root=state.get("checkout_root")
+                retrieval_requests=state.get("retrieval_requests") or [], repository_id=state["repository_id"], checkout_root=checkout_root
             )
         )
         return {
@@ -66,6 +74,20 @@ def build_gather_documents_node(retriever, recorder):
         }
 
     return gather_documents
+
+
+def build_gather_documents_router():
+    """Build the router that drives the conditional edge off ``gather_documents``.
+
+    Reading only the state the node wrote, it routes a retrieving-stage failure (a
+    missing checkout) to the failure sink and an otherwise-partitioned set of
+    Repository Documents on to generation.
+    """
+
+    def route_after_gather(state) -> Literal["gathered", "failed"]:
+        return "failed" if state.get("failure") is not None else "gathered"
+
+    return route_after_gather
 
 
 def _generating_failure(reason: str) -> dict:

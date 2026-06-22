@@ -2,6 +2,8 @@
 
 import uuid
 
+import pytest
+
 from app.db.models import RepositoryDocument
 from app.schemas import RetrievalRequest
 from app.services.coding_runs.repository_document_partitioner import RepositoryDocumentPartitioner, RepositoryDocumentPartitionRequest
@@ -35,3 +37,35 @@ def test_partition_routes_source_and_test_documents_and_confines_path_hints(tmp_
     assert partition.source_documents == [source_code_document]
     assert partition.test_documents == [test_document]
     assert partition.candidate_hints == ["app/auth.py", "tests/test_auth.py"]
+
+
+def test_partition_de_duplicates_safe_hints_in_first_seen_order(tmp_path) -> None:
+    """Safe candidate hints repeated across requests survive once, in first-seen order."""
+    repository_id = uuid.uuid4()
+    partitioner = RepositoryDocumentPartitioner(_Retriever({}))
+
+    partition = partitioner.partition(
+        RepositoryDocumentPartitionRequest(
+            retrieval_requests=[
+                RetrievalRequest(document_type="source", description="auth", candidate_paths=["app/auth.py", "app/db.py"]),
+                RetrievalRequest(document_type="test", description="auth tests", candidate_paths=["app/db.py", "tests/test_auth.py", "app/auth.py"]),
+            ],
+            repository_id=repository_id,
+            checkout_root=tmp_path,
+        )
+    )
+
+    assert partition.candidate_hints == ["app/auth.py", "app/db.py", "tests/test_auth.py"]
+
+
+def test_partition_without_a_checkout_root_fails_instead_of_dropping_candidate_hints() -> None:
+    """A Code Generation partition cannot proceed without a checkout to confine hints against."""
+    partitioner = RepositoryDocumentPartitioner(_Retriever({}))
+    request = RepositoryDocumentPartitionRequest(
+        retrieval_requests=[RetrievalRequest(document_type="source", description="auth", candidate_paths=["app/auth.py"])],
+        repository_id=uuid.uuid4(),
+        checkout_root=None,
+    )
+
+    with pytest.raises(ValueError):
+        partitioner.partition(request)

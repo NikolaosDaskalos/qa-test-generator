@@ -456,7 +456,7 @@ def test_repository_question_branch_reports_insufficient_documents_without_calli
 # ── code_generation branch: planning ──────────────────────────────
 
 
-def test_planner_emits_retrieval_requests_tagged_source_and_test() -> None:
+def test_planner_emits_retrieval_requests_tagged_source_and_test(tmp_path) -> None:
     """An in-scope task plans documents to find, tagged source vs. test, with candidate path hints."""
     planner_output = PlannerOutput(
         in_scope=True,
@@ -467,7 +467,7 @@ def test_planner_emits_retrieval_requests_tagged_source_and_test() -> None:
     )
     graph = _build(FakeClassifierLLM("code_generation"), planner_llm=FakePlannerLLM(planner_output))
 
-    final = graph.invoke({"question": "add tests for the auth module", "repository_id": uuid.uuid4()}, config=_config())
+    final = graph.invoke({"question": "add tests for the auth module", "repository_id": uuid.uuid4(), "checkout_root": str(tmp_path)}, config=_config())
 
     assert final.get("failure") is None
     requests = final["retrieval_requests"]
@@ -491,7 +491,7 @@ def test_out_of_scope_task_is_rejected_at_the_planning_stage() -> None:
 # ── code_generation branch: generic retrieve ──────────────────────
 
 
-def test_code_generation_retrieve_partitions_source_and_test_documents() -> None:
+def test_code_generation_retrieve_partitions_source_and_test_documents(tmp_path) -> None:
     """Planner requests are executed under the session's Repository and split source vs. test."""
     repository_id = uuid.uuid4()
     retriever = QueryRetriever(
@@ -506,19 +506,19 @@ def test_code_generation_retrieve_partitions_source_and_test_documents() -> None
     )
     graph = _build(FakeClassifierLLM("code_generation"), retriever=retriever, planner_llm=FakePlannerLLM(planner_output))
 
-    final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id}, config=_config())
+    final = graph.invoke({"question": "add tests for auth", "repository_id": repository_id, "checkout_root": str(tmp_path)}, config=_config())
 
     assert [doc.doc_metadata["source"] for doc in final["source_documents"]] == ["app/auth.py"]
     assert [doc.doc_metadata["source"] for doc in final["test_documents"]] == ["tests/test_auth.py"]
     assert all(call[1]["repository_id"] == repository_id for call in retriever.calls)
 
 
-def test_code_generation_retrieve_yields_empty_partitions_when_no_documents() -> None:
+def test_code_generation_retrieve_yields_empty_partitions_when_no_documents(tmp_path) -> None:
     """When retrieval finds nothing, both documents partitions are present and empty."""
     planner_output = PlannerOutput(in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="nothing here")])
     graph = _build(FakeClassifierLLM("code_generation"), retriever=FakeRetriever([]), planner_llm=FakePlannerLLM(planner_output))
 
-    final = graph.invoke({"question": "add tests", "repository_id": uuid.uuid4()}, config=_config())
+    final = graph.invoke({"question": "add tests", "repository_id": uuid.uuid4(), "checkout_root": str(tmp_path)}, config=_config())
 
     assert final["source_documents"] == []
     assert final["test_documents"] == []
@@ -588,6 +588,22 @@ def test_code_generation_marks_failure_at_planning_when_out_of_scope() -> None:
     assert recorder.events[2][2] == CodingRunStage.planning
     assert recorder.events[2][3] == "Not a test request"
     assert final["failure"].coding_run_id == recorder.run_id
+
+
+def test_code_generation_marks_failure_at_retrieving_when_checkout_context_is_missing() -> None:
+    """A routed task with no checkout context fails explicitly at retrieving, never yielding empty hints."""
+    recorder = RecordingRecorder()
+    planner_output = PlannerOutput(
+        in_scope=True, retrieval_requests=[RetrievalRequest(document_type="source", description="auth", candidate_paths=["app/auth.py"])]
+    )
+    graph = _build(FakeClassifierLLM("code_generation"), recorder=recorder, planner_llm=FakePlannerLLM(planner_output))
+
+    final = graph.invoke({"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4()}, config=_config())
+
+    assert [event[0] for event in recorder.events] == ["start", "begin_planning", "begin_retrieving", "fail"]
+    assert recorder.events[3][2] == CodingRunStage.retrieving
+    assert final["failure"].coding_run_id == recorder.run_id
+    assert final.get("candidate_hints") is None
 
 
 # ── code_generation branch: generation & patch ────────────────────

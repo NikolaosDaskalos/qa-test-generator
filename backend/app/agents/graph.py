@@ -24,6 +24,7 @@ from app.agents.nodes.code_generation import (
     build_await_decision_node,
     build_discard_patch_node,
     build_gather_documents_node,
+    build_gather_documents_router,
     build_generate_code_node,
     build_generate_router,
     build_report_no_changes_node,
@@ -217,7 +218,7 @@ def build_graph(
     graph.add_edge(START, "classify")
     graph.add_conditional_edges("classify", _route_intent, {"code_generation": "plan", "repository_question": "retrieve"})
     graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "gather_documents"})
-    graph.add_edge("gather_documents", "generate_code")
+    graph.add_conditional_edges("gather_documents", build_gather_documents_router(), {"gathered": "generate_code", "failed": "fail_run"})
     graph.add_conditional_edges("generate_code", build_generate_router(), {"review": "review_patch", "failed": "fail_run"})
     graph.add_conditional_edges(
         "review_patch",
