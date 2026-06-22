@@ -26,12 +26,12 @@ def _engine():
 
 
 def _seed(db: Session) -> uuid.UUID:
-    owner_id = uuid.uuid4()
+    user_id = uuid.uuid4()
     repository_id = uuid.uuid4()
     session_id = uuid.uuid4()
-    db.add(User(id=owner_id, email="owner@example.com", hashed_password="not-used"))
-    db.add(Repository(id=repository_id, user_id=owner_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai"))
-    db.add(RepositorySession(id=session_id, owner_id=owner_id, repository_id=repository_id))
+    db.add(User(id=user_id, email="owner@example.com", hashed_password="not-used"))
+    db.add(Repository(id=repository_id, user_id=user_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai"))
+    db.add(RepositorySession(id=session_id, user_id=user_id, repository_id=repository_id))
     db.commit()
     return session_id
 

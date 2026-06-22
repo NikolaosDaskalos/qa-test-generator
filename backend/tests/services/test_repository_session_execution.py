@@ -27,7 +27,7 @@ def _repository(**overrides) -> Repository:
 
 
 def _session(repository: Repository) -> RepositorySession:
-    return RepositorySession(id=uuid.uuid4(), owner_id=repository.user_id, repository_id=repository.id)
+    return RepositorySession(id=uuid.uuid4(), user_id=repository.user_id, repository_id=repository.id)
 
 
 def test_graph_input_carries_session_ids_and_resolved_checkout_fields():

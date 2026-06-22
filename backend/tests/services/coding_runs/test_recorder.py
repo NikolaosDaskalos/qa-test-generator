@@ -26,10 +26,10 @@ def _engine():
 
 
 def _seed(db: Session):
-    owner_id, repository_id, session_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    db.add(User(id=owner_id, email="o@example.com", hashed_password="x"))
-    db.add(Repository(id=repository_id, user_id=owner_id, name="r", repository_url="https://github.com/o/r.git", owner="o"))
-    db.add(RepositorySession(id=session_id, owner_id=owner_id, repository_id=repository_id))
+    user_id, repository_id, session_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    db.add(User(id=user_id, email="o@example.com", hashed_password="x"))
+    db.add(Repository(id=repository_id, user_id=user_id, name="r", repository_url="https://github.com/o/r.git", owner="o"))
+    db.add(RepositorySession(id=session_id, user_id=user_id, repository_id=repository_id))
     db.commit()
     return session_id
 

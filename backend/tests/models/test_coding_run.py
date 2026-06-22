@@ -36,7 +36,7 @@ def test_coding_run_is_reachable_from_its_session_and_its_repository_through_it(
         repository = Repository(
             id=uuid.uuid4(), user_id=owner.id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai"
         )
-        repository_session = RepositorySession(id=uuid.uuid4(), owner_id=owner.id, repository_id=repository.id)
+        repository_session = RepositorySession(id=uuid.uuid4(), user_id=owner.id, repository_id=repository.id)
         db.add_all([owner, repository, repository_session])
         db.commit()
 

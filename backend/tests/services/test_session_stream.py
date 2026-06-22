@@ -74,7 +74,7 @@ def _wiring(user, *, indexed_commit_sha=None):
         local_path="/checkout",
         indexed_commit_sha=indexed_commit_sha,
     )
-    repository_session = RepositorySession(id=uuid.uuid4(), owner_id=user.id, repository_id=repository.id)
+    repository_session = RepositorySession(id=uuid.uuid4(), user_id=user.id, repository_id=repository.id)
     session_store = FakeSessionStore(repository_session)
     service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
     return service, session_store, repository_session

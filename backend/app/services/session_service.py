@@ -40,7 +40,7 @@ class RepositorySessionService:
         if repository.status != RepositoryStatus.ready:
             raise RepositoryNotReady()
 
-        return self.session_store.save(RepositorySession(owner_id=user.id, repository_id=repository.id))
+        return self.session_store.save(RepositorySession(user_id=user.id, repository_id=repository.id))
 
     def list_sessions(self, *, user: User, repository_id: uuid.UUID | None, skip: int, limit: int) -> RepositorySessionsPublic:
         """List the caller's Repository Sessions, optionally filtered to one Repository.
@@ -53,9 +53,9 @@ class RepositorySessionService:
         """
         if repository_id is not None:
             self._assert_repository_readable(repository_id, user)
-        owner_id = None if user.is_superuser else user.id
-        sessions = self.session_store.get_page(skip=skip, limit=limit, owner_id=owner_id, repository_id=repository_id)
-        count = self.session_store.count(owner_id=owner_id, repository_id=repository_id)
+        user_id = None if user.is_superuser else user.id
+        sessions = self.session_store.get_page(skip=skip, limit=limit, user_id=user_id, repository_id=repository_id)
+        count = self.session_store.count(user_id=user_id, repository_id=repository_id)
         return RepositorySessionsPublic(data=sessions, count=count)  # type: ignore[arg-type]
 
     def _assert_repository_readable(self, repository_id: uuid.UUID, user: User) -> None:
@@ -173,6 +173,6 @@ class RepositorySessionService:
         repository_session = self.session_store.get_by_id(repository_session_id)
         if not repository_session:
             raise RepositorySessionNotFound()
-        if repository_session.owner_id != user.id:
+        if repository_session.user_id != user.id:
             raise RepositorySessionAccessForbidden()
         return repository_session
