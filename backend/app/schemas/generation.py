@@ -27,5 +27,5 @@ class ExternalReference(BaseModel):
 class GenerationProposal(BaseModel):
     """The generator's structured result: proposed files plus External References."""
 
-    generated_files: list[GeneratedFile] = Field(default_factory=list)
-    external_references: list[ExternalReference] = Field(default_factory=list)
+    generated_files: list[GeneratedFile] = Field(default_factory=list, description="List of generated files.")
+    external_references: list[ExternalReference] = Field(default_factory=list, description="List of external references.")
