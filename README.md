@@ -1,233 +1,144 @@
-# Full Stack FastAPI Template
+# AI Codebase Copilot
 
-<a href="https://github.com/fastapi/full-stack-fastapi-template/actions?query=workflow%3A%22Test+Docker+Compose%22" target="_blank"><img src="https://github.com/fastapi/full-stack-fastapi-template/workflows/Test%20Docker%20Compose/badge.svg" alt="Test Docker Compose"></a>
-<a href="https://github.com/fastapi/full-stack-fastapi-template/actions?query=workflow%3A%22Test+Backend%22" target="_blank"><img src="https://github.com/fastapi/full-stack-fastapi-template/workflows/Test%20Backend/badge.svg" alt="Test Backend"></a>
-<a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/fastapi/full-stack-fastapi-template" target="_blank"><img src="https://coverage-badge.samuelcolvin.workers.dev/fastapi/full-stack-fastapi-template.svg" alt="Coverage"></a>
+Repository-grounded question answering and an agentic test-generation workflow for Python repositories hosted on GitHub. Connect a GitHub repository, index it, ask questions grounded in its code, and ask the copilot to write tests — reviewed, executed in a sandbox, and proposed back to you as a Pull Request once you approve.
 
-## Technology Stack and Features
+> Built on the [Full Stack FastAPI Template](https://github.com/fastapi/full-stack-fastapi-template). This is a course capstone demo, not a production or concurrent system. See [CONTEXT.md](./CONTEXT.md) for the full domain language and [docs/backend-plan.md](./docs/backend-plan.md) for the backend plan.
 
-- ⚡ [**FastAPI**](https://fastapi.tiangolo.com) for the Python backend API.
-  - 🧰 [SQLModel](https://sqlmodel.tiangolo.com) for the Python SQL database interactions (ORM).
-  - 🔍 [Pydantic](https://docs.pydantic.dev), used by FastAPI, for the data validation and settings management.
-  - 💾 [PostgreSQL](https://www.postgresql.org) as the SQL database.
-- 🚀 [React](https://react.dev) for the frontend.
-  - 💃 Using TypeScript, hooks, [Vite](https://vitejs.dev), and other parts of a modern frontend stack.
-  - 🎨 [Tailwind CSS](https://tailwindcss.com) and [shadcn/ui](https://ui.shadcn.com) for the frontend components.
-  - 🤖 An automatically generated frontend client.
-  - 🧪 [Playwright](https://playwright.dev) for End-to-End testing.
-  - 🦇 Dark mode support.
-- 🐋 [Docker Compose](https://www.docker.com) for development and production.
-- 🔒 Secure password hashing by default.
-- 🔑 JWT (JSON Web Token) authentication.
-- 📫 Email based password recovery.
-- 📬 [Mailcatcher](https://mailcatcher.me) for local email testing during development.
-- ✅ Tests with [Pytest](https://pytest.org).
-- 📞 [Traefik](https://traefik.io) as a reverse proxy / load balancer.
-- 🚢 Deployment instructions using Docker Compose, including how to set up a frontend Traefik proxy to handle automatic HTTPS certificates.
-- 🏭 CI (continuous integration) and CD (continuous deployment) based on GitHub Actions.
+## What It Does
 
-### Dashboard Login
+1. **Connect a repository** — a public or private GitHub-hosted Python repository, with a mandatory GitHub token used for clone/fetch/push and opening Pull Requests.
+2. **Index** — the backend clones the default branch and indexes Python files as vector chunks in Weaviate (hybrid BM25 + vector retrieval, per-user tenancy).
+3. **Start a session** — a Repository Session is bound permanently to one repository; its history influences later questions and task planning.
+4. **Ask questions** — repository-grounded answers stream back with file-level citations.
+5. **Generate tests** — submit a free-text Code Generation Task; a bounded LangGraph workflow plans, retrieves repository documents, generates complete test files, optionally consults web docs for framework syntax, runs the tests in an isolated sandbox, and reviews them.
+6. **Review & approve** — progress and the final diff stream over Server-Sent Events; you reject the patch or approve a commit + push to a new non-default branch and the opening of a Pull Request into the default branch.
+7. **Sync** — a manual endpoint incrementally re-indexes only the files changed since the last indexed commit.
 
-[![API docs](img/login.png)](https://github.com/fastapi/full-stack-fastapi-template)
+Out of scope for the demo: GitLab/Bitbucket, non-Python repositories, automatic/webhook sync, concurrent coding runs, application-code changes, and backend-side merges.
 
-### Dashboard - Admin
+## Technology Stack
 
-[![API docs](img/dashboard.png)](https://github.com/fastapi/full-stack-fastapi-template)
+### AI / Retrieval
+- 🦜 [**LangChain**](https://python.langchain.com) + [**LangGraph**](https://langchain-ai.github.io/langgraph/) for the agentic code-generation workflow, with a Postgres checkpointer.
+- 🧠 LLMs via [Anthropic](https://www.anthropic.com), [OpenAI](https://openai.com), with [Voyage AI](https://www.voyageai.com) (`voyage-code-3`) embeddings and [Cohere](https://cohere.com) reranking.
+- 🔎 [**Weaviate**](https://weaviate.io) as the vector database with hybrid BM25 + vector retrieval.
+- 🌐 [Tavily](https://tavily.com) web search, reachable only on the code-generation path for test-framework guidance.
+- 📊 Optional [LangSmith](https://smith.langchain.com) tracing.
 
-### Dashboard - Items
+### Backend
+- ⚡ [**FastAPI**](https://fastapi.tiangolo.com) with Server-Sent Events for streaming agent progress.
+- 🧰 [SQLModel](https://sqlmodel.tiangolo.com) ORM + [Pydantic](https://docs.pydantic.dev), [PostgreSQL](https://www.postgresql.org), [Alembic](https://alembic.sqlalchemy.org) migrations.
+- 🐙 [GitPython](https://gitpython.readthedocs.io) for clone/fetch/branch/push and the GitHub API for Pull Requests.
+- 🔐 Encrypted-at-rest GitHub tokens, JWT auth, secure password hashing.
 
-[![API docs](img/dashboard-items.png)](https://github.com/fastapi/full-stack-fastapi-template)
+### Frontend
+- 🚀 [React 19](https://react.dev) + TypeScript, [Vite](https://vitejs.dev), [TanStack Router](https://tanstack.com/router) & [Query](https://tanstack.com/query).
+- 🎨 [Tailwind CSS](https://tailwindcss.com) v4 + [shadcn/ui](https://ui.shadcn.com) / Radix, dark mode, an auto-generated API client, and a diff view for proposed patches.
+- 🧪 [Playwright](https://playwright.dev) end-to-end tests.
 
-### Dashboard - Dark Mode
+### Infrastructure
+- 🐋 [Docker Compose](https://www.docker.com) for development and production (Postgres, Weaviate, Adminer, backend, frontend).
+- 📞 [Traefik](https://traefik.io) reverse proxy, CI/CD via GitHub Actions, ✅ [Pytest](https://pytest.org).
 
-[![API docs](img/dashboard-dark.png)](https://github.com/fastapi/full-stack-fastapi-template)
+## Architecture at a Glance
 
-### Interactive API Documentation
+| Path | Behavior |
+| --- | --- |
+| **Repository question** | Hybrid retrieval over the session's indexed documents → grounded answer with file citations. Never touches the checkout or web search. |
+| **Code Generation Task** | LangGraph run on a temporary branch: classify → plan → retrieve → (research) → generate → execute (sandbox) → review → revise. Bounded by independent **Generation Retries** (default 2) and **Execution Attempts** (default 4). |
+| **Patch Review** | The Code Reviewer scores a patch out of 10; the backend decides pass/fail against a threshold (default 7) and hard-fails any patch escaping the test-file boundary. |
+| **Approval (HITL)** | A LangGraph interrupt — approve/reject is resumed on the `/questions` endpoint, never a dedicated endpoint. On approval the branch is pushed and a Pull Request is opened carrying the review. |
 
-[![API docs](img/docs.png)](https://github.com/fastapi/full-stack-fastapi-template)
+The single API entry point for questions and tasks is `POST /sessions/{id}/questions`; **Request Intent** is classified there (uncertain classification falls back to a side-effect-free question).
 
-## How To Use It
+## Repository Configuration
 
-You can **just fork or clone** this repository and use it as is.
+Before connecting a repository, you need a **Fine-grained Personal Access Token (PAT)** from GitHub. The copilot uses it for clone/fetch/push and for opening Pull Requests.
 
-✨ It just works. ✨
+1. Log in to your GitHub account.
+2. Visit the GitHub access token screen: <https://github.com/settings/personal-access-tokens>
+3. In the left menu go to **Personal access tokens → Fine-grained tokens**, then click **Generate new token**.
+4. Under **Repository access**, choose the specific repository (or repositories) you want to grant access to.
+5. Under **Permissions**, click **Add permissions** and choose:
+   - **Contents**
+   - **Pull requests**
+6. Set both to **Access: Read and write**.
+7. Click **Generate token** and copy it — you'll paste it when creating the repository in the app.
 
-### How to Use a Private Repository
+### Recommended configuration
 
-If you want to have a private repository, GitHub won't allow you to simply fork it as it doesn't allow changing the visibility of forks.
+| Setting | Value |
+| --- | --- |
+| **Resource owner** | Your account or organization |
+| **Repository access** | Only select repositories |
+| **Contents** | Read and write — *required for clone/push* |
+| **Pull requests** | Read and write — *required for creating PRs* |
+| **Workflows** | Read and write — *only if modifying workflow files* |
+| **Issues** | Read and write |
 
-But you can do the following:
+The token is encrypted at rest with `REPOSITORY_TOKEN_ENCRYPTION_KEY`.
 
-- Create a new GitHub repo, for example `my-full-stack`.
-- Clone this repository manually, set the name with the name of the project you want to use, for example `my-full-stack`:
+## Getting Started
 
-```bash
-git clone git@github.com:fastapi/full-stack-fastapi-template.git my-full-stack
-```
-
-- Enter into the new directory:
-
-```bash
-cd my-full-stack
-```
-
-- Set the new origin to your new repository, copy it from the GitHub interface, for example:
-
-```bash
-git remote set-url origin git@github.com:octocat/my-full-stack.git
-```
-
-- Add this repo as another "remote" to allow you to get updates later:
-
-```bash
-git remote add upstream git@github.com:fastapi/full-stack-fastapi-template.git
-```
-
-- Push the code to your new repository:
-
-```bash
-git push -u origin master
-```
-
-### Update From the Original Template
-
-After cloning the repository, and after doing changes, you might want to get the latest changes from this original template.
-
-- Make sure you added the original repository as a remote, you can check it with:
-
-```bash
-git remote -v
-
-origin    git@github.com:octocat/my-full-stack.git (fetch)
-origin    git@github.com:octocat/my-full-stack.git (push)
-upstream    git@github.com:fastapi/full-stack-fastapi-template.git (fetch)
-upstream    git@github.com:fastapi/full-stack-fastapi-template.git (push)
-```
-
-- Pull the latest changes without merging:
-
-```bash
-git pull --no-commit upstream master
-```
-
-This will download the latest changes from this template without committing them, that way you can check everything is right before committing.
-
-- If there are conflicts, solve them in your editor.
-
-- Once you are done, commit the changes:
-
-```bash
-git merge --continue
-```
+You can **clone** this repository and run it with Docker Compose.
 
 ### Configure
 
-You can then update configs in the `.env` files to customize your configurations.
-
-Before deploying it, make sure you change at least the values for:
+Copy `.env.example` to `.env` and set the required values. Before running, change at least:
 
 - `SECRET_KEY`
 - `FIRST_SUPERUSER_PASSWORD`
 - `POSTGRES_PASSWORD`
+- `REPOSITORY_TOKEN_ENCRYPTION_KEY` — a Fernet key used to encrypt GitHub tokens at rest
+- AI provider keys: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `VOYAGE_API_KEY`, `COHERE_API_KEY`, `TAVILY_API_KEY`, `HF_TOKEN`
 
-You can (and should) pass these as environment variables from secrets.
-
-Read the [deployment.md](./deployment.md) docs for more details.
-
-### Generate Secret Keys
-
-Some environment variables in the `.env` file have a default value of `changethis`.
-
-You have to change them with a secret key, to generate secret keys you can run the following command:
+Generate a secret key with:
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Copy the content and use that as password / secret key. And run that again to generate another secure key.
-
-## How To Use It - Alternative With Copier
-
-This repository also supports generating a new project using [Copier](https://copier.readthedocs.io).
-
-It will copy all the files, ask you configuration questions, and update the `.env` files with your answers.
-
-### Install Copier
-
-You can install Copier with:
+Generate the repository-token encryption (Fernet) key with:
 
 ```bash
-pip install copier
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Or better, if you have [`pipx`](https://pipx.pypa.io/), you can run it with:
+Pass secrets as environment variables in deployed environments rather than committing them.
+
+### Key Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LLM_MODEL` | `gpt-4o-mini` | Default classification/planning model |
+| `LLM_MODEL_STRONG` / `LLM_MODEL_STRONGEST` | `gpt-4o` / `claude-haiku-4-5` | Generation & review models |
+| `EMBEDDING_MODEL` | `voyage-code-3` | Code embedding model |
+| `COHERE_RERANK_MODEL` | `rerank-v4.0-pro` | Reranker |
+| `HYBRID_SEARCH_ALPHA` | `0.3` | BM25 ↔ vector blend |
+| `REVIEW_PASS_THRESHOLD` | `7` | Min. patch review score to pass |
+| `MAX_GENERATION_RETRIES` | `2` | Revision budget for low-scoring patches |
+| `WEAVIATE_HTTP_HOST` / `WEAVIATE_GRPC_HOST` | `localhost` | Weaviate connection |
+
+See [backend/app/core/config.py](./backend/app/core/config.py) for the full set.
+
+### Run
 
 ```bash
-pipx install copier
+docker compose watch
 ```
 
-**Note**: If you have `pipx`, installing copier is optional, you could run it directly.
-
-### Generate a Project With Copier
-
-Decide a name for your new project's directory, you will use it below. For example, `my-awesome-project`.
-
-Go to the directory that will be the parent of your project, and run the command with your project's name:
-
-```bash
-copier copy https://github.com/fastapi/full-stack-fastapi-template my-awesome-project --trust
-```
-
-If you have `pipx` and you didn't install `copier`, you can run it directly:
-
-```bash
-pipx run copier copy https://github.com/fastapi/full-stack-fastapi-template my-awesome-project --trust
-```
-
-**Note** the `--trust` option is necessary to be able to execute a [post-creation script](https://github.com/fastapi/full-stack-fastapi-template/blob/master/.copier/update_dotenv.py) that updates your `.env` files.
-
-### Input Variables
-
-Copier will ask you for some data, you might want to have at hand before generating the project.
-
-But don't worry, you can just update any of that in the `.env` files afterwards.
-
-The input variables, with their default values (some auto generated) are:
-
-- `project_name`: (default: `"FastAPI Project"`) The name of the project, shown to API users (in .env).
-- `stack_name`: (default: `"fastapi-project"`) The name of the stack used for Docker Compose labels and project name (no spaces, no periods) (in .env).
-- `secret_key`: (default: `"changethis"`) The secret key for the project, used for security, stored in .env, you can generate one with the method above.
-- `first_superuser`: (default: `"admin@example.com"`) The email of the first superuser (in .env).
-- `first_superuser_password`: (default: `"changethis"`) The password of the first superuser (in .env).
-- `smtp_host`: (default: "") The SMTP server host to send emails, you can set it later in .env.
-- `smtp_user`: (default: "") The SMTP server user to send emails, you can set it later in .env.
-- `smtp_password`: (default: "") The SMTP server password to send emails, you can set it later in .env.
-- `emails_from_email`: (default: `"info@example.com"`) The email account to send emails from, you can set it later in .env.
-- `postgres_password`: (default: `"changethis"`) The password for the PostgreSQL database, stored in .env, you can generate one with the method above.
-- `sentry_dsn`: (default: "") The DSN for Sentry, if you are using it, you can set it later in .env.
-
-## Backend Development
-
-Backend docs: [backend/README.md](./backend/README.md).
-
-## Frontend Development
-
-Frontend docs: [frontend/README.md](./frontend/README.md).
-
-## Deployment
-
-Deployment docs: [deployment.md](./deployment.md).
+This starts Postgres, Weaviate, Adminer, the backend, and the frontend. The frontend is served at `http://localhost:5173` and the API at `http://localhost:8000` (interactive docs at `http://localhost:8000/docs`).
 
 ## Development
 
-General development docs: [development.md](./development.md).
+- Backend docs: [backend/README.md](./backend/README.md)
+- Frontend docs: [frontend/README.md](./frontend/README.md)
+- General development (Docker Compose, local domains, `.env`): [development.md](./development.md)
+- Deployment: [deployment.md](./deployment.md)
+- Domain language: [CONTEXT.md](./CONTEXT.md) · Backend plan: [docs/backend-plan.md](./docs/backend-plan.md)
 
-This includes using Docker Compose, custom local domains, `.env` configurations, etc.
-
-## Release Notes
-
-Check the file [release-notes.md](./release-notes.md).
+A Postman collection is available under [postman/](./postman/).
 
 ## License
 
-The Full Stack FastAPI Template is licensed under the terms of the MIT license.
+Licensed under the terms of the MIT license. Built on the Full Stack FastAPI Template.
