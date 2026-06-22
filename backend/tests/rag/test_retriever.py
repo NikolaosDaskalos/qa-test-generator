@@ -7,11 +7,11 @@ import pytest
 from langchain_core.documents import Document
 from weaviate.classes.query import HybridFusion
 
-from app.core.config import settings
-from app.core.vector_db import WeaviateResources
-from app.errors.rag_errors import RetrieverError
-from app.models.source_document import SourceDocument
-from app.rag.retriever import DocumentRetriever
+from app.core import settings
+from app.core.errors.rag_errors import RetrieverError
+from app.db.models import RepositoryDocument
+from app.integrations.weaviate import WeaviateResources
+from app.rag import DocumentRetriever
 
 
 class FakeTenants:
@@ -120,25 +120,25 @@ class FakeReranker:
         return list(reversed(documents)) if self.results is None else self.results
 
 
-class FakeSourceDocumentStore:
-    """Load persisted parent SourceDocuments by identity."""
+class FakeRepositoryDocumentStore:
+    """Load persisted parent RepositoryDocuments by identity."""
 
     def __init__(self, documents=()) -> None:
         self.documents = {document.id: document for document in documents}
 
-    def get_by_id(self, source_document_id):
-        return self.documents.get(source_document_id)
+    def get_by_id(self, document_id):
+        return self.documents.get(document_id)
 
 
-def _retriever(*, tenant_exists=True, results=None, source_documents=(), reranked_documents=None):
+def _retriever(*, tenant_exists=True, results=None, repository_documents=(), reranked_documents=None):
     """Build a retriever and its underlying test doubles."""
     tenant = "player-123"
     collection = FakeCollection([tenant] if tenant_exists else [])
     vector_store = FakeVectorStore(results)
     resources = WeaviateResources(FakeClient(collection), vector_store)
     reranker = FakeReranker(reranked_documents)
-    source_document_store = FakeSourceDocumentStore(source_documents)
-    return DocumentRetriever(resources, tenant, source_document_store, reranker), collection, vector_store, reranker
+    repository_document_store = FakeRepositoryDocumentStore(repository_documents)
+    return DocumentRetriever(resources, tenant, repository_document_store, reranker), collection, vector_store, reranker
 
 
 def test_search_uses_repository_scoped_hybrid_options() -> None:
@@ -177,7 +177,7 @@ def test_search_returns_no_candidates_when_repository_has_no_results() -> None:
     assert results == []
 
 
-def test_search_retains_repository_evidence_metadata() -> None:
+def test_search_retains_repository_documents_metadata() -> None:
     """Keep source, Repository, commit, and parent identity on candidate Code Chunks."""
     repository_id = uuid.uuid4()
     document = Document(
@@ -191,82 +191,70 @@ def test_search_retains_repository_evidence_metadata() -> None:
     assert results == [(document, 0.8)]
 
 
-def test_retrieve_evidence_reranks_candidates_and_hydrates_the_top_parent() -> None:
+def test_retrieve_documents_reranks_candidates_and_hydrates_the_top_parent() -> None:
     """Return the complete parent selected by Cohere from candidate Code Chunks."""
     repository_id = uuid.uuid4()
-    first_parent = SourceDocument(repository_id=repository_id, content="complete first file", doc_metadata={"source": "first.py"})
-    second_parent = SourceDocument(repository_id=repository_id, content="complete second file", doc_metadata={"source": "second.py"})
+    first_parent = RepositoryDocument(repository_id=repository_id, content="complete first file", doc_metadata={"source": "first.py"})
+    second_parent = RepositoryDocument(repository_id=repository_id, content="complete second file", doc_metadata={"source": "second.py"})
     first_chunk = Document(page_content="first chunk", metadata={"parent_id": str(first_parent.id)})
     second_chunk = Document(page_content="second chunk", metadata={"parent_id": str(second_parent.id)})
-    retriever, _, _, reranker = _retriever(
-        results=[(first_chunk, 0.9), (second_chunk, 0.8)], source_documents=[first_parent, second_parent]
-    )
+    retriever, _, _, reranker = _retriever(results=[(first_chunk, 0.9), (second_chunk, 0.8)], repository_documents=[first_parent, second_parent])
 
-    evidence = retriever.retrieve_evidence("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=1)
+    documents = retriever.retrieve_documents("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=1)
 
-    assert evidence == [second_parent]
+    assert documents == [second_parent]
     assert reranker.call == ([first_chunk, second_chunk], "find behavior")
 
 
-def test_retrieve_evidence_ignores_invalid_parent_ids_and_stably_deduplicates() -> None:
+def test_retrieve_documents_ignores_invalid_parent_ids_and_stably_deduplicates() -> None:
     """Keep each valid parent once at its highest-ranked Code Chunk position."""
     repository_id = uuid.uuid4()
-    first_parent = SourceDocument(repository_id=repository_id, content="complete first file", doc_metadata={"source": "first.py"})
-    second_parent = SourceDocument(repository_id=repository_id, content="complete second file", doc_metadata={"source": "second.py"})
+    first_parent = RepositoryDocument(repository_id=repository_id, content="complete first file", doc_metadata={"source": "first.py"})
+    second_parent = RepositoryDocument(repository_id=repository_id, content="complete second file", doc_metadata={"source": "second.py"})
     lower_ranked_duplicate = Document(page_content="duplicate first chunk", metadata={"parent_id": str(first_parent.id)})
     invalid_parent = Document(page_content="orphan chunk", metadata={"parent_id": "not-a-uuid"})
     first_parent_chunk = Document(page_content="best first chunk", metadata={"parent_id": str(first_parent.id)})
     second_parent_chunk = Document(page_content="best second chunk", metadata={"parent_id": str(second_parent.id)})
     retriever, _, _, _ = _retriever(
-        results=[
-            (lower_ranked_duplicate, 0.6),
-            (invalid_parent, 0.7),
-            (first_parent_chunk, 0.8),
-            (second_parent_chunk, 0.9),
-        ],
-        source_documents=[first_parent, second_parent],
+        results=[(lower_ranked_duplicate, 0.6), (invalid_parent, 0.7), (first_parent_chunk, 0.8), (second_parent_chunk, 0.9)],
+        repository_documents=[first_parent, second_parent],
     )
 
-    evidence = retriever.retrieve_evidence("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=3)
+    documents = retriever.retrieve_documents("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=3)
 
-    assert evidence == [second_parent, first_parent]
+    assert documents == [second_parent, first_parent]
 
 
-def test_retrieve_evidence_skips_missing_and_cross_repository_parents() -> None:
+def test_retrieve_documents_skips_missing_and_cross_repository_parents() -> None:
     """Return only hydrated parents that belong to the requested Repository."""
     repository_id = uuid.uuid4()
-    valid_parent = SourceDocument(repository_id=repository_id, content="valid parent", doc_metadata={"source": "valid.py"})
-    mismatched_parent = SourceDocument(repository_id=uuid.uuid4(), content="other Repository", doc_metadata={"source": "other.py"})
+    valid_parent = RepositoryDocument(repository_id=repository_id, content="valid parent", doc_metadata={"source": "valid.py"})
+    mismatched_parent = RepositoryDocument(repository_id=uuid.uuid4(), content="other Repository", doc_metadata={"source": "other.py"})
     missing_parent_id = uuid.uuid4()
     valid_chunk = Document(page_content="valid chunk", metadata={"parent_id": str(valid_parent.id)})
     missing_chunk = Document(page_content="missing chunk", metadata={"parent_id": str(missing_parent_id)})
     mismatched_chunk = Document(page_content="mismatched chunk", metadata={"parent_id": str(mismatched_parent.id)})
     retriever, _, _, _ = _retriever(
-        results=[(valid_chunk, 0.7), (missing_chunk, 0.8), (mismatched_chunk, 0.9)],
-        source_documents=[valid_parent, mismatched_parent],
+        results=[(valid_chunk, 0.7), (missing_chunk, 0.8), (mismatched_chunk, 0.9)], repository_documents=[valid_parent, mismatched_parent]
     )
 
-    evidence = retriever.retrieve_evidence("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2)
+    documents = retriever.retrieve_documents("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2)
 
-    assert evidence == [valid_parent]
+    assert documents == [valid_parent]
 
 
-def test_retrieve_evidence_returns_empty_when_candidates_or_reranking_are_empty() -> None:
-    """Produce no Repository Evidence when either retrieval stage has no results."""
+def test_retrieve_documents_returns_empty_when_candidates_or_reranking_are_empty() -> None:
+    """Produce no Repository Documents when either retrieval stage has no results."""
     repository_id = uuid.uuid4()
     no_candidates_retriever, _, _, unused_reranker = _retriever(results=[])
 
-    assert no_candidates_retriever.retrieve_evidence(
-        "find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2
-    ) == []
+    assert no_candidates_retriever.retrieve_documents("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2) == []
     assert unused_reranker.call is None
 
     candidate = Document(page_content="candidate", metadata={"parent_id": str(uuid.uuid4())})
     no_reranks_retriever, _, _, used_reranker = _retriever(results=[(candidate, 0.9)], reranked_documents=[])
 
-    assert no_reranks_retriever.retrieve_evidence(
-        "find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2
-    ) == []
+    assert no_reranks_retriever.retrieve_documents("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2) == []
     assert used_reranker.call == ([candidate], "find behavior")
 
 

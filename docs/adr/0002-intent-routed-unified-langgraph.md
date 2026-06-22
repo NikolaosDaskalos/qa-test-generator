@@ -7,16 +7,16 @@ accepted
 ## Context and decision
 
 `POST /{repository_session_id}/questions` used to have exactly one behaviour: a repository-grounded
-answer streamed by `ChainBuilder`. We need the same single endpoint to also start a Test-Generation
+answer streamed by `ChainBuilder`. We need the same single endpoint to also start a Code Generation
 Task, without adding a second endpoint or an explicit client-supplied mode flag. We decided the
 front door **infers `Request Intent`** with an LLM `classify` node and routes a single unified
 LangGraph `StateGraph` (one shared state object) to one of two branches:
 
 - **`repository_question`** — the existing retrieval/answer logic, re-homed as native
   `retrieve → generate` graph nodes; terminal `Result`.
-- **`test_generation`** — persists a `Coding Run`, then `plan → retrieve → generate`. The planner
-  emits `Research Intents` tagged source/test and validates scope; one generic retrieve node
-  partitions Repository Evidence into `source_evidence` (what's implemented) and `test_evidence`
+- **`code_generation`** — persists a `Coding Run`, then `plan → retrieve → generate`. The planner
+  emits `Retrieval Requests` tagged source/test and validates scope; one generic retrieve node
+  partitions Repository Documents into `source_documents` (what's implemented) and `test_documents`
   (what's already tested); the generator is a ReAct loop whose only tool is `web_search`. Terminal
   `PatchResult` or `RunFailure`.
 
@@ -40,7 +40,7 @@ while stage markers ride `"custom"`, and a thin adapter maps both onto the exist
   contradicts the single-question entry point. Uncertain classification falls back to
   `repository_question`, which is read-only, so a misroute never triggers side effects.
 - **Unified graph vs. a thin router dispatching to the untouched flows** — chose one graph with
-  native nodes. The repo-question and test-gen branches share retrieval (`DocumentRetriever`) and one
+  native nodes. The repository-question and code-generation branches share retrieval (`DocumentRetriever`) and one
   state object; keeping the answer flow outside the graph would split the routing/state logic across
   two worlds. Cost: `ChainBuilder`'s token streaming had to move onto LangGraph's streaming API.
 - **`PostgresSaver` now vs. `MemorySaver`-then-swap** — chose the durable Postgres checkpointer
@@ -60,9 +60,9 @@ while stage markers ride `"custom"`, and a thin adapter maps both onto the exist
   tests would move from a trivial fake to full `BaseChatModel` fakes. All of that buys nothing while
   generation is a tool-free one-shot answer. So generation stays a plain node now; `create_agent`
   lands in issue 09 alongside `web_search`, where the ReAct loop and tool calls actually justify it.
-- **Web search confined to test generation** — `web_search` (Tavily) is reachable only on the
-  `test_generation` path, as a bounded generator tool for a framework's current syntax and best
-  practices. Its results are `External Reference`s, kept separate from Repository Evidence and never
+- **Web search confined to code generation** — `web_search` (Tavily) is reachable only on the
+  `code_generation` path, as a bounded generator tool for a framework's current syntax and best
+  practices. Its results are `External Reference`s, kept separate from Repository Documents and never
   grounding claims about the Repository's code. This supersedes issue 07 (explicit External Research
   Requests on the repository-question path) and the `External Research Request` glossary term;
   ordinary Repository questions never reach the web.

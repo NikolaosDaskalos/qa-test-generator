@@ -1,6 +1,6 @@
 """The port the graph uses to publish an approved Test Patch.
 
-Approval is the one test-generation step that needs the network and the
+Approval is the one code-generation step that needs the network and the
 Repository Credential, so the graph stays free of both: the ``approve_patch``
 node calls this thin port to commit the reviewed patch on its unique non-default
 branch and push it with the credential. ``GitPatchPublisher`` is the production
@@ -11,10 +11,9 @@ import uuid
 from collections.abc import Callable
 from typing import Protocol
 
-from app.core.security import decrypt_repository_token
-from app.git.git_commands import GitCommands
-from app.git.repository_url import parse_repository_url
-from app.models.repository import Repository
+from app.core import decrypt_repository_token
+from app.db.models import Repository
+from app.integrations.git import GitCommands, parse_repository_url
 
 
 class PatchPublisher(Protocol):

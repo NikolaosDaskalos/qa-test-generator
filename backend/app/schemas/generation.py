@@ -3,7 +3,7 @@
 The generator returns complete file paths and contents — never diff text — so the
 backend retains control of what is written and derives the canonical diff itself.
 External References are the web results consulted for a test framework's current
-syntax and best practices; they are kept separate from Repository Evidence and
+syntax and best practices; they are kept separate from Repository Documents and
 never ground claims about the Repository's code.
 """
 
@@ -18,7 +18,7 @@ class GeneratedFile(BaseModel):
 
 
 class ExternalReference(BaseModel):
-    """A web result consulted for test-writing guidance, kept apart from Repository Evidence."""
+    """A web result consulted for test-writing guidance, kept apart from Repository Documents."""
 
     url: str = Field(description="URL of the consulted external source.")
     title: str = Field(default="", description="Human-readable title of the external source.")

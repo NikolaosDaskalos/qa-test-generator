@@ -1,13 +1,15 @@
+"""Local-only routes for development convenience, never mounted outside the local environment."""
+
 import logging
 from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.core.security import get_password_hash
+from app.core import get_password_hash
+from app.db.models import User
 from app.dependencies import SessionDep
-from app.models.user import User
-from app.schemas.user import UserPublic
+from app.schemas import UserPublic
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,8 @@ router = APIRouter(tags=["private"], prefix="/private")
 
 
 class PrivateUserCreate(BaseModel):
+    """Payload for the local-only user creation endpoint."""
+
     email: str
     password: str
     full_name: str

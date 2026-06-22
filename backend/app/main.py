@@ -9,10 +9,10 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 
-from app.core.checkpointer import close_checkpointer, open_checkpointer
-from app.api.main import api_router
-from app.core import vector_db
-from app.core.config import settings
+from app.api import api_router
+from app.api.exception_handlers import register_exception_handlers
+from app.core import close_checkpointer, open_checkpointer, settings
+from app.integrations.weaviate import close_weaviate, initialize_weaviate
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ else:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize Weaviate and the session-graph checkpointer at startup; close both on shutdown."""
     logger.info("Application startup started")
-    vector_db.initialize_weaviate()
+    initialize_weaviate()
     checkpointer, checkpointer_pool = open_checkpointer()
     app.state.session_checkpointer = checkpointer
     logger.info("Application startup completed")
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         logger.info("Application shutdown started")
         close_checkpointer(checkpointer_pool)
-        vector_db.close_weaviate()
+        close_weaviate()
         logger.info("Application shutdown completed")
 
 
@@ -57,3 +57,6 @@ if settings.all_cors_origins:
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 logger.info("API router registered with prefix=%s", settings.API_V1_STR)
+
+register_exception_handlers(app)
+logger.info("Domain exception handlers registered")

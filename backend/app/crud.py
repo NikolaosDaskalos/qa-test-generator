@@ -1,16 +1,22 @@
+"""User persistence helpers: create, update, look up, and authenticate users."""
+
 import logging
 from typing import Any
 
 from sqlmodel import Session, select
 
+# Import the submodule directly rather than the `app.core` surface so this
+# persistence helper does not pull in the checkpointer and lifecycle machinery
+# the package __init__ exposes.
 from app.core.security import get_password_hash, verify_password
-from app.models.user import User
-from app.schemas.user import UserCreate, UserUpdate
+from app.db.models import User
+from app.schemas import UserCreate, UserUpdate
 
 logger = logging.getLogger(__name__)
 
 
 def create_user(*, session: Session, user_create: UserCreate) -> User:
+    """Persist a new user, hashing the plaintext password before storing it."""
     db_obj = User.model_validate(user_create, update={"hashed_password": get_password_hash(user_create.password)})
     session.add(db_obj)
     session.commit()
@@ -20,6 +26,7 @@ def create_user(*, session: Session, user_create: UserCreate) -> User:
 
 
 def update_user(*, session: Session, db_user: User, user_in: UserUpdate) -> Any:
+    """Apply the set fields of ``user_in`` to ``db_user``, re-hashing the password if changed."""
     user_data = user_in.model_dump(exclude_unset=True)
     extra_data = {}
     if "password" in user_data:
@@ -35,6 +42,7 @@ def update_user(*, session: Session, db_user: User, user_in: UserUpdate) -> Any:
 
 
 def get_user_by_email(*, session: Session, email: str) -> User | None:
+    """Return the user with this email, or ``None`` if no such user exists."""
     statement = select(User).where(User.email == email)
     session_user = session.exec(statement).first()
     return session_user
@@ -46,6 +54,11 @@ DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$MjQyZWE1MzBjYjJlZTI0Yw$YTU4NGM5ZTZm
 
 
 def authenticate(*, session: Session, email: str, password: str) -> User | None:
+    """Return the user if the credentials match, else ``None``.
+
+    Runs a verification against a dummy hash on a missing user to keep timing
+    constant, and transparently upgrades a stale password hash on success.
+    """
     db_user = get_user_by_email(session=session, email=email)
     if not db_user:
         # Prevent timing attacks by running password verification even when user doesn't exist

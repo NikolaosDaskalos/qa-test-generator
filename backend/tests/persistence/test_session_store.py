@@ -3,6 +3,7 @@
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import event
@@ -10,13 +11,10 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.pool import NullPool, StaticPool
 from sqlmodel import Session, create_engine, delete, select
 
-from app.core.config import settings
-from app.enums.repository import RepositoryProvider
-from app.enums.session import SessionMessageRole
-from app.models.repository import Repository
-from app.models.session import RepositorySession, SessionHistory
-from app.models.user import User
-from app.persistence.session_store import RepositorySessionStore
+from app.core import settings
+from app.db.models import Repository, RepositorySession, SessionHistory, User
+from app.db.persistence import RepositorySessionStore
+from app.enums import RepositoryProvider, SessionMessageRole
 
 
 def _engine():
@@ -33,18 +31,128 @@ def _engine():
     return engine
 
 
-def test_recent_history_returns_latest_six_messages_in_chronological_order() -> None:
+def _seed_owner_and_repository(db: Session, *, user_id: uuid.UUID, repository_id: uuid.UUID) -> None:
+    db.add(User(id=user_id, email=f"{user_id}@example.com", hashed_password="not-used"))
+    db.add(Repository(id=repository_id, user_id=user_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai"))
+
+
+def _add_session(db: Session, *, user_id: uuid.UUID, repository_id: uuid.UUID, updated_at: datetime, session_id: uuid.UUID | None = None) -> uuid.UUID:
+    session_id = session_id or uuid.uuid4()
+    db.add(RepositorySession(id=session_id, user_id=user_id, repository_id=repository_id, updated_at=updated_at))
+    return session_id
+
+
+def test_get_page_returns_owner_sessions_most_recently_changed_first() -> None:
     engine = _engine()
-    owner_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    base = datetime(2026, 6, 18, tzinfo=UTC)
+
+    with Session(engine) as db:
+        _seed_owner_and_repository(db, user_id=user_id, repository_id=repository_id)
+        oldest = _add_session(db, user_id=user_id, repository_id=repository_id, updated_at=base)
+        newest = _add_session(db, user_id=user_id, repository_id=repository_id, updated_at=base + timedelta(hours=2))
+        middle = _add_session(db, user_id=user_id, repository_id=repository_id, updated_at=base + timedelta(hours=1))
+        db.commit()
+
+        page = RepositorySessionStore(db).get_page(skip=0, limit=100, user_id=user_id)
+
+    assert [session.id for session in page] == [newest, middle, oldest]
+
+
+def test_get_page_breaks_updated_at_ties_by_id_for_stable_paging() -> None:
+    engine = _engine()
+    user_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    shared = datetime(2026, 6, 18, tzinfo=UTC)
+    low_id = uuid.UUID(int=1)
+    high_id = uuid.UUID(int=2)
+
+    with Session(engine) as db:
+        _seed_owner_and_repository(db, user_id=user_id, repository_id=repository_id)
+        _add_session(db, user_id=user_id, repository_id=repository_id, updated_at=shared, session_id=high_id)
+        _add_session(db, user_id=user_id, repository_id=repository_id, updated_at=shared, session_id=low_id)
+        db.commit()
+
+        page = RepositorySessionStore(db).get_page(skip=0, limit=100, user_id=user_id)
+
+    assert [session.id for session in page] == [low_id, high_id]
+
+
+def test_get_page_scopes_to_owner_but_returns_all_when_user_id_is_none() -> None:
+    engine = _engine()
+    user_id = uuid.uuid4()
+    other_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    other_repository_id = uuid.uuid4()
+    base = datetime(2026, 6, 18, tzinfo=UTC)
+
+    with Session(engine) as db:
+        _seed_owner_and_repository(db, user_id=user_id, repository_id=repository_id)
+        _seed_owner_and_repository(db, user_id=other_id, repository_id=other_repository_id)
+        mine = _add_session(db, user_id=user_id, repository_id=repository_id, updated_at=base)
+        theirs = _add_session(db, user_id=other_id, repository_id=other_repository_id, updated_at=base)
+        db.commit()
+        store = RepositorySessionStore(db)
+
+        scoped = store.get_page(skip=0, limit=100, user_id=user_id)
+        unscoped = store.get_page(skip=0, limit=100, user_id=None)
+
+    assert [session.id for session in scoped] == [mine]
+    assert {session.id for session in unscoped} == {mine, theirs}
+
+
+def test_get_page_filters_by_repository_when_supplied() -> None:
+    engine = _engine()
+    user_id = uuid.uuid4()
+    first_repository = uuid.uuid4()
+    second_repository = uuid.uuid4()
+    base = datetime(2026, 6, 18, tzinfo=UTC)
+
+    with Session(engine) as db:
+        _seed_owner_and_repository(db, user_id=user_id, repository_id=first_repository)
+        db.add(Repository(id=second_repository, user_id=user_id, name="second", repository_url="https://github.com/example/second.git", owner="example"))
+        in_first = _add_session(db, user_id=user_id, repository_id=first_repository, updated_at=base)
+        _add_session(db, user_id=user_id, repository_id=second_repository, updated_at=base)
+        db.commit()
+
+        page = RepositorySessionStore(db).get_page(skip=0, limit=100, user_id=user_id, repository_id=first_repository)
+
+    assert [session.id for session in page] == [in_first]
+
+
+def test_count_totals_all_matches_independent_of_the_page_window() -> None:
+    engine = _engine()
+    user_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    base = datetime(2026, 6, 18, tzinfo=UTC)
+
+    with Session(engine) as db:
+        _seed_owner_and_repository(db, user_id=user_id, repository_id=repository_id)
+        for offset in range(3):
+            _add_session(db, user_id=user_id, repository_id=repository_id, updated_at=base + timedelta(hours=offset))
+        db.commit()
+        store = RepositorySessionStore(db)
+
+        first_page = store.get_page(skip=0, limit=2, user_id=user_id)
+        total = store.count(user_id=user_id)
+
+    assert len(first_page) == 2
+    assert total == 3
+
+
+def test_recent_history_returns_latest_messages_in_chronological_order() -> None:
+    engine = _engine()
+    user_id = uuid.uuid4()
     repository_id = uuid.uuid4()
     repository_session_id = uuid.uuid4()
 
     with Session(engine) as db:
-        db.add(User(id=owner_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(User(id=user_id, email="owner@example.com", hashed_password="not-used"))
         db.add(
-            Repository(id=repository_id, user_id=owner_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+            Repository(id=repository_id, user_id=user_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
         )
-        db.add(RepositorySession(id=repository_session_id, owner_id=owner_id, repository_id=repository_id))
+        db.add(RepositorySession(id=repository_session_id, user_id=user_id, repository_id=repository_id))
         db.commit()
         store = RepositorySessionStore(db)
 
@@ -54,6 +162,8 @@ def test_recent_history_returns_latest_six_messages_in_chronological_order() -> 
         messages = store.get_recent_history(repository_session_id)
 
     assert [(message.role, message.content) for message in messages] == [
+        (SessionMessageRole.user, "question 1"),
+        (SessionMessageRole.assistant, "answer 1"),
         (SessionMessageRole.user, "question 2"),
         (SessionMessageRole.assistant, "answer 2"),
         (SessionMessageRole.user, "question 3"),
@@ -65,16 +175,16 @@ def test_recent_history_returns_latest_six_messages_in_chronological_order() -> 
 
 def test_append_exchange_retains_assistant_citations_structurally() -> None:
     engine = _engine()
-    owner_id = uuid.uuid4()
+    user_id = uuid.uuid4()
     repository_id = uuid.uuid4()
     repository_session_id = uuid.uuid4()
 
     with Session(engine) as db:
-        db.add(User(id=owner_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(User(id=user_id, email="owner@example.com", hashed_password="not-used"))
         db.add(
-            Repository(id=repository_id, user_id=owner_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+            Repository(id=repository_id, user_id=user_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
         )
-        db.add(RepositorySession(id=repository_session_id, owner_id=owner_id, repository_id=repository_id))
+        db.add(RepositorySession(id=repository_session_id, user_id=user_id, repository_id=repository_id))
         db.commit()
         store = RepositorySessionStore(db)
 
@@ -92,6 +202,103 @@ def test_append_exchange_retains_assistant_citations_structurally() -> None:
     assert assistant_message.citations == [{"source": "app/auth.py"}, {"source": "app/login.py"}]
     # The user message carries no citations.
     assert user_message.citations == []
+
+
+def test_first_user_exchange_titles_session_and_updates_activity() -> None:
+    engine = _engine()
+    user_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    repository_session_id = uuid.uuid4()
+    created_at = datetime(2026, 6, 18, 9, 0, tzinfo=UTC)
+
+    with Session(engine) as db:
+        db.add(User(id=user_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(
+            Repository(id=repository_id, user_id=user_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+        )
+        db.add(
+            RepositorySession(
+                id=repository_session_id, user_id=user_id, repository_id=repository_id, title="New session", created_at=created_at, updated_at=created_at
+            )
+        )
+        db.commit()
+        store = RepositorySessionStore(db)
+
+        store.append_exchange(
+            repository_session_id,
+            user_message="  Where   is the login route tested, and what assertions cover it in enough detail to make this title too long?  ",
+            assistant_message="Login is route-tested.",
+        )
+
+        reloaded = store.get_by_id(repository_session_id)
+
+    assert reloaded is not None
+    assert reloaded.title == "Where is the login route tested, and what assertions cover"
+    assert len(reloaded.title) <= 60
+    updated_at = reloaded.updated_at if reloaded.updated_at.tzinfo else reloaded.updated_at.replace(tzinfo=UTC)
+    assert updated_at > created_at
+
+
+def test_later_exchange_updates_activity_without_overwriting_derived_title() -> None:
+    engine = _engine()
+    user_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    repository_session_id = uuid.uuid4()
+    previous_activity = datetime(2026, 6, 18, 9, 0, tzinfo=UTC)
+
+    with Session(engine) as db:
+        db.add(User(id=user_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(
+            Repository(id=repository_id, user_id=user_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+        )
+        db.add(
+            RepositorySession(
+                id=repository_session_id, user_id=user_id, repository_id=repository_id, title="Where is login tested?", updated_at=previous_activity
+            )
+        )
+        db.commit()
+        store = RepositorySessionStore(db)
+
+        store.append_exchange(
+            repository_session_id, user_message="Generate pytest coverage for password reset.", assistant_message="I will start a Coding Run."
+        )
+
+        reloaded = store.get_by_id(repository_session_id)
+
+    assert reloaded is not None
+    assert reloaded.title == "Where is login tested?"
+    updated_at = reloaded.updated_at if reloaded.updated_at.tzinfo else reloaded.updated_at.replace(tzinfo=UTC)
+    assert updated_at > previous_activity
+
+
+def test_record_activity_updates_time_without_changing_title() -> None:
+    engine = _engine()
+    user_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    repository_session_id = uuid.uuid4()
+    previous_activity = datetime(2026, 6, 18, 9, 0, tzinfo=UTC)
+
+    with Session(engine) as db:
+        db.add(User(id=user_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(
+            Repository(id=repository_id, user_id=user_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
+        )
+        db.add(
+            RepositorySession(
+                id=repository_session_id, user_id=user_id, repository_id=repository_id, title="Where is login tested?", updated_at=previous_activity
+            )
+        )
+        db.commit()
+        store = RepositorySessionStore(db)
+
+        store.record_activity(repository_session_id)
+
+        reloaded = store.get_by_id(repository_session_id)
+
+    assert reloaded is not None
+    assert reloaded.title == "Where is login tested?"
+    updated_at = reloaded.updated_at if reloaded.updated_at.tzinfo else reloaded.updated_at.replace(tzinfo=UTC)
+    assert updated_at > previous_activity
 
 
 def test_append_exchange_locks_repository_session_before_allocating_positions() -> None:
@@ -125,13 +332,13 @@ def test_append_exchange_locks_repository_session_before_allocating_positions() 
 
 def test_repository_binding_cannot_be_reassigned_after_session_creation() -> None:
     engine = _engine()
-    owner_id = uuid.uuid4()
-    first_repository = Repository(user_id=owner_id, name="first", repository_url="https://github.com/example/first.git", owner="example")
-    second_repository = Repository(user_id=owner_id, name="second", repository_url="https://github.com/example/second.git", owner="example")
-    repository_session = RepositorySession(owner_id=owner_id, repository_id=first_repository.id)
+    user_id = uuid.uuid4()
+    first_repository = Repository(user_id=user_id, name="first", repository_url="https://github.com/example/first.git", owner="example")
+    second_repository = Repository(user_id=user_id, name="second", repository_url="https://github.com/example/second.git", owner="example")
+    repository_session = RepositorySession(user_id=user_id, repository_id=first_repository.id)
 
     with Session(engine) as db:
-        db.add(User(id=owner_id, email="owner@example.com", hashed_password="not-used"))
+        db.add(User(id=user_id, email="owner@example.com", hashed_password="not-used"))
         db.add(first_repository)
         db.add(second_repository)
         db.add(repository_session)
@@ -146,7 +353,7 @@ def test_deleting_repository_cascades_to_sessions_and_history() -> None:
     engine = _engine()
     owner = User(email="owner@example.com", hashed_password="not-used")
     repository = Repository(user_id=owner.id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai")
-    repository_session = RepositorySession(owner_id=owner.id, repository_id=repository.id)
+    repository_session = RepositorySession(user_id=owner.id, repository_id=repository.id)
     history = SessionHistory(session_id=repository_session.id, role=SessionMessageRole.user, content="question", position=1)
     repository_session_id = repository_session.id
 
@@ -177,8 +384,8 @@ def test_concurrent_appends_allocate_unique_ordered_positions_in_postgresql() ->
         provider=RepositoryProvider.github,
         owner="example",
     )
-    repository_session = RepositorySession(owner_id=owner.id, repository_id=repository.id)
-    owner_id = owner.id
+    repository_session = RepositorySession(user_id=owner.id, repository_id=repository.id)
+    user_id = owner.id
     repository_session_id = repository_session.id
 
     with Session(engine) as db:
@@ -216,6 +423,6 @@ def test_concurrent_appends_allocate_unique_ordered_positions_in_postgresql() ->
     finally:
         event.remove(engine, "after_cursor_execute", synchronize_unlocked_position_reads)
         with Session(engine) as db:
-            db.exec(delete(User).where(User.id == owner_id))
+            db.exec(delete(User).where(User.id == user_id))
             db.commit()
         engine.dispose()

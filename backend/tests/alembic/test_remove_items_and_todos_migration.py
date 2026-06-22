@@ -39,6 +39,6 @@ def test_downgrade_restores_owned_item_and_todo_tables(monkeypatch) -> None:
     for table_items in tables.values():
         columns = {item.name: item for item in table_items if isinstance(item, Column)}
         foreign_keys = [item for item in table_items if isinstance(item, ForeignKeyConstraint)]
-        assert columns["owner_id"].nullable is False
+        assert columns["user_id"].nullable is False
         assert len(foreign_keys) == 1
         assert foreign_keys[0].ondelete == "CASCADE"

@@ -2,8 +2,8 @@
 
 import uuid
 
-from app.models.source_document import SourceDocument
-from app.persistence.source_document_store import SourceDocumentStore
+from app.db.models import RepositoryDocument
+from app.db.persistence import RepositoryDocumentStore
 
 
 class FakeSession:
@@ -40,15 +40,15 @@ class FakeSession:
         self.rollbacks += 1
 
 
-def _document() -> SourceDocument:
-    return SourceDocument(
+def _document() -> RepositoryDocument:
+    return RepositoryDocument(
         repository_id=uuid.UUID("d72745e5-958f-436c-8fc2-d8c2596b33ee"), content="print('hello')", doc_metadata={"source": "backend/app/main.py"}
     )
 
 
 def test_save_persists_document() -> None:
     session = FakeSession()
-    document_store = SourceDocumentStore(session)
+    document_store = RepositoryDocumentStore(session)
     document = _document()
 
     result = document_store.save(document)
@@ -61,7 +61,7 @@ def test_save_persists_document() -> None:
 
 def test_save_all_persists_documents_in_one_batch() -> None:
     session = FakeSession()
-    document_store = SourceDocumentStore(session)
+    document_store = RepositoryDocumentStore(session)
     documents = [_document(), _document()]
 
     result = document_store.save_all(documents)
@@ -74,7 +74,7 @@ def test_save_all_persists_documents_in_one_batch() -> None:
 
 def test_replace_for_repository_deletes_then_inserts_in_one_transaction() -> None:
     session = FakeSession()
-    document_store = SourceDocumentStore(session)
+    document_store = RepositoryDocumentStore(session)
     documents = [_document(), _document()]
     repository_id = documents[0].repository_id
 
@@ -89,7 +89,7 @@ def test_replace_for_repository_deletes_then_inserts_in_one_transaction() -> Non
 
 def test_delete_by_repository_removes_all_matching_documents() -> None:
     session = FakeSession()
-    document_store = SourceDocumentStore(session)
+    document_store = RepositoryDocumentStore(session)
 
     document_store.delete_by_repository(uuid.uuid4())
 
@@ -99,7 +99,7 @@ def test_delete_by_repository_removes_all_matching_documents() -> None:
 
 def test_delete_removes_document() -> None:
     session = FakeSession()
-    document_store = SourceDocumentStore(session)
+    document_store = RepositoryDocumentStore(session)
     document = _document()
 
     document_store.delete(document)

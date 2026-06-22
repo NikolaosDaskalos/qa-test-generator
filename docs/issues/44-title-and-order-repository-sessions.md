@@ -1,0 +1,26 @@
+# Automatically title and order Repository Sessions by activity
+
+Status: completed
+Type: AFK
+User stories: 21, 95-97
+
+## What to build
+
+Create blank Repository Sessions with the visible title “New session.” On the first user request, replace that placeholder with a short deterministic title derived from the normalized request text without another model call or naming dialog. Keep the derived title stable on later turns.
+
+Treat user messages and resolved Coding Run decisions as Repository Session activity. Update the session activity time and list sessions newest-activity-first within their Repository so the sidebar reflects where the user most recently worked. Manual rename and delete controls are outside this slice.
+
+## Acceptance criteria
+
+- [x] A newly created Repository Session is persisted and displayed as “New session.”
+- [x] Its first non-empty user request produces a deterministic, normalized title of at most 60 display characters without an LLM call.
+- [x] Later requests do not overwrite the derived title.
+- [x] Sending a user request updates Repository Session activity and moves it to the top of its Repository’s session list.
+- [x] Resolving a Coding Run approval or rejection updates Repository Session activity without changing an established title.
+- [x] Repository Sessions are returned and rendered newest-activity-first with deterministic tie-breaking.
+- [x] Reloading or directly opening the session URL preserves the title and ordering.
+- [x] Repository question, Test-Generation Task, decision, and stable-title behavior are covered across persistence, API, and UI tests.
+
+## Blocked by
+
+- [Issue 43](43-deep-linked-repository-session-navigation.md)

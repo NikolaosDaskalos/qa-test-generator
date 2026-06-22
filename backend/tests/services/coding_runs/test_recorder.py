@@ -6,15 +6,11 @@ from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine
 
+from app.db.models import CodingRun, Repository, RepositorySession, User
+from app.db.persistence import CodingRunStore
+from app.enums import CodingRunStage, CodingRunStatus
+from app.schemas import ExternalReference, GeneratedFile, ReviewFinding
 from app.services.coding_runs.recorder import CodingRunRecorder
-from app.enums.coding_run import CodingRunStage, CodingRunStatus
-from app.models.coding_run import CodingRun
-from app.models.repository import Repository
-from app.models.session import RepositorySession
-from app.models.user import User
-from app.persistence.coding_run_store import CodingRunStore
-from app.schemas.generation import ExternalReference, GeneratedFile
-from app.schemas.review import ReviewFinding
 
 
 def _engine():
@@ -30,10 +26,10 @@ def _engine():
 
 
 def _seed(db: Session):
-    owner_id, repository_id, session_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    db.add(User(id=owner_id, email="o@example.com", hashed_password="x"))
-    db.add(Repository(id=repository_id, user_id=owner_id, name="r", repository_url="https://github.com/o/r.git", owner="o"))
-    db.add(RepositorySession(id=session_id, owner_id=owner_id, repository_id=repository_id))
+    user_id, repository_id, session_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    db.add(User(id=user_id, email="o@example.com", hashed_password="x"))
+    db.add(Repository(id=repository_id, user_id=user_id, name="r", repository_url="https://github.com/o/r.git", owner="o"))
+    db.add(RepositorySession(id=session_id, user_id=user_id, repository_id=repository_id))
     db.commit()
     return session_id
 

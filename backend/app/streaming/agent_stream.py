@@ -5,16 +5,20 @@ generating node's token chunks ride the ``messages`` stream. ``emit`` is the onl
 way nodes publish a custom marker; ``map_graph_stream`` is the only adapter that
 folds both modes back onto the typed ``AgentStreamEvent`` union.
 
-Test-generation terminal domain events are emitted by the graph node that
+Code-generation terminal domain events are emitted by the graph node that
 produces them and are forwarded like any other custom marker. This supersedes
 ADR-0002's earlier "caller decides from final state" stream contract. Repository
 question ``Result`` events remain assembled by the session service after
 persistence because they need the stored assistant message id.
 """
 
+import json
+import logging
 from collections.abc import Iterable, Iterator
 
-from app.schemas.agent_stream import AgentStreamEvent, Token
+from app.schemas import AgentStreamEvent, Token
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - import guard for environments without the helper
     from langgraph.config import get_stream_writer
@@ -54,3 +58,20 @@ def map_graph_stream(stream_items: Iterable[tuple[str, object]]) -> Iterator[Age
             content = getattr(message, "content", "") or ""
             if content:
                 yield Token(content=content)
+
+
+def to_sse_frames(events: Iterable[AgentStreamEvent]) -> Iterator[str]:
+    """Serialize typed Agent Stream events as server-sent event frames.
+
+    This is the only place that knows the SSE wire format. The terminal ``Result``
+    event closes a successful stream — there is no separate ``done`` frame. An
+    unexpected mid-stream failure surfaces as a single out-of-band ``error`` frame
+    (outside the typed vocabulary) rather than tearing down the connection.
+    """
+    try:
+        for event in events:
+            yield f"data: {event.model_dump_json()}\n\n"
+    except Exception:
+        logger.exception("Streaming answer failed")
+        error = {"type": "error", "message": "An error occurred while generating the answer."}
+        yield f"data: {json.dumps(error)}\n\n"

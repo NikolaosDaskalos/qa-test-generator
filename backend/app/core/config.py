@@ -1,5 +1,6 @@
 """Define application settings and environment-value normalization."""
 
+import os
 import secrets
 import warnings
 from base64 import urlsafe_b64encode
@@ -7,7 +8,6 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from charset_normalizer.md import lru_cache
 from cryptography.fernet import Fernet
 from pydantic import AnyUrl, BeforeValidator, EmailStr, Field, HttpUrl, PostgresDsn, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -150,8 +150,22 @@ class Settings(BaseSettings):
     HF_TOKEN: str
 
     LLM_MODEL: str = "gpt-4o-mini"
-    MAX_TOKENS: int = 5_000
+    LLM_MODEL_STRONGEST: str = "claude-haiku-4-5"
+    LLM_MODEL_STRONG: str = "gpt-4o"
+
+    LLM_MAX_TOKENS: int = 2000
+    STRONG_LLM_MAX_TOKENS: int = 7000
+    STRONGEST_LLM_MAX_TOKENS: int = 7000
     TEMPERATURE: float = 0.0
+
+    # LangSmith tracing. The whole agent graph runs on LangChain/LangGraph runnables,
+    # which auto-export traces to LangSmith when these are present in ``os.environ``.
+    # ``model_post_init`` mirrors them out of pydantic settings into the process
+    # environment, so enabling tracing is purely a matter of setting these here.
+    LANGSMITH_TRACING: bool = False
+    LANGSMITH_API_KEY: str | None = None
+    LANGSMITH_PROJECT: str = "qa-test-generator"
+    LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
 
     EMBEDDING_MODEL: str = "voyage-code-3"
     EMBEDDING_MODEL_TOKENIZER: str = "voyageai/voyage-code-3"
@@ -178,17 +192,44 @@ class Settings(BaseSettings):
     CHECKPOINTER_POOL_MAX_SIZE: int = Field(default=10, ge=1)
 
     SESSION_HISTORY_LIMIT: int = 10
-    RECURSION_LIMIT: int = 3
+    RECURSION_LIMIT: int = 7
+
+    # The Patch Review pass bar: a patch is accepted when its reviewer score (0–10)
+    # meets this threshold. The backend owns this decision; the reviewer only scores.
+    REVIEW_PASS_THRESHOLD: int = Field(default=7, ge=0, le=10)
+
+    # Generation Retries: how many times the Code Generator may revise a below-threshold
+    # Test Patch before the post-review router escalates the best attempt to human review.
+    # Exhaustion escalates, never fails. Zero disables revision entirely.
+    MAX_GENERATION_RETRIES: int = Field(default=2, ge=0)
 
     REPO_PATH: Path = Field(default_factory=lambda: PROJECT_PATH / ".tmp/repositories")
 
     def model_post_init(self, __context) -> None:
-        """Create the local repository storage directory after validation."""
+        """Create the local repository storage directory and wire LangSmith tracing."""
         self.REPO_PATH.mkdir(parents=True, exist_ok=True)
+        self._configure_langsmith()
+
+    def _configure_langsmith(self) -> None:
+        """Mirror LangSmith settings into ``os.environ`` for LangChain auto-tracing.
+
+        LangChain/LangGraph read tracing config straight from the process environment,
+        but pydantic loads the ``.env`` file without exporting it there. When tracing is
+        disabled or no API key is set we leave the environment untouched so a stray
+        ``LANGSMITH_TRACING`` never silently turns tracing on without credentials.
+        """
+        if self.LANGSMITH_TRACING and self.LANGSMITH_API_KEY:
+            os.environ["LANGSMITH_TRACING"] = "true"
+            os.environ["LANGSMITH_API_KEY"] = self.LANGSMITH_API_KEY
+            os.environ["LANGSMITH_PROJECT"] = self.LANGSMITH_PROJECT
+            os.environ["LANGSMITH_ENDPOINT"] = self.LANGSMITH_ENDPOINT
+
+        if self.HF_TOKEN:
+            os.environ["HF_TOKEN"] = self.HF_TOKEN
 
     @classmethod
     def settings_customise_sources(
-            cls, settings_cls: type[BaseSettings], init_settings: Any, env_settings: Any, dotenv_settings: Any, file_secret_settings: Any
+        cls, settings_cls: type[BaseSettings], init_settings: Any, env_settings: Any, dotenv_settings: Any, file_secret_settings: Any
     ) -> tuple[Any, ...]:
         """Prioritize dotenv values over process environment variables."""
         # .env file takes priority over system/process environment variables

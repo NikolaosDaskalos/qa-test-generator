@@ -14,10 +14,9 @@ exception and never a raw state dict — and the thin graph node emits it.
 import logging
 import uuid
 
+from app.enums import CodingRunStage
+from app.schemas import ReviewFinding, RunApproved, RunFailure, RunRejected
 from app.services.coding_runs.workspace import GenerationWorkspace
-from app.enums.coding_run import CodingRunStage
-from app.schemas.agent_stream import RunApproved, RunFailure, RunRejected
-from app.schemas.review import ReviewFinding
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +27,11 @@ COMMIT_FAILED = "Could not commit the approved Test Patch."
 PUSH_FAILED = "Could not push the approved Test Patch branch."
 
 
+def _pushed_message(branch: str) -> str:
+    """Ready-to-show copy naming the pushed branch and directing the owner to open it."""
+    return f"Your tests were pushed to branch '{branch}'. Open it on your repository to review."
+
+
 class DecisionFinalizer:
     """Finalize the owner's approve/reject decision on a reviewed Test Patch."""
 
@@ -35,15 +39,9 @@ class DecisionFinalizer:
         self._recorder = recorder
 
     def approve(
-        self,
-        *,
-        publisher,
-        workspace: GenerationWorkspace,
-        coding_run_id: uuid.UUID,
-        generation_branch: str,
-        diff: str,
-        indexed_commit_sha: str,
+        self, *, publisher, workspace: GenerationWorkspace, coding_run_id: uuid.UUID, generation_branch: str, diff: str, indexed_commit_sha: str
     ) -> RunApproved | RunFailure:
+        """Commit, push, record approved, and restore the checkout; map Git errors to a typed failure."""
         try:
             publisher.commit(APPROVAL_COMMIT_MESSAGE)
         except Exception:
@@ -56,7 +54,8 @@ class DecisionFinalizer:
             return RunFailure(failed_stage=CodingRunStage.git_push, reason=PUSH_FAILED)
         self._recorder.approve(coding_run_id)
         self._restore_checkout(workspace, indexed_commit_sha, generation_branch)
-        return RunApproved(coding_run_id=coding_run_id, branch=generation_branch or "", diff=diff or "")
+        branch = generation_branch or ""
+        return RunApproved(coding_run_id=coding_run_id, branch=branch, diff=diff or "", message=_pushed_message(branch))
 
     def discard(
         self,
@@ -68,6 +67,7 @@ class DecisionFinalizer:
         indexed_commit_sha: str,
         findings: list[ReviewFinding],
     ) -> RunRejected:
+        """Restore the checkout, remove the temporary branch, record rejected, and return the outcome."""
         self._restore_checkout(workspace, indexed_commit_sha, generation_branch)
         self._recorder.reject(coding_run_id)
         return RunRejected(coding_run_id=coding_run_id, diff=diff or "", findings=list(findings))

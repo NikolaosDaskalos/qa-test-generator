@@ -1,6 +1,6 @@
 """The persistence port the graph uses to record a Coding Run's lifecycle.
 
-The unified graph stays free of the database: the ``test_generation`` branch
+The unified graph stays free of the database: the ``code_generation`` branch
 calls this thin port to persist the durable Coding Run (the domain record of
 truth) while the checkpointer holds in-flight graph state. ``CodingRunRecorder``
 is the production adapter over ``CodingRunStore``; tests substitute a fake.
@@ -9,14 +9,13 @@ is the production adapter over ``CodingRunStore``; tests substitute a fake.
 import uuid
 from typing import Protocol
 
-from app.enums.coding_run import CodingRunStage, CodingRunStatus
-from app.persistence.coding_run_store import CodingRunStore
-from app.schemas.generation import ExternalReference, GeneratedFile
-from app.schemas.review import ReviewFinding
+from app.db.persistence import CodingRunStore
+from app.enums import CodingRunStage, CodingRunStatus
+from app.schemas import ExternalReference, GeneratedFile, ReviewFinding
 
 
 class RunRecorder(Protocol):
-    """Records Coding Run lifecycle transitions for the test-generation branch."""
+    """Records Coding Run lifecycle transitions for the code-generation branch."""
 
     def start(self, *, thread_id: str, repository_session_id: uuid.UUID) -> uuid.UUID:
         """Persist a queued Coding Run and return its id."""
@@ -49,6 +48,9 @@ class RunRecorder(Protocol):
 
     def approve(self, coding_run_id: uuid.UUID) -> None:
         """Record an owner's approval of a reviewed run after its branch is pushed."""
+
+    def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
+        """Record a run that proposed no test changes across all attempts as succeeded."""
 
 
 class CodingRunRecorder:
@@ -111,6 +113,9 @@ class CodingRunRecorder:
         if run is not None:
             self.store.approve(run)
 
+    def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
+        self._advance(coding_run_id, CodingRunStatus.succeeded)
+
 
 class NullRunRecorder:
     """A no-op recorder for graph paths exercised without persistence."""
@@ -145,4 +150,7 @@ class NullRunRecorder:
         return None
 
     def approve(self, coding_run_id: uuid.UUID) -> None:
+        return None
+
+    def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
         return None

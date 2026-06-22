@@ -1,6 +1,6 @@
 # Configurable Revision Budget that escalates to human review
 
-Status: ready
+Status: completed
 Type: AFK
 Revises: [12 - Perform one bounded Revision Attempt](12-perform-bounded-revision.md), [23 - Name the Revision Attempt budget](23-name-the-revision-attempt-budget.md)
 ADR: [0004 - Scored Patch Review escalates to human review](../adr/0004-scored-review-escalates-to-human.md)
@@ -39,14 +39,14 @@ event contract.
 
 ## Acceptance criteria
 
-- [ ] An explicit `review_gate` node owns post-review routing and replaces the `_route_after_review` edge function, routing via `Command(goto=…)`.
-- [ ] A `MAX_REVISION_ATTEMPTS` setting (default 2) governs the Revision Budget; the budget module exposes a configurable limit and no longer encodes a failure outcome.
-- [ ] Below-threshold scoring with remaining budget routes through `revise_tests`; with exhausted budget it routes to `await_decision`, not to failure.
-- [ ] The `reject_run` node and the `SECOND_REVIEW_REJECTED` auto-failure are removed; `RunFailure` is produced only by genuine stage errors.
-- [ ] `await_decision` surfaces the score and findings alongside the diff so the owner can judge an escalated below-threshold patch.
-- [ ] The human reject path and `RunRejected` terminal are unchanged.
-- [ ] `stream_session` relays the reduced terminal-event set with no change to the typed-event wire contract.
-- [ ] Graph tests cover: accept at threshold, one revision then accept, budget exhausted then escalate-to-human (no `RunFailure`), a genuine stage error still failing, and budget configured to 0 and to >1.
+- [x] An explicit `review_gate` node owns post-review routing and replaces the `_route_after_review` edge function, routing via `Command(goto=…)`.
+- [x] A `MAX_REVISION_ATTEMPTS` setting (default 2) governs the Revision Budget; the budget module exposes a configurable limit and no longer encodes a failure outcome.
+- [x] Below-threshold scoring with remaining budget routes through `revise_tests`; with exhausted budget it routes to `await_decision`, not to failure.
+- [x] The `reject_run` node and the `SECOND_REVIEW_REJECTED` auto-failure are removed; `RunFailure` is produced only by genuine stage errors.
+- [x] `await_decision` surfaces the score and findings alongside the diff so the owner can judge an escalated below-threshold patch.
+- [x] The human reject path and `RunRejected` terminal are unchanged.
+- [x] `stream_session` relays the reduced terminal-event set with no change to the typed-event wire contract.
+- [x] Graph tests cover: accept at threshold, one revision then accept, budget exhausted then escalate-to-human (no `RunFailure`), a genuine stage error still failing, and budget configured to 0 and to >1.
 
 ## Blocked by
 

@@ -33,18 +33,10 @@ def open_checkpointer() -> tuple[PostgresSaver, ConnectionPool]:
     Returns the ``PostgresSaver`` to compile graphs against and the pool to close
     at shutdown. ``setup()`` is idempotent, so re-running it at startup is safe.
     """
-    pool = ConnectionPool(
-        conninfo=_conninfo(),
-        max_size=settings.CHECKPOINTER_POOL_MAX_SIZE,
-        kwargs=_CONNECTION_KWARGS,
-        open=True,
-    )
+    pool = ConnectionPool(conninfo=_conninfo(), max_size=settings.CHECKPOINTER_POOL_MAX_SIZE, kwargs=_CONNECTION_KWARGS, open=True)
     checkpointer = PostgresSaver(pool)
     checkpointer.setup()
-    logger.info(
-        "Session graph checkpointer initialized with pool_max_size=%s",
-        settings.CHECKPOINTER_POOL_MAX_SIZE,
-    )
+    logger.info("Session graph checkpointer initialized with pool_max_size=%s", settings.CHECKPOINTER_POOL_MAX_SIZE)
     return checkpointer, pool
 
 

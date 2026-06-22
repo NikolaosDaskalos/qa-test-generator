@@ -2,11 +2,11 @@
 
 from datetime import UTC, datetime
 
-from app.core.security import encrypt_repository_token
-from app.enums.repository import RepositoryStatus
-from app.errors.git_errors import GitError
-from app.models.repository import Repository
-from app.persistence.repository_store import RepositoryStore
+from app.core import encrypt_repository_token
+from app.core.errors.git_errors import GitError
+from app.db.models import Repository
+from app.db.persistence import RepositoryStore
+from app.enums import RepositoryStatus
 
 
 class FakeSession:
@@ -65,7 +65,7 @@ def test_update_credentials_persists_only_credential_fields() -> None:
 
 
 def test_mark_ready_persists_indexed_commit_and_status_together() -> None:
-    """Publish Repository Evidence and its exact commit in one transaction."""
+    """Publish Repository Documents and its exact commit in one transaction."""
     session = FakeSession()
     repository_store = RepositoryStore(session)
     repository = _repository()
@@ -150,9 +150,7 @@ def test_fail_uses_fallback_for_non_domain_errors_and_caps_length() -> None:
     repository_store = RepositoryStore(session)
     repository = _repository()
 
-    reason = repository_store.fail(
-        repository, RuntimeError("psycopg leaked internal detail"), credential=None, fallback="Repository vector deletion failed"
-    )
+    reason = repository_store.fail(repository, RuntimeError("psycopg leaked internal detail"), credential=None, fallback="Repository vector deletion failed")
 
     assert reason == "Repository vector deletion failed"
 

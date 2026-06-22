@@ -5,23 +5,29 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
-from app.core.db import engine
-from app.core.security import encrypt_repository_token
-from app.core.vector_db import WeaviateResources
-from app.enums.repository import RepositoryProvider, RepositoryStatus
-from app.errors.git_errors import GitError
-from app.git.git_commands import GitCommands
-from app.git.repository_url import ParsedRepositoryUrl, parse_repository_url
-from app.models.repository import Repository
-from app.models.user import User
-from app.persistence.repository_store import RepositoryStore
-from app.persistence.source_document_store import SourceDocumentStore
-from app.rag.ingestor import DocumentIngestor
-from app.schemas.repository import RepositoriesPublic, RepositoryCreate, RepositoryUpdate
+from app.core import encrypt_repository_token
+from app.core.errors.git_errors import GitError
+from app.core.errors.repository_errors import (
+    DuplicateRepository,
+    InvalidRepositoryCredential,
+    InvalidRepositoryUrl,
+    RepositoryAccessForbidden,
+    RepositoryDeletionFailed,
+    RepositoryNotFound,
+    RepositoryProcessing,
+)
+from app.db import engine
+from app.db.models import Repository, User
+from app.db.persistence import RepositoryDocumentStore, RepositoryStore
+from app.enums import RepositoryProvider, RepositoryStatus
+from app.integrations.git import GitCommands, ParsedRepositoryUrl, parse_repository_url
+from app.integrations.weaviate import WeaviateResources
+from app.rag import DocumentIngestor
+from app.schemas import RepositoriesPublic, RepositoryCreate, RepositoryUpdate
+from app.services.background import BackgroundScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +45,9 @@ class RepositoryService:
 
     def list_repositories(self, *, user: User, skip: int, limit: int) -> RepositoriesPublic:
         """Return the Git repositories visible to a user."""
-        owner_id = None if user.is_superuser else user.id
-        repositories = self.repository_store.get_page(skip=skip, limit=limit, user_id=owner_id)
-        count = self.repository_store.count(user_id=owner_id)
+        user_id = None if user.is_superuser else user.id
+        repositories = self.repository_store.get_page(skip=skip, limit=limit, user_id=user_id)
+        count = self.repository_store.count(user_id=user_id)
         logger.info("Listed repositories user_id=%s returned_count=%s total_count=%s", user.id, len(repositories), count)
         return RepositoriesPublic(data=repositories, count=count)  # type: ignore[arg-type]
 
@@ -51,20 +57,20 @@ class RepositoryService:
         return self._get_accessible(repository_id, user)
 
     def create_repository(
-        self, *, repository_in: RepositoryCreate, user: User, background_tasks: BackgroundTasks, weaviate_resources: WeaviateResources
+        self, *, repository_in: RepositoryCreate, user: User, background_tasks: BackgroundScheduler, weaviate_resources: WeaviateResources
     ) -> Repository:
         """Validate, persist, and enqueue a Git repository for processing."""
         try:
             parsed_url = parse_repository_url(repository_in.repository_url)
         except ValueError as exc:
             logger.warning("Repository creation rejected for user_id=%s: %s", user.id, exc)
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise InvalidRepositoryUrl(str(exc)) from exc
 
         if self._find_duplicate(parsed_url.canonical_url, user.id):
             logger.warning(
                 "Duplicate repository creation rejected user_id=%s host=%s owner=%s repository=%s", user.id, parsed_url.host, parsed_url.owner, parsed_url.name
             )
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository already exists")
+            raise DuplicateRepository
 
         repository = Repository(
             user_id=user.id,
@@ -82,7 +88,7 @@ class RepositoryService:
         except IntegrityError as exc:
             self.repository_store.rollback()
             logger.warning("Repository creation hit a uniqueness conflict user_id=%s repository_id=%s", user.id, repository.id)
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository already exists") from exc
+            raise DuplicateRepository from exc
 
         background_tasks.add_task(process_repository, repository.id, repository_in.token, weaviate_resources)
         logger.info("Repository created and processing scheduled repository_id=%s user_id=%s", repository.id, user.id)
@@ -97,7 +103,7 @@ class RepositoryService:
             git.validate_remote_access(repository_in.token)
         except GitError as exc:
             logger.warning("Repository credential validation failed repository_id=%s user_id=%s", repository.id, user.id)
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token is invalid for repository") from exc
+            raise InvalidRepositoryCredential from exc
 
         self.repository_store.update_token(
             repository,
@@ -111,7 +117,7 @@ class RepositoryService:
         repository = self._get_accessible(repository_id, user)
         if repository.status in ACTIVE_PROCESSING_STATUSES:
             logger.warning("Repository deletion blocked while processing repository_id=%s status=%s", repository.id, repository.status.value)
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Repository cannot be deleted while processing")
+            raise RepositoryProcessing
 
         user_id = repository.user_id
         encrypted_token = repository.encrypted_token
@@ -123,13 +129,13 @@ class RepositoryService:
         except Exception as exc:
             reason = self.repository_store.fail(repository, exc, credential=encrypted_token, fallback="Repository checkout deletion failed")
             logger.error("Repository checkout deletion failed repository_id=%s: %s", repository_id, reason)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
+            raise RepositoryDeletionFailed from exc
         try:
             self.ingestor.delete_repository(repository_id, user_id=user_id)
         except Exception as exc:
             reason = self.repository_store.fail(repository, exc, credential=encrypted_token, fallback="Repository vector deletion failed")
             logger.error("Repository vector deletion failed repository_id=%s: %s", repository_id, reason)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
+            raise RepositoryDeletionFailed from exc
         try:
             self.repository_store.delete(repository)
         except Exception as exc:
@@ -140,7 +146,7 @@ class RepositoryService:
             else:
                 reason = "Repository database deletion failed"
             logger.error("Repository database deletion failed repository_id=%s: %s", repository_id, reason)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Repository deletion failed") from exc
+            raise RepositoryDeletionFailed from exc
         logger.info("Repository deletion completed repository_id=%s user_id=%s", repository_id, user_id)
 
     def process_repository(self, repository_id: uuid.UUID, token: str) -> None:
@@ -168,10 +174,7 @@ class RepositoryService:
 
             self.repository_store.begin_indexing(repository)
             logger.info(
-                "Repository status changed repository_id=%s status=%s default_branch=%s",
-                repository.id,
-                RepositoryStatus.indexing.value,
-                default_branch,
+                "Repository status changed repository_id=%s status=%s default_branch=%s", repository.id, RepositoryStatus.indexing.value, default_branch
             )
             chunk_count = self.ingestor.ingest(git.repo_path, repository.id, default_branch, checkout_commit_sha, repository.user_id)
             if chunk_count == 0:
@@ -188,16 +191,18 @@ class RepositoryService:
                 logger.error("Git repository processing failed for repository_id=%s; record no longer exists", repository_id)
 
     def _get_accessible(self, repository_id: uuid.UUID, user: User) -> Repository:
+        """Return a repository the user can access, raising 404 if missing or 403 if not theirs."""
         repository = self.repository_store.get_by_id(repository_id)
         if not repository:
             logger.warning("Repository access failed because it was not found repository_id=%s user_id=%s", repository_id, user.id)
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found")
+            raise RepositoryNotFound
         if not user.is_superuser and repository.user_id != user.id:
             logger.warning("Repository access denied repository_id=%s user_id=%s", repository_id, user.id)
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+            raise RepositoryAccessForbidden
         return repository
 
     def _find_duplicate(self, canonical_url: str, user_id: uuid.UUID) -> Repository | None:
+        """Find the user's existing repository matching ``canonical_url``, comparing canonical forms."""
         repository = self.repository_store.get_by_url_and_user_id(canonical_url, user_id)
         if repository:
             return repository
@@ -215,18 +220,20 @@ def process_repository(repository_id: uuid.UUID, token: str, weaviate_resources:
     """Compose fresh request-independent dependencies for background work."""
     logger.info("Repository background task opened repository_id=%s", repository_id)
     with Session(engine) as session:
-        source_document_store = SourceDocumentStore(session)
-        RepositoryService(RepositoryStore(session), DocumentIngestor(weaviate_resources, source_document_store)).process_repository(repository_id, token)
+        repository_document_store = RepositoryDocumentStore(session)
+        RepositoryService(RepositoryStore(session), DocumentIngestor(weaviate_resources, repository_document_store)).process_repository(repository_id, token)
     logger.info("Repository background task closed repository_id=%s", repository_id)
 
 
 def _expiration_date(token_expiration_days: int | None) -> datetime | None:
+    """Convert a token lifetime in days to an absolute UTC expiry, or ``None`` for no expiry."""
     if token_expiration_days is None:
         return None
     return datetime.now(UTC) + timedelta(days=token_expiration_days)
 
 
 def _provider_for(parsed_url: ParsedRepositoryUrl) -> RepositoryProvider:
+    """Map a parsed URL to its provider, raising for unsupported hosts (only GitHub today)."""
     if parsed_url.host != "github.com":
         raise ValueError("Repository provider is not supported")
     return RepositoryProvider.github

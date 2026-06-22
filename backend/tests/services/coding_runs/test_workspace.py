@@ -8,8 +8,8 @@ production path uses — no fakes.
 import subprocess
 from pathlib import Path
 
+from app.schemas import GeneratedFile
 from app.services.coding_runs.workspace import LocalGitWorkspace
-from app.schemas.generation import GeneratedFile
 
 
 def _git(repo: Path, *args: str) -> str:

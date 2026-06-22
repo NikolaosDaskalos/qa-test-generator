@@ -1,10 +1,12 @@
+"""Pre-test gate: block until the test database accepts queries before the suite runs."""
+
 import logging
 
 from sqlalchemy import Engine
 from sqlmodel import Session, select
 from tenacity import after_log, before_log, retry, stop_after_attempt, wait_fixed
 
-from app.core.db import engine
+from app.db import engine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,6 +17,7 @@ wait_seconds = 1
 
 @retry(stop=stop_after_attempt(max_tries), wait=wait_fixed(wait_seconds), before=before_log(logger, logging.INFO), after=after_log(logger, logging.WARN))
 def init(db_engine: Engine) -> None:
+    """Wait until the test database accepts a query, retrying on failure."""
     try:
         # Try to create session to check if DB is awake
         with Session(db_engine) as session:
@@ -26,6 +29,7 @@ def init(db_engine: Engine) -> None:
 
 
 def main() -> None:
+    """Run the test database readiness check."""
     logger.info("Initializing service")
     init(engine)
     logger.info("Service finished initializing")

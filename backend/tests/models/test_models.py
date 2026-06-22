@@ -12,12 +12,9 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import configure_mappers
 from sqlmodel import Session, SQLModel, select
 
-from app.enums.repository import RepositoryProvider, RepositoryStatus
-from app.models.repository import Repository
-from app.models.session import RepositorySession, SessionHistory
-from app.models.source_document import SourceDocument
-from app.models.user import User
-from app.schemas.repository import RepositoryCreate, RepositoryPublic
+from app.db.models import Repository, RepositoryDocument, RepositorySession, SessionHistory, User
+from app.enums import RepositoryProvider, RepositoryStatus
+from app.schemas import RepositoryCreate, RepositoryPublic
 
 
 @compiles(JSONB, "sqlite")
@@ -56,7 +53,7 @@ def test_repository_schema_serializes_enums_as_strings() -> None:
 
 
 def test_repository_session_timestamps_are_timezone_aware() -> None:
-    session = RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4())
+    session = RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4())
     history = SessionHistory(session_id=session.id, role="user", content="query", position=1)
 
     assert session.created_at.tzinfo is timezone.utc
@@ -79,7 +76,7 @@ def test_all_database_models_are_registered() -> None:
 def test_importing_one_model_registers_all_relationship_targets() -> None:
     backend_dir = Path(__file__).resolve().parents[2]
     result = subprocess.run(
-        [sys.executable, "-c", ("from sqlalchemy.orm import configure_mappers;from app.models.user import User;configure_mappers()")],
+        [sys.executable, "-c", ("from sqlalchemy.orm import configure_mappers;from app.db.models.user import User;configure_mappers()")],
         cwd=backend_dir,
         check=False,
         capture_output=True,
@@ -89,7 +86,7 @@ def test_importing_one_model_registers_all_relationship_targets() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_deleting_repository_uses_database_cascade_for_source_documents() -> None:
+def test_deleting_repository_uses_database_cascade_for_repository_documents() -> None:
     engine = create_engine("sqlite://")
 
     @event.listens_for(engine, "connect")
@@ -101,17 +98,17 @@ def test_deleting_repository_uses_database_cascade_for_source_documents() -> Non
     repository = Repository(
         name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai", user_id=user.id, status=RepositoryStatus.ready
     )
-    source_document = SourceDocument(repository_id=repository.id, content="print('hello')", doc_metadata={"source": "app/main.py"})
+    repository_document = RepositoryDocument(repository_id=repository.id, content="print('hello')", doc_metadata={"source": "app/main.py"})
 
     with Session(engine) as session:
         session.add(user)
         session.add(repository)
-        session.add(source_document)
+        session.add(repository_document)
         session.commit()
         session.refresh(repository)
-        assert repository.source_documents == [source_document]
+        assert repository.repository_documents == [repository_document]
 
         session.delete(repository)
         session.commit()
 
-        assert session.exec(select(SourceDocument).where(SourceDocument.repository_id == repository.id)).all() == []
+        assert session.exec(select(RepositoryDocument).where(RepositoryDocument.repository_id == repository.id)).all() == []

@@ -6,11 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.enums import CodingRunStage
+from app.schemas import ExternalReference, GeneratedFile, PatchResult, RunFailure
 from app.services.coding_runs.test_file_validation import RejectedTestFile, validate_generated_test_files
 from app.services.coding_runs.workspace import GenerationWorkspace
-from app.enums.coding_run import CodingRunStage
-from app.schemas.agent_stream import PatchResult, RunFailure
-from app.schemas.generation import ExternalReference, GeneratedFile
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ class PatchBuildRequest:
 
     generated_files: list[GeneratedFile]
     checkout_root: Path | str | None
-    is_revision_attempt: bool
+    is_generation_retry: bool
     generation_branch: str
     coding_run_id: uuid.UUID
     external_references: list[ExternalReference]
@@ -45,33 +44,31 @@ class PatchBuilder:
         self._recorder = recorder
 
     def build(self, request: PatchBuildRequest) -> PatchBuildOutcome:
+        """Validate and write the proposed files, derive the canonical diff, and persist the run.
+
+        Returns a ``PatchBuildOutcome`` carrying either the patch result or a typed
+        generating-stage ``RunFailure``; rejected paths and write/diff errors never escape.
+        """
         try:
-            validated = validate_generated_test_files(Path(request.checkout_root), request.generated_files) if request.checkout_root else list(request.generated_files)
+            validated = (
+                validate_generated_test_files(Path(request.checkout_root), request.generated_files) if request.checkout_root else list(request.generated_files)
+            )
         except RejectedTestFile as rejection:
             return PatchBuildOutcome(failure=RunFailure(failed_stage=CodingRunStage.generating, reason=rejection.reason))
 
         try:
             workspace = self._workspace_factory(request.checkout_root)
-            if request.is_revision_attempt:
+            if request.is_generation_retry:
                 workspace.reset_patch_state()
             workspace.write_test_files(validated)
             diff = workspace.diff()
             self._recorder.complete(
-                request.coding_run_id,
-                branch=request.generation_branch,
-                diff=diff,
-                generated_files=validated,
-                external_references=request.external_references,
+                request.coding_run_id, branch=request.generation_branch, diff=diff, generated_files=validated, external_references=request.external_references
             )
         except Exception:
             logger.exception("Patch derivation failed")
             return PatchBuildOutcome(failure=RunFailure(failed_stage=CodingRunStage.generating, reason=PATCH_DERIVATION_FAILED))
 
         return PatchBuildOutcome(
-            patch_result=PatchResult(
-                coding_run_id=request.coding_run_id,
-                diff=diff,
-                generated_files=validated,
-                external_references=request.external_references,
-            )
+            patch_result=PatchResult(coding_run_id=request.coding_run_id, diff=diff, generated_files=validated, external_references=request.external_references)
         )

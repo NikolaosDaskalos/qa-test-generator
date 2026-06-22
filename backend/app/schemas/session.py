@@ -1,18 +1,22 @@
+"""Request/response schemas for the repository session API and its streaming turns."""
+
 import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.enums.coding_run import CodingRunStage, CodingRunStatus
-from app.enums.session import SessionMessageRole
+from app.db.models import NEW_SESSION_TITLE
+from app.enums import CodingRunStage, CodingRunStatus, SessionMessageRole
 from app.schemas.agent_stream import REVIEW_DISCLAIMER, Citation
 from app.schemas.generation import ExternalReference, GeneratedFile
 from app.schemas.review import ReviewFinding
 
 
 class RepositorySessionCreate(BaseModel):
+    """Payload to open a session bound to a repository."""
+
     repository_id: uuid.UUID
-    title: str = Field(default="New Repository Session", min_length=1, max_length=255)
+    title: str = Field(default=NEW_SESSION_TITLE, min_length=1, max_length=255)
 
 
 class HumanDecisionRequest(BaseModel):
@@ -31,7 +35,7 @@ class HumanDecisionRequest(BaseModel):
 class RepositoryQuestionRequest(BaseModel):
     """One turn on a session stream: a new question or a decision resuming a paused run.
 
-    The same entry point both asks a repository-grounded/test-generation question and
+    The same entry point both asks a repository-grounded/code-generation question and
     delivers the owner's human-in-the-loop decision, so exactly one of ``question`` or
     ``decision`` must be present — never both, never neither.
     """
@@ -41,6 +45,7 @@ class RepositoryQuestionRequest(BaseModel):
 
     @model_validator(mode="after")
     def _exactly_one_intent(self) -> "RepositoryQuestionRequest":
+        """Require exactly one of ``question`` or ``decision``, and a non-blank question."""
         if (self.question is None) == (self.decision is None):
             raise ValueError("Provide either a question or a decision, not both")
         if self.question is not None and not self.question.strip():
@@ -49,17 +54,28 @@ class RepositoryQuestionRequest(BaseModel):
 
 
 class RepositorySessionPublic(BaseModel):
+    """A session as exposed to clients."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     title: str
-    owner_id: uuid.UUID
+    user_id: uuid.UUID
     repository_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
 
 
+class RepositorySessionsPublic(BaseModel):
+    """A page of sessions with the total count."""
+
+    data: list[RepositorySessionPublic]
+    count: int
+
+
 class SessionHistoryPublic(BaseModel):
+    """One persisted session message as exposed to clients."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -72,6 +88,8 @@ class SessionHistoryPublic(BaseModel):
 
 
 class SessionHistoriesPublic(BaseModel):
+    """A session's full message history."""
+
     data: list[SessionHistoryPublic]
 
 

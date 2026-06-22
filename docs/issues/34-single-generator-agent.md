@@ -1,6 +1,6 @@
 # Collapse to a single generator agent for generate and revise
 
-Status: ready
+Status: completed
 Type: AFK
 Revises: [12 - Perform one bounded Revision Attempt](12-perform-bounded-revision.md)
 ADR: [0004 - Scored Patch Review escalates to human review](../adr/0004-scored-review-escalates-to-human.md)
@@ -24,11 +24,11 @@ This slice is orthogonal to the loop restructure: the generator's `generate` and
 
 ## Acceptance criteria
 
-- [ ] The generator holds a single agent; the separate revision agent is removed.
-- [ ] Both generation and revision go through the one `web_search`-capable agent.
-- [ ] `REVISION_SYSTEM_PROMPT` is removed; revision context (prior proposal, diff, findings) is carried in the assembled human message.
-- [ ] The `generate` and `revise` interfaces consumed by the graph nodes are unchanged.
-- [ ] Generator tests cover initial generation and a revision pass through the single agent, including a revision that consults `web_search`.
+- [x] The generator holds a single agent; the separate revision agent is removed.
+- [x] Both generation and revision go through the one `web_search`-capable agent.
+- [x] `REVISION_SYSTEM_PROMPT` is removed; revision context (prior proposal, diff, findings) is carried in the assembled human message.
+- [x] The `generate` and `revise` interfaces consumed by the graph nodes are unchanged.
+- [x] Generator tests cover initial generation and a revision pass through the single agent, including a revision that consults `web_search`.
 
 ## Blocked by
 

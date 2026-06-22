@@ -1,9 +1,11 @@
-"""Structured Patch Review output: an accept/reject decision with findings.
+"""Structured Patch Review output: a score out of ten with findings.
 
-Patch Review is evidence-based static assessment only — it never executes the
+Patch Review is documents-based static assessment only — it never executes the
 generated tests, installs dependencies, or implies runtime correctness. The
-reviewer returns a decision and human-readable findings categorized by concern,
-so the backend can persist them and the client can group them by category.
+reviewer returns a quality ``score`` (0–10) and human-readable findings
+categorized by concern; it no longer returns a pass/fail flag. The backend owns
+the pass decision (``score`` against a configurable threshold), so the model
+never gates the patch on its own.
 """
 
 from typing import Literal
@@ -22,7 +24,7 @@ class ReviewFinding(BaseModel):
 
 
 class PatchReview(BaseModel):
-    """The reviewer's structured verdict: accepted or rejected, with findings."""
+    """The reviewer's structured assessment: a quality score out of ten with findings."""
 
-    accepted: bool = Field(description="Whether the Test Patch is accepted as-is.")
-    findings: list[ReviewFinding] = Field(default_factory=list, description="Human-readable findings backing the decision.")
+    score: int = Field(ge=0, le=10, description="The patch's overall quality out of ten; the backend decides pass/fail against a threshold.")
+    findings: list[ReviewFinding] = Field(default_factory=list, description="Human-readable findings backing the score.")

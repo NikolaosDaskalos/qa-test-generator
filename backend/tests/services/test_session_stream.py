@@ -4,19 +4,13 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
 from langgraph.types import Command
 
-from app.enums.coding_run import CodingRunStatus
-from app.models.coding_run import CodingRun
-from app.models.repository import Repository
-from app.models.session import RepositorySession, SessionHistory
-from app.models.user import User
-from app.schemas.agent_stream import Citation, PatchResult, Result, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
-from app.schemas.generation import ExternalReference, GeneratedFile
-from app.schemas.review import ReviewFinding
-from app.schemas.session import HumanDecisionRequest
-from app.services.session_service import RepositorySessionService
+from app.core.errors.session_errors import CodingRunNotFound, RepositorySessionAccessForbidden, RunNotAwaitingDecision
+from app.db.models import CodingRun, Repository, RepositorySession, SessionHistory, User
+from app.enums import CodingRunStatus
+from app.schemas import Citation, HumanDecisionRequest, Result, ReviewFinding, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
+from app.services import RepositorySessionService
 
 
 class FakeRepositoryStore:
@@ -31,6 +25,7 @@ class FakeSessionStore:
     def __init__(self, repository_session: RepositorySession) -> None:
         self.repository_session = repository_session
         self.appended = []
+        self.activity = []
 
     def get_by_id(self, repository_session_id):
         return self.repository_session if self.repository_session.id == repository_session_id else None
@@ -42,6 +37,12 @@ class FakeSessionStore:
         self.appended.append((repository_session_id, user_message, assistant_message, assistant_citations))
         assistant = SessionHistory(id=uuid.uuid4(), session_id=repository_session_id, role="assistant", content=assistant_message, position=2)
         return SimpleNamespace(), assistant
+
+    def record_user_activity(self, repository_session_id, *, user_message):
+        self.activity.append((repository_session_id, user_message))
+
+    def record_activity(self, repository_session_id):
+        self.activity.append((repository_session_id, None))
 
 
 class FakeGraph:
@@ -73,7 +74,7 @@ def _wiring(user, *, indexed_commit_sha=None):
         local_path="/checkout",
         indexed_commit_sha=indexed_commit_sha,
     )
-    repository_session = RepositorySession(id=uuid.uuid4(), owner_id=user.id, repository_id=repository.id)
+    repository_session = RepositorySession(id=uuid.uuid4(), user_id=user.id, repository_id=repository.id)
     session_store = FakeSessionStore(repository_session)
     service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
     return service, session_store, repository_session
@@ -119,7 +120,7 @@ def test_stream_session_emits_run_failure_terminal_for_rejected_task():
     run_id = uuid.uuid4()
     failure = RunFailure(coding_run_id=run_id, failed_stage="planning", reason="Out of scope")
     items = [("custom", Stage(stage="classifying")), ("custom", Stage(stage="planning")), ("custom", failure)]
-    final = {"intent": "test_generation"}
+    final = {"intent": "code_generation"}
     graph = FakeGraph(items, final)
 
     events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="refactor", graph=graph, thread_id="t-2"))
@@ -130,30 +131,7 @@ def test_stream_session_emits_run_failure_terminal_for_rejected_task():
     assert terminal.coding_run_id == run_id
     # A rejected task never persists a session exchange.
     assert session_store.appended == []
-
-
-def test_stream_session_emits_patch_result_terminal_for_a_generated_patch():
-    user = _user()
-    service, session_store, repository_session = _wiring(user)
-    run_id = uuid.uuid4()
-    patch = PatchResult(
-        coding_run_id=run_id,
-        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
-        generated_files=[GeneratedFile(path="tests/test_x.py", content="def test_x(): ...")],
-        external_references=[ExternalReference(url="https://docs.pytest.org", title="pytest")],
-    )
-    items = [("custom", Stage(stage="generating")), ("custom", patch)]
-    final = {"intent": "test_generation"}
-    graph = FakeGraph(items, final)
-
-    events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-3"))
-
-    terminal = events[-1]
-    assert isinstance(terminal, PatchResult)
-    assert terminal.coding_run_id == run_id
-    assert [file.path for file in terminal.generated_files] == ["tests/test_x.py"]
-    # A generated patch is reported, not persisted as a session answer exchange.
-    assert session_store.appended == []
+    assert session_store.activity == [(repository_session.id, "refactor")]
 
 
 def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
@@ -163,11 +141,13 @@ def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
     review = ReviewResult(
         coding_run_id=run_id,
         accepted=True,
+        score=8,
+        threshold=7,
         findings=[ReviewFinding(category="coverage", detail="covers happy and unhappy paths")],
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
     )
     items = [("custom", Stage(stage="reviewing")), ("custom", review)]
-    final = {"intent": "test_generation"}
+    final = {"intent": "code_generation"}
     graph = FakeGraph(items, final)
 
     events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-rev"))
@@ -184,7 +164,7 @@ def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
 def test_stream_session_passes_the_indexed_commit_to_the_graph():
     user = _user()
     service, _store, repository_session = _wiring(user, indexed_commit_sha="a" * 40)
-    graph = FakeGraph([], {"intent": "test_generation"})
+    graph = FakeGraph([], {"intent": "code_generation"})
 
     list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-4"))
 
@@ -197,10 +177,8 @@ def test_stream_session_rejects_a_session_owned_by_another_user():
     service, _store, repository_session = _wiring(user)
     other = _user()
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(RepositorySessionAccessForbidden):
         list(service.stream_session(repository_session_id=repository_session.id, user=other, question="q", graph=FakeGraph([], {}), thread_id="t"))
-
-    assert exc.value.status_code == 403
 
 
 class FakeCodingRunStore:
@@ -221,9 +199,9 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
         findings=[ReviewFinding(category="readability", detail="clear and idiomatic")],
     )
-    review = ReviewResult(coding_run_id=run.id, accepted=True, findings=rejection.findings, diff=rejection.diff)
+    review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=rejection.findings, diff=rejection.diff)
     items = [("custom", Stage(stage="reviewing")), ("custom", rejection)]
-    final = {"intent": "test_generation", "review_result": review, "rejection_result": rejection}
+    final = {"intent": "code_generation", "review_result": review, "rejection_result": rejection}
     graph = FakeGraph(items, final, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
@@ -242,6 +220,7 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
     assert config["configurable"]["thread_id"] == "t-paused"
     # Resuming a decision never persists a session answer exchange.
     assert session_store.appended == []
+    assert session_store.activity == [(repository_session.id, None)]
 
 
 def test_stream_session_relays_resume_terminal_without_scanning_stale_final_state():
@@ -254,9 +233,9 @@ def test_stream_session_relays_resume_terminal_without_scanning_stale_final_stat
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
         findings=[ReviewFinding(category="readability", detail="clear and idiomatic")],
     )
-    stale_review = ReviewResult(coding_run_id=run.id, accepted=True, findings=rejection.findings, diff=rejection.diff)
+    stale_review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=rejection.findings, diff=rejection.diff)
     items = [("custom", rejection)]
-    graph = FakeGraph(items, {"intent": "test_generation", "review_result": stale_review}, next_nodes=("await_decision",))
+    graph = FakeGraph(items, {"intent": "code_generation", "review_result": stale_review}, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
     events = list(
@@ -273,8 +252,8 @@ def test_stream_session_emits_run_approved_terminal_for_an_approved_decision():
     run = CodingRun(repository_session_id=repository_session.id, thread_id="t-paused", status=CodingRunStatus.awaiting_approval)
     service.coding_run_store = FakeCodingRunStore(run)
     approval = RunApproved(coding_run_id=run.id, branch="qa-tests/abc123", diff="diff --git a/tests/test_x.py b/tests/test_x.py")
-    review = ReviewResult(coding_run_id=run.id, accepted=True, findings=[], diff=approval.diff)
-    graph = FakeGraph([("custom", approval)], {"intent": "test_generation", "review_result": review}, next_nodes=("await_decision",))
+    review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=[], diff=approval.diff)
+    graph = FakeGraph([("custom", approval)], {"intent": "code_generation", "review_result": review}, next_nodes=("await_decision",))
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=True)
 
     events = list(
@@ -296,16 +275,16 @@ def test_stream_session_rejects_a_decision_when_the_checkpoint_is_not_paused_at_
     stale_review = ReviewResult(
         coding_run_id=run.id,
         accepted=True,
+        score=8,
+        threshold=7,
         findings=[ReviewFinding(category="coverage", detail="covers the behavior")],
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
     )
-    graph = FakeGraph([], {"intent": "test_generation", "review_result": stale_review}, next_nodes=())
+    graph = FakeGraph([], {"intent": "code_generation", "review_result": stale_review}, next_nodes=())
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(RunNotAwaitingDecision):
         list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision))
-
-    assert exc.value.status_code == 409
     assert graph.streamed == []
 
 
@@ -318,10 +297,8 @@ def test_stream_session_rejects_a_decision_for_a_run_not_awaiting_a_decision():
         graph = FakeGraph([], {})
         decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(RunNotAwaitingDecision):
             list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="t", decision=decision))
-
-        assert exc.value.status_code == 409
         # An invalid decision never drives the graph, so the checkout is never touched.
         assert graph.streamed == []
 
@@ -335,10 +312,8 @@ def test_stream_session_rejects_a_decision_from_a_non_owner():
     graph = FakeGraph([], {})
     decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(RepositorySessionAccessForbidden):
         list(service.stream_session(repository_session_id=repository_session.id, user=other, question=None, graph=graph, thread_id="t", decision=decision))
-
-    assert exc.value.status_code == 403
     assert graph.streamed == []
 
 
@@ -359,10 +334,8 @@ def test_get_owned_run_rejects_a_run_belonging_to_another_session():
     foreign_run = CodingRun(repository_session_id=uuid.uuid4(), thread_id="t-foreign", status=CodingRunStatus.awaiting_approval)
     service.coding_run_store = FakeCodingRunStore(foreign_run)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(CodingRunNotFound):
         service.get_owned_run(repository_session_id=repository_session.id, coding_run_id=foreign_run.id, user=user)
-
-    assert exc.value.status_code == 404
 
 
 def test_get_owned_run_rejects_a_session_owned_by_another_user():
@@ -372,7 +345,5 @@ def test_get_owned_run_rejects_a_session_owned_by_another_user():
     service.coding_run_store = FakeCodingRunStore(run)
     other = _user()
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(RepositorySessionAccessForbidden):
         service.get_owned_run(repository_session_id=repository_session.id, coding_run_id=run.id, user=other)
-
-    assert exc.value.status_code == 403

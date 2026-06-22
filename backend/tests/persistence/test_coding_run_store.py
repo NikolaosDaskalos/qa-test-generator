@@ -6,12 +6,9 @@ from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine
 
-from app.enums.coding_run import CodingRunStage, CodingRunStatus
-from app.models.coding_run import CodingRun
-from app.models.repository import Repository
-from app.models.session import RepositorySession
-from app.models.user import User
-from app.persistence.coding_run_store import CodingRunStore
+from app.db.models import CodingRun, Repository, RepositorySession, User
+from app.db.persistence import CodingRunStore
+from app.enums import CodingRunStage, CodingRunStatus
 
 
 def _engine():
@@ -29,12 +26,12 @@ def _engine():
 
 
 def _seed(db: Session) -> uuid.UUID:
-    owner_id = uuid.uuid4()
+    user_id = uuid.uuid4()
     repository_id = uuid.uuid4()
     session_id = uuid.uuid4()
-    db.add(User(id=owner_id, email="owner@example.com", hashed_password="not-used"))
-    db.add(Repository(id=repository_id, user_id=owner_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai"))
-    db.add(RepositorySession(id=session_id, owner_id=owner_id, repository_id=repository_id))
+    db.add(User(id=user_id, email="owner@example.com", hashed_password="not-used"))
+    db.add(Repository(id=repository_id, user_id=user_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai"))
+    db.add(RepositorySession(id=session_id, user_id=user_id, repository_id=repository_id))
     db.commit()
     return session_id
 
@@ -81,12 +78,12 @@ def test_mark_failed_records_failure_stage_and_sanitized_reason() -> None:
         store = CodingRunStore(db)
         run = store.create(repository_session_id=session_id, thread_id="thread-fail")
 
-        store.mark_failed(run, failed_stage=CodingRunStage.planning, failure_reason="Request is out of scope for test generation")
+        store.mark_failed(run, failed_stage=CodingRunStage.planning, failure_reason="Request is out of scope for code generation")
 
         reloaded = store.get_by_id(run.id)
         assert reloaded.status == CodingRunStatus.failed
         assert reloaded.failed_stage == CodingRunStage.planning
-        assert reloaded.failure_reason == "Request is out of scope for test generation"
+        assert reloaded.failure_reason == "Request is out of scope for code generation"
 
 
 def test_complete_persists_the_patch_and_advances_to_awaiting_review() -> None:

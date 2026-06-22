@@ -1,6 +1,6 @@
 # Run a Test-Generation Task and render the reviewed Test Patch
 
-Status: ready
+Status: completed
 Type: AFK
 User stories: frontend bare-minimum copilot
 
@@ -20,11 +20,11 @@ decision; the approve/reject controls themselves are the next slice.
 
 ## Acceptance criteria
 
-- [ ] A test-generation message streams stage progress and renders the captured Coding Run id from the `run_started` frame.
-- [ ] A completed review renders the verdict, findings, canonical diff in a preformatted block, and the disclaimer.
-- [ ] A failed run renders its failed stage and sanitized reason as a normal terminal outcome (not an error).
-- [ ] Test-generation and repository-question turns coexist in the same unified chat history.
-- [ ] An accepted review visibly indicates the run is awaiting the owner's decision (controls added in the next slice).
+- [x] A test-generation message streams stage progress and renders the captured Coding Run id from the `run_started` frame.
+- [x] A completed review renders the verdict, findings, canonical diff in a preformatted block, and the disclaimer.
+- [x] A failed run renders its failed stage and sanitized reason as a normal terminal outcome (not an error).
+- [x] Test-generation and repository-question turns coexist in the same unified chat history.
+- [x] An accepted review visibly indicates the run is awaiting the owner's decision (controls added in the next slice).
 
 ## Blocked by
 

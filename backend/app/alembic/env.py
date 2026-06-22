@@ -1,3 +1,5 @@
+"""Alembic migration environment: wires SQLModel metadata and the app's database URL."""
+
 import logging
 from logging.config import fileConfig
 
@@ -5,11 +7,11 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
-import app.models.repository  # noqa: F401
-import app.models.session  # noqa: F401
-import app.models.source_document  # noqa: F401
-import app.models.user  # noqa: F401
-from app.core.config import settings
+import app.db.models.repository  # noqa: F401
+import app.db.models.session  # noqa: F401
+import app.db.models.repository_document  # noqa: F401
+import app.db.models.user  # noqa: F401
+from app.core import settings
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -36,6 +38,7 @@ target_metadata = SQLModel.metadata
 
 
 def get_url():
+    """Return the database URL from application settings."""
     return str(settings.SQLALCHEMY_DATABASE_URI)
 
 

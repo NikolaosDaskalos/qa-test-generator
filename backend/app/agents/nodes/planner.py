@@ -1,0 +1,55 @@
+"""The ``code_generation`` planner node.
+
+The planner validates that the request is about adding or improving tests and,
+when it is, emits the Retrieval Requests the run should use to gather Repository
+Documents. An
+out-of-scope (or uncommitted) request is rejected here as a terminal
+``RunFailure(failed_stage=CodingRunStage.planning)`` before any retrieval or generation.
+"""
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
+
+from app.agents.nodes.failures import fail_state
+from app.enums import CodingRunStage
+from app.prompts.prompts import PLANNER_SYSTEM_PROMPT
+from app.schemas import RetrievalRequest, RunFailure, RunStarted, Stage
+from app.streaming import emit
+
+# Used when the planner rejects scope without a specific, sanitized reason.
+DEFAULT_REJECTION_REASON = "This request is outside the scope of adding or improving tests."
+
+
+class PlannerOutput(BaseModel):
+    """The planner's structured LLM output: scope verdict plus Retrieval Requests."""
+
+    in_scope: bool = Field(description="Whether the request is specifically about adding, fixing, or improving tests.")
+    retrieval_requests: list[RetrievalRequest] = Field(
+        default_factory=list, description="Repository Document requests to execute when in scope; include source-code and existing-test documents when useful."
+    )
+    reason: str | None = Field(default=None, description="Short user-safe explanation when the request is out of scope; leave null for in-scope requests.")
+
+
+def build_plan_node(planner_llm, recorder):
+    """Build the planner node, the code-generation branch entry point.
+
+    Planning owns the Coding Run's birth: it creates the queued run (minting
+    ``coding_run_id``), advances it into the planning stage, and emits the
+    run-started and planning markers before invoking the planner LLM. An
+    out-of-scope request still creates the run, which is then failed at planning.
+    """
+    structured = planner_llm.with_structured_output(PlannerOutput)
+
+    def plan(state, config) -> dict:
+        thread_id = config["configurable"]["thread_id"]
+        coding_run_id = recorder.start(thread_id=thread_id, repository_session_id=state.get("repository_session_id"))
+        recorder.begin_planning(coding_run_id)
+        emit(RunStarted(coding_run_id=coding_run_id))
+        emit(Stage(stage="planning"))
+        result = structured.invoke([SystemMessage(content=PLANNER_SYSTEM_PROMPT), HumanMessage(content=state["question"])])
+        if result is None or not result.in_scope:
+            reason = (result.reason if result and result.reason else None) or DEFAULT_REJECTION_REASON
+            return {"coding_run_id": coding_run_id, **fail_state(RunFailure(failed_stage=CodingRunStage.planning, reason=reason), trace="plan")}
+        return {"coding_run_id": coding_run_id, "retrieval_requests": result.retrieval_requests, "trace": ["plan"]}
+
+    return plan

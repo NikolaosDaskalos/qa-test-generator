@@ -1,3 +1,5 @@
+"""Authentication routes: access-token login, token testing, and password recovery/reset."""
+
 import logging
 from datetime import timedelta
 from typing import Annotated, Any
@@ -7,11 +9,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app import crud
-from app.core import security
-from app.core.config import settings
+from app.core import security, settings
 from app.dependencies import CurrentUser, SessionDep, get_current_active_superuser
+from app.schemas import UserPublic, UserUpdate
 from app.schemas.authentication import Message, NewPassword, Token
-from app.schemas.user import UserPublic, UserUpdate
 from app.utils import generate_password_reset_token, generate_reset_password_email, send_email, verify_password_reset_token
 
 logger = logging.getLogger(__name__)

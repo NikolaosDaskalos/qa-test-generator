@@ -20,7 +20,7 @@ import useAuth from "@/hooks/useAuth"
 import { getInitials } from "@/utils"
 
 interface UserInfoProps {
-  fullName?: string
+  fullName?: string | null
   email?: string
 }
 
@@ -40,11 +40,14 @@ function UserInfo({ fullName, email }: UserInfoProps) {
   )
 }
 
-export function User({ user }: { user: any }) {
-  const { logout } = useAuth()
+export function User() {
+  const { logout, user } = useAuth()
   const { isMobile, setOpenMobile } = useSidebar()
 
-  if (!user) return null
+  // Render the menu even when the user hasn't loaded (e.g. an expired token
+  // that hasn't been rejected yet) so the Log Out action is always reachable.
+  const fullName = user?.full_name || "User"
+  const email = user?.email
 
   const handleMenuClick = () => {
     if (isMobile) {
@@ -65,7 +68,7 @@ export function User({ user }: { user: any }) {
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
               data-testid="user-menu"
             >
-              <UserInfo fullName={user?.full_name} email={user?.email} />
+              <UserInfo fullName={fullName} email={email} />
               <ChevronsUpDown className="ml-auto size-4 text-muted-foreground" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
@@ -76,7 +79,7 @@ export function User({ user }: { user: any }) {
             sideOffset={4}
           >
             <DropdownMenuLabel className="p-0 font-normal">
-              <UserInfo fullName={user?.full_name} email={user?.email} />
+              <UserInfo fullName={fullName} email={email} />
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <RouterLink to="/settings" onClick={handleMenuClick}>
@@ -85,7 +88,12 @@ export function User({ user }: { user: any }) {
                 User Settings
               </DropdownMenuItem>
             </RouterLink>
-            <DropdownMenuItem onClick={handleLogout}>
+            <DropdownMenuItem
+              onClick={() => {
+                handleMenuClick()
+                handleLogout()
+              }}
+            >
               <LogOut />
               Log Out
             </DropdownMenuItem>

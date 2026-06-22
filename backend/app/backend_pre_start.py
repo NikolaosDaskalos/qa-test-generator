@@ -1,3 +1,5 @@
+"""Pre-start gate: block until Postgres and Weaviate are ready before the app boots."""
+
 import logging
 from typing import Any
 
@@ -7,9 +9,9 @@ from tenacity import after_log, before_log, retry, stop_after_attempt, wait_fixe
 from weaviate.classes.config import Configure, DataType, Property, Vectorizers
 from weaviate.client import WeaviateClient
 
-from app.core.config import settings
-from app.core.db import engine
-from app.core.weaviate_client import METADATA_PROPERTIES, TEXT_PROPERTY, create_weaviate_client
+from app.core import settings
+from app.db import engine
+from app.integrations.weaviate import METADATA_PROPERTIES, TEXT_PROPERTY, create_weaviate_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -90,6 +92,7 @@ def _validate_collection(collection: Any) -> None:
 
 
 def main() -> None:
+    """Run the database and Weaviate readiness checks, then dispose the engine."""
     logger.info("Initializing service")
     try:
         init(engine)

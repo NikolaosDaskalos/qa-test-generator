@@ -1,6 +1,6 @@
 # Approve or reject a reviewed Test Patch (human-in-the-loop resume)
 
-Status: ready
+Status: completed
 Type: AFK
 User stories: frontend bare-minimum copilot
 
@@ -19,11 +19,11 @@ no longer offered for that run.
 
 ## Acceptance criteria
 
-- [ ] A run awaiting decision shows inline Approve and Reject controls, with an optional feedback field for reject.
-- [ ] Submitting a decision posts the decision payload to the session questions endpoint and streams the result through the existing SSE reader.
-- [ ] An approval renders the pushed branch name and approved canonical diff; a rejection renders the findings.
-- [ ] The disclaimer is shown on both approval and rejection outcomes.
-- [ ] Once a decision resolves, the approve/reject controls are no longer offered for that run.
+- [x] A run awaiting decision shows inline Approve and Reject controls, with an optional feedback field for reject.
+- [x] Submitting a decision posts the decision payload to the session questions endpoint and streams the result through the existing SSE reader.
+- [x] An approval renders the pushed branch name and approved canonical diff; a rejection renders the findings.
+- [x] The disclaimer is shown on both approval and rejection outcomes.
+- [x] Once a decision resolves, the approve/reject controls are no longer offered for that run.
 
 ## Blocked by
 

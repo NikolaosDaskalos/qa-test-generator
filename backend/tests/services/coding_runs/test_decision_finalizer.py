@@ -9,10 +9,9 @@ Failure, never an escaping exception and never a raw state dict.
 
 import uuid
 
+from app.core.errors.git_errors import GitError
+from app.schemas import ReviewFinding, RunApproved, RunFailure, RunRejected
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
-from app.errors.git_errors import GitError
-from app.schemas.agent_stream import RunApproved, RunFailure, RunRejected
-from app.schemas.review import ReviewFinding
 
 
 class TimelinePublisher:
@@ -83,6 +82,8 @@ def test_approve_commits_pushes_records_then_restores_checkout_in_order() -> Non
     assert outcome.coding_run_id == coding_run_id
     assert outcome.branch == "qa-tests/fake"
     assert outcome.diff.startswith("diff --git")
+    # The approval terminal carries ready-to-show copy naming the pushed branch.
+    assert outcome.message == "Your tests were pushed to branch 'qa-tests/fake'. Open it on your repository to review."
     # Commit precedes push precedes record-approved precedes checkout restore.
     assert [step[0] for step in timeline] == ["commit", "push", "approve", "discard_generation"]
     assert workspace.discarded == ("abc", "qa-tests/fake")
@@ -157,6 +158,8 @@ def test_approve_push_failure_after_commit_is_a_git_push_failure(caplog) -> None
 
     assert isinstance(outcome, RunFailure)
     assert outcome.failed_stage == "git_push"
+    # A failed push yields no approval terminal, so there is no branch-naming message to show.
+    assert not hasattr(outcome, "message")
     # The commit happened, but the run is neither approved nor the checkout restored, and the credential is never leaked.
     assert publisher.committed is not None
     assert [step[0] for step in timeline] == ["commit"]

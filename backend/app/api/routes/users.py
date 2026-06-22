@@ -1,3 +1,5 @@
+"""User routes: admin CRUD over users and self-service profile, password, and signup."""
+
 import logging
 import uuid
 from typing import Any
@@ -6,12 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import col, func, select
 
 from app import crud
-from app.core.config import settings
-from app.core.security import get_password_hash, verify_password
+from app.core import get_password_hash, settings, verify_password
+from app.db.models import User
 from app.dependencies import CurrentUser, SessionDep, get_current_active_superuser
-from app.models.user import User
-from app.schemas.authentication import Message
-from app.schemas.user import UpdatePassword, UserCreate, UserPublic, UserRegister, UsersPublic, UserUpdate, UserUpdateMe
+from app.schemas import Message, UpdatePassword, UserCreate, UserPublic, UserRegister, UsersPublic, UserUpdate, UserUpdateMe
 from app.utils import generate_new_account_email, send_email
 
 logger = logging.getLogger(__name__)

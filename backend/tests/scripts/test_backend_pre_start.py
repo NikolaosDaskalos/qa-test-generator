@@ -7,7 +7,7 @@ from weaviate.classes.config import DataType, Vectorizers
 
 from app import backend_pre_start
 from app.backend_pre_start import init, logger
-from app.core.config import settings
+from app.core import settings
 
 
 class FakeCollection:

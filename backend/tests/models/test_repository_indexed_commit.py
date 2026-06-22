@@ -2,7 +2,7 @@
 
 from typing import Any, cast
 
-from app.models.repository import Repository
+from app.db.models import Repository
 
 
 def test_repository_indexed_commit_is_nullable_and_sha_sized() -> None:
