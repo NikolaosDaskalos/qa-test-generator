@@ -60,7 +60,7 @@ class RepositorySessionPublic(BaseModel):
 
     id: uuid.UUID
     title: str
-    owner_id: uuid.UUID
+    user_id: uuid.UUID
     repository_id: uuid.UUID
     created_at: datetime
     updated_at: datetime

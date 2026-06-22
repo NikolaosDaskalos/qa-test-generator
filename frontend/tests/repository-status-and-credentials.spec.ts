@@ -252,7 +252,7 @@ function sessionFixture() {
   return {
     id: "session-1",
     title: "New session",
-    owner_id: "user-1",
+    user_id: "user-1",
     repository_id: "repo-1",
     created_at: "2026-06-17T09:00:00Z",
     updated_at: "2026-06-17T09:00:00Z",

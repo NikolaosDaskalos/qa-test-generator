@@ -63,7 +63,7 @@ class FakeRepositorySessionService:
 def test_owner_can_create_repository_session_for_ready_repository() -> None:
     user_id = uuid.uuid4()
     repository_id = uuid.uuid4()
-    repository_session = RepositorySession(owner_id=user_id, repository_id=repository_id, title="Authentication tests")
+    repository_session = RepositorySession(user_id=user_id, repository_id=repository_id, title="Authentication tests")
     service = FakeRepositorySessionService(repository_session)
     user = SimpleNamespace(id=user_id, is_superuser=False)
     app = FastAPI()
@@ -82,7 +82,7 @@ def test_owner_can_create_repository_session_for_ready_repository() -> None:
 
 
 def test_create_repository_session_requires_authentication() -> None:
-    repository_session = RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4())
+    repository_session = RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4())
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_repository_session_service] = lambda: (FakeRepositorySessionService(repository_session))
@@ -96,7 +96,7 @@ def test_create_repository_session_requires_authentication() -> None:
 def test_list_sessions_returns_data_and_count_and_forwards_filter_and_paging() -> None:
     user_id = uuid.uuid4()
     repository_id = uuid.uuid4()
-    repository_session = RepositorySession(owner_id=user_id, repository_id=repository_id, title="Auth tests")
+    repository_session = RepositorySession(user_id=user_id, repository_id=repository_id, title="Auth tests")
     listing = RepositorySessionsPublic(data=[RepositorySessionPublic.model_validate(repository_session)], count=1)
     service = FakeRepositorySessionService(repository_session, listing=listing)
     user = SimpleNamespace(id=user_id, is_superuser=False)
@@ -117,7 +117,7 @@ def test_list_sessions_returns_data_and_count_and_forwards_filter_and_paging() -
 
 def test_list_sessions_defaults_to_no_filter_and_standard_paging() -> None:
     user_id = uuid.uuid4()
-    repository_session = RepositorySession(owner_id=user_id, repository_id=uuid.uuid4())
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
     listing = RepositorySessionsPublic(data=[], count=0)
     service = FakeRepositorySessionService(repository_session, listing=listing)
     user = SimpleNamespace(id=user_id, is_superuser=False)
@@ -134,7 +134,7 @@ def test_list_sessions_defaults_to_no_filter_and_standard_paging() -> None:
 
 
 def test_list_sessions_requires_authentication() -> None:
-    repository_session = RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4())
+    repository_session = RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4())
     service = FakeRepositorySessionService(repository_session)
     app = FastAPI()
     app.include_router(router)
@@ -149,7 +149,7 @@ def test_list_sessions_requires_authentication() -> None:
 
 def test_list_sessions_surfaces_repository_validation_error_from_the_service() -> None:
     user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
-    repository_session = RepositorySession(owner_id=user.id, repository_id=uuid.uuid4())
+    repository_session = RepositorySession(user_id=user.id, repository_id=uuid.uuid4())
     service = FakeRepositorySessionService(repository_session, list_raises=HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found"))
     app = FastAPI()
     app.include_router(router)
@@ -164,7 +164,7 @@ def test_list_sessions_surfaces_repository_validation_error_from_the_service() -
 
 def test_session_domain_error_is_translated_to_http_at_the_api_seam() -> None:
     user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
-    repository_session = RepositorySession(owner_id=user.id, repository_id=uuid.uuid4())
+    repository_session = RepositorySession(user_id=user.id, repository_id=uuid.uuid4())
     service = FakeRepositorySessionService(repository_session, history_raises=RepositorySessionNotFound())
     app = FastAPI()
     register_exception_handlers(app)
@@ -181,7 +181,7 @@ def test_session_domain_error_is_translated_to_http_at_the_api_seam() -> None:
 
 def test_owner_can_read_session_history() -> None:
     user_id = uuid.uuid4()
-    repository_session = RepositorySession(owner_id=user_id, repository_id=uuid.uuid4())
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
     history = [
         SessionHistory(session_id=repository_session.id, role=SessionMessageRole.user, content="How is authentication tested?", position=1),
         SessionHistory(
@@ -431,7 +431,7 @@ def test_owner_can_read_coding_run_state_and_findings() -> None:
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
         review_findings=[{"category": "coverage", "detail": "missing unhappy-path test"}],
     )
-    service = FakeRepositorySessionService(RepositorySession(id=session_id, owner_id=user.id, repository_id=uuid.uuid4()), run=run)
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, user_id=user.id, repository_id=uuid.uuid4()), run=run)
     app = _lookup_app(service, user=user)
 
     with TestClient(app) as client:
@@ -460,7 +460,7 @@ def test_run_lookup_exposes_failure_information() -> None:
         failed_stage=CodingRunStage.generating,
         failure_reason="The code generator could not produce a valid proposal.",
     )
-    service = FakeRepositorySessionService(RepositorySession(id=session_id, owner_id=user.id, repository_id=uuid.uuid4()), run=run)
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, user_id=user.id, repository_id=uuid.uuid4()), run=run)
     app = _lookup_app(service, user=user)
 
     with TestClient(app) as client:
@@ -483,7 +483,7 @@ def test_owner_can_read_coding_run_patch_content() -> None:
         generated_files=[{"path": "tests/test_x.py", "content": "def test_x(): ..."}],
         external_references=[{"url": "https://docs.pytest.org", "title": "pytest"}],
     )
-    service = FakeRepositorySessionService(RepositorySession(id=session_id, owner_id=user.id, repository_id=uuid.uuid4()), run=run)
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, user_id=user.id, repository_id=uuid.uuid4()), run=run)
     app = _lookup_app(service, user=user)
 
     with TestClient(app) as client:
@@ -499,7 +499,7 @@ def test_owner_can_read_coding_run_patch_content() -> None:
 def test_run_lookup_returns_404_for_a_run_not_owned_through_the_session() -> None:
     user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
     session_id = uuid.uuid4()
-    service = FakeRepositorySessionService(RepositorySession(id=session_id, owner_id=user.id, repository_id=uuid.uuid4()), run=None)
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, user_id=user.id, repository_id=uuid.uuid4()), run=None)
     app = _lookup_app(service, user=user)
 
     with TestClient(app) as client:
@@ -509,7 +509,7 @@ def test_run_lookup_returns_404_for_a_run_not_owned_through_the_session() -> Non
 
 
 def test_run_lookup_requires_authentication() -> None:
-    service = FakeRepositorySessionService(RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4()))
+    service = FakeRepositorySessionService(RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4()))
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_repository_session_service] = lambda: service

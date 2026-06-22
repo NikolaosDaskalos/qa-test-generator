@@ -45,9 +45,9 @@ class RepositoryService:
 
     def list_repositories(self, *, user: User, skip: int, limit: int) -> RepositoriesPublic:
         """Return the Git repositories visible to a user."""
-        owner_id = None if user.is_superuser else user.id
-        repositories = self.repository_store.get_page(skip=skip, limit=limit, user_id=owner_id)
-        count = self.repository_store.count(user_id=owner_id)
+        user_id = None if user.is_superuser else user.id
+        repositories = self.repository_store.get_page(skip=skip, limit=limit, user_id=user_id)
+        count = self.repository_store.count(user_id=user_id)
         logger.info("Listed repositories user_id=%s returned_count=%s total_count=%s", user.id, len(repositories), count)
         return RepositoriesPublic(data=repositories, count=count)  # type: ignore[arg-type]
 

@@ -209,7 +209,7 @@ test("Repository tree expands only the active Repository and lists its sessions"
                 {
                   id: "session-one",
                   title: "Auth questions",
-                  owner_id: "user-1",
+                  user_id: "user-1",
                   repository_id: "repo-one",
                   created_at: "2026-06-17T09:00:00Z",
                   updated_at: "2026-06-17T09:10:00Z",
@@ -219,7 +219,7 @@ test("Repository tree expands only the active Repository and lists its sessions"
                 {
                   id: "session-two",
                   title: "Billing questions",
-                  owner_id: "user-1",
+                  user_id: "user-1",
                   repository_id: "repo-two",
                   created_at: "2026-06-17T10:00:00Z",
                   updated_at: "2026-06-17T10:10:00Z",
@@ -281,7 +281,7 @@ test("Direct Repository Session URL restores the selected chat workspace", async
           {
             id: "session-stored",
             title: "Login questions",
-            owner_id: "user-1",
+            user_id: "user-1",
             repository_id: "repo-ready",
             created_at: "2026-06-17T09:00:00Z",
             updated_at: "2026-06-17T09:10:00Z",
@@ -359,7 +359,7 @@ test("Root workspace reopens the last-used accessible Repository Session", async
           {
             id: "session-stored",
             title: "Stored questions",
-            owner_id: "user-1",
+            user_id: "user-1",
             repository_id: "repo-ready",
             created_at: "2026-06-17T09:00:00Z",
             updated_at: "2026-06-17T09:10:00Z",
@@ -506,7 +506,7 @@ test("User can ask a ready Repository question and see streamed answer citations
       json: {
         id: "session-ready",
         title: "New session",
-        owner_id: "user-1",
+        user_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
         updated_at: "2026-06-17T09:00:00Z",
@@ -596,7 +596,7 @@ test("First Repository Session request refreshes the sidebar title", async ({
                     sessionListRequests === 2
                       ? "New session"
                       : "Where is the login route tested?",
-                  owner_id: "user-1",
+                  user_id: "user-1",
                   repository_id: "repo-ready",
                   created_at: "2026-06-17T09:00:00Z",
                   updated_at:
@@ -615,7 +615,7 @@ test("First Repository Session request refreshes the sidebar title", async ({
       json: {
         id: "session-ready",
         title: "New session",
-        owner_id: "user-1",
+        user_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
         updated_at: "2026-06-17T09:00:00Z",
@@ -691,7 +691,7 @@ test("Selecting a ready Repository resumes stored Repository Session history", a
           {
             id: "session-stored",
             title: "Stored Repository Session",
-            owner_id: "user-1",
+            user_id: "user-1",
             repository_id: "repo-ready",
             created_at: "2026-06-17T09:00:00Z",
             updated_at: "2026-06-17T09:00:00Z",
@@ -785,7 +785,7 @@ test("New Session creates a fresh Repository Session and clears chat", async ({
           {
             id: "session-stored",
             title: "Stored Repository Session",
-            owner_id: "user-1",
+            user_id: "user-1",
             repository_id: "repo-ready",
             created_at: "2026-06-17T09:00:00Z",
             updated_at: "2026-06-17T09:00:00Z",
@@ -821,7 +821,7 @@ test("New Session creates a fresh Repository Session and clears chat", async ({
       json: {
         id: "session-new",
         title: "New session",
-        owner_id: "user-1",
+        user_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:10:00Z",
         updated_at: "2026-06-17T09:10:00Z",
@@ -884,7 +884,7 @@ test("Question stream transport errors are shown without crashing", async ({
       json: {
         id: "session-ready",
         title: "New session",
-        owner_id: "user-1",
+        user_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
         updated_at: "2026-06-17T09:00:00Z",
@@ -952,7 +952,7 @@ test("User can request code generation and see the reviewed Test Patch", async (
       json: {
         id: "session-ready",
         title: "New session",
-        owner_id: "user-1",
+        user_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
         updated_at: "2026-06-17T09:00:00Z",
@@ -1052,7 +1052,7 @@ test("User can approve a reviewed Test Patch and see the pushed branch", async (
       json: {
         id: "session-ready",
         title: "New session",
-        owner_id: "user-1",
+        user_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
         updated_at: "2026-06-17T09:00:00Z",
@@ -1160,7 +1160,7 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
       json: {
         id: "session-ready",
         title: "New session",
-        owner_id: "user-1",
+        user_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
         updated_at: "2026-06-17T09:00:00Z",
@@ -1266,7 +1266,7 @@ test("Failed code generation renders the failed stage and sanitized reason", asy
       json: {
         id: "session-ready",
         title: "New session",
-        owner_id: "user-1",
+        user_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
         updated_at: "2026-06-17T09:00:00Z",
@@ -1350,7 +1350,7 @@ test("Repository questions and code generation coexist in one chat history", asy
       json: {
         id: "session-ready",
         title: "New session",
-        owner_id: "user-1",
+        user_id: "user-1",
         repository_id: "repo-ready",
         created_at: "2026-06-17T09:00:00Z",
         updated_at: "2026-06-17T09:00:00Z",

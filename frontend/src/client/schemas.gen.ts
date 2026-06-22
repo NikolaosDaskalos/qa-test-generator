@@ -515,7 +515,7 @@ export const RepositorySessionPublicSchema = {
             type: 'string',
             title: 'Title'
         },
-        owner_id: {
+        user_id: {
             type: 'string',
             format: 'uuid',
             title: 'Owner Id'
@@ -537,7 +537,7 @@ export const RepositorySessionPublicSchema = {
         }
     },
     type: 'object',
-    required: ['id', 'title', 'owner_id', 'repository_id', 'created_at', 'updated_at'],
+    required: ['id', 'title', 'user_id', 'repository_id', 'created_at', 'updated_at'],
     title: 'RepositorySessionPublic',
     description: 'A session as exposed to clients.'
 } as const;

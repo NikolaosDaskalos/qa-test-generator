@@ -31,9 +31,9 @@ class RepositorySessionStore:
         """Load a session by id, or ``None`` if absent."""
         return self.session.get(RepositorySession, repository_session_id)
 
-    def get_page(self, *, skip: int, limit: int, owner_id: uuid.UUID | None = None, repository_id: uuid.UUID | None = None) -> list[RepositorySession]:
+    def get_page(self, *, skip: int, limit: int, user_id: uuid.UUID | None = None, repository_id: uuid.UUID | None = None) -> list[RepositorySession]:
         """Return a page of sessions, most-recently-active first, optionally scoped by owner/repository."""
-        statement = self._scoped(select(RepositorySession), owner_id=owner_id, repository_id=repository_id)
+        statement = self._scoped(select(RepositorySession), user_id=user_id, repository_id=repository_id)
         statement = statement.order_by(col(RepositorySession.updated_at).desc(), col(RepositorySession.id)).offset(skip).limit(limit)
         return list(self.session.exec(statement).all())
 
@@ -83,16 +83,16 @@ class RepositorySessionStore:
         self.session.add(repository_session)
         self.session.commit()
 
-    def count(self, *, owner_id: uuid.UUID | None = None, repository_id: uuid.UUID | None = None) -> int:
+    def count(self, *, user_id: uuid.UUID | None = None, repository_id: uuid.UUID | None = None) -> int:
         """Count sessions, optionally scoped by owner and/or repository."""
-        statement = self._scoped(select(func.count()).select_from(RepositorySession), owner_id=owner_id, repository_id=repository_id)
+        statement = self._scoped(select(func.count()).select_from(RepositorySession), user_id=user_id, repository_id=repository_id)
         return self.session.exec(statement).one()
 
     @staticmethod
-    def _scoped(statement, *, owner_id: uuid.UUID | None, repository_id: uuid.UUID | None):
+    def _scoped(statement, *, user_id: uuid.UUID | None, repository_id: uuid.UUID | None):
         """Apply optional owner/repository filters to a session query."""
-        if owner_id is not None:
-            statement = statement.where(RepositorySession.owner_id == owner_id)
+        if user_id is not None:
+            statement = statement.where(RepositorySession.user_id == user_id)
         if repository_id is not None:
             statement = statement.where(RepositorySession.repository_id == repository_id)
         return statement

@@ -42,7 +42,7 @@ def test_upgrade_replaces_search_memory_with_bound_sessions_and_message_history(
     history_foreign_keys = [item for item in tables["session_history"] if isinstance(item, ForeignKeyConstraint)]
 
     assert session_columns["repository_id"].nullable is False
-    assert session_columns["owner_id"].nullable is False
+    assert session_columns["user_id"].nullable is False
     assert "memory" not in session_columns
     assert history_columns["session_id"].nullable is False
     assert history_columns["role"].nullable is False

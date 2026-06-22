@@ -182,7 +182,7 @@ export type RepositorySessionCreate = {
 export type RepositorySessionPublic = {
     id: string;
     title: string;
-    owner_id: string;
+    user_id: string;
     repository_id: string;
     created_at: string;
     updated_at: string;

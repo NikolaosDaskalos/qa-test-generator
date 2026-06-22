@@ -53,7 +53,7 @@ def test_repository_schema_serializes_enums_as_strings() -> None:
 
 
 def test_repository_session_timestamps_are_timezone_aware() -> None:
-    session = RepositorySession(owner_id=uuid.uuid4(), repository_id=uuid.uuid4())
+    session = RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4())
     history = SessionHistory(session_id=session.id, role="user", content="query", position=1)
 
     assert session.created_at.tzinfo is timezone.utc

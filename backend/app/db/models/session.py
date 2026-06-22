@@ -37,7 +37,7 @@ class RepositorySession(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     title: str = Field(default=NEW_SESSION_TITLE, min_length=1, max_length=255)
-    owner_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, index=True, ondelete="CASCADE")
+    user_id: uuid.UUID = Field(foreign_key="user.id", nullable=False, index=True, ondelete="CASCADE")
     repository_id: uuid.UUID = Field(foreign_key="repository.id", nullable=False, index=True, ondelete="CASCADE")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), sa_type=DateTime(timezone=True))  # type: ignore
     updated_at: datetime = Field(
@@ -46,7 +46,7 @@ class RepositorySession(SQLModel, table=True):
         sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
     )
 
-    owner: "User" = Relationship(back_populates="repository_sessions")
+    user: "User" = Relationship(back_populates="repository_sessions")
     repository: "Repository" = Relationship(back_populates="sessions")
     history: list["SessionHistory"] = Relationship(back_populates="session", sa_relationship_kwargs={"passive_deletes": "all"})
     coding_runs: list["CodingRun"] = Relationship(back_populates="repository_session", sa_relationship_kwargs={"passive_deletes": "all"})

@@ -158,10 +158,6 @@ class Settings(BaseSettings):
     STRONGEST_LLM_MAX_TOKENS: int = 7000
     TEMPERATURE: float = 0.0
 
-    # LangSmith tracing. The whole agent graph runs on LangChain/LangGraph runnables,
-    # which auto-export traces to LangSmith when these are present in ``os.environ``.
-    # ``model_post_init`` mirrors them out of pydantic settings into the process
-    # environment, so enabling tracing is purely a matter of setting these here.
     LANGSMITH_TRACING: bool = False
     LANGSMITH_API_KEY: str | None = None
     LANGSMITH_PROJECT: str = "qa-test-generator"
@@ -173,7 +169,7 @@ class Settings(BaseSettings):
 
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 10
-    TOP_K: int = 10
+    TOP_K: int = Field(default=10, ge=1)
     FINAL_PARENT_LIMIT: int = Field(default=5, ge=1)
     COHERE_RERANK_MODEL: str = "rerank-v4.0-pro"
 
@@ -185,7 +181,9 @@ class Settings(BaseSettings):
     WEAVIATE_GRPC_SECURE: bool = False
     WEAVIATE_API_KEY: str | None = None
     WEAVIATE_COLLECTION: str = "Document"
-    # alpha value: 1.0 -> Pure vector search, 0.0 -> pure BM25 search
+    # alpha value:
+    # - 1.0 -> Pure vector search
+    # - 0.0 -> pure BM25 search
     HYBRID_SEARCH_ALPHA: float = Field(default=0.3, ge=0.0, le=1.0)
 
     # Max connections in the shared PostgresSaver pool backing the session graph checkpointer.
@@ -229,7 +227,7 @@ class Settings(BaseSettings):
 
     @classmethod
     def settings_customise_sources(
-        cls, settings_cls: type[BaseSettings], init_settings: Any, env_settings: Any, dotenv_settings: Any, file_secret_settings: Any
+            cls, settings_cls: type[BaseSettings], init_settings: Any, env_settings: Any, dotenv_settings: Any, file_secret_settings: Any
     ) -> tuple[Any, ...]:
         """Prioritize dotenv values over process environment variables."""
         # .env file takes priority over system/process environment variables

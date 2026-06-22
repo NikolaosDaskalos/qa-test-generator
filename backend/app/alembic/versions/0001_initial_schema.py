@@ -65,15 +65,15 @@ def upgrade() -> None:
     op.create_table('repository_session',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('title', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
-    sa.Column('owner_id', sa.Uuid(), nullable=False),
+    sa.Column('user_id', sa.Uuid(), nullable=False),
     sa.Column('repository_id', sa.Uuid(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['owner_id'], ['user.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['user_id'], ['user.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['repository_id'], ['repository.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_repository_session_owner_id'), 'repository_session', ['owner_id'], unique=False)
+    op.create_index(op.f('ix_repository_session_user_id'), 'repository_session', ['user_id'], unique=False)
     op.create_index(op.f('ix_repository_session_repository_id'), 'repository_session', ['repository_id'], unique=False)
     op.create_table('coding_run',
     sa.Column('id', sa.Uuid(), nullable=False),
@@ -119,7 +119,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_coding_run_repository_session_id'), table_name='coding_run')
     op.drop_table('coding_run')
     op.drop_index(op.f('ix_repository_session_repository_id'), table_name='repository_session')
-    op.drop_index(op.f('ix_repository_session_owner_id'), table_name='repository_session')
+    op.drop_index(op.f('ix_repository_session_user_id'), table_name='repository_session')
     op.drop_table('repository_session')
     op.drop_index(op.f('ix_repository_document_repository_id'), table_name='repository_document')
     op.drop_table('repository_document')
