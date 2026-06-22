@@ -68,13 +68,21 @@ _Avoid_: Application file, arbitrary generated file
 A validated set of complete Test File contents proposed by a Code Generation Task. The backend writes these files and derives the human-readable unified diff from Git.
 _Avoid_: LLM-authored unified diff, application-code patch
 
+**Patch Execution**:
+The dynamic counterpart to Patch Review: the Test Files in a Test Patch are run in an isolated, network-less sandbox against a disposable copy of the checkout, before the patch is eligible for review. Only the patch's own Test Files are run, so the Repository's pre-existing or flaky tests never gate the patch; passing means those files collect and succeed. A failing execution returns the patch to the code generator with the captured failure output, up to a bounded number of Execution Attempts kept separate from Generation Retries; exhausting them does not fail the Coding Run — the patch proceeds to Patch Review flagged as not passing, so the owner still inspects and decides. When the tests cannot be run at all (the sandbox is unavailable or the environment cannot be provisioned), the patch proceeds to review flagged as not executed, rather than failing the run or spending an Execution Attempt. Untrusted generated code never receives the Repository Credential or any other secret, network access, or the real checkout.
+_Avoid_: running the whole repository suite, executing tests as part of Patch Review, sharing the Generation Retries budget, failing the run on a test failure or a missing sandbox, the real checkout or live network inside the sandbox
+
+**Execution Attempts**:
+The bounded number of opportunities (default four) for the code generator to correct a Test Patch whose Test Files fail Patch Execution, distinct from Generation Retries, which count revisions driven by a below-threshold Patch Review score. The two budgets are spent independently; only a run whose tests actually executed and failed spends an Execution Attempt.
+_Avoid_: Generation Retries, a shared attempt budget, spending an attempt on a sandbox or provisioning failure
+
 **Code Reviewer**:
-The agent that statically assesses a Test Patch against the Code Generation Task, repository conventions, and retrieved Repository Documents. It does not execute tests or decide whether the patch passes.
+The agent that statically assesses a Test Patch against the Code Generation Task, repository conventions, and retrieved Repository Documents. It does not execute tests or decide whether the patch passes; running the Test Files is Patch Execution's concern.
 _Avoid_: Patch Reviewer, test runner, approval gate
 
 **Patch Review**:
 A static assessment grounded in Repository Documents, produced by the Code Reviewer, that scores a Test Patch out of ten against the task and repository conventions and includes categorized findings. The Code Reviewer only scores; the backend decides pass/fail against a configurable threshold (default seven) and independently hard-fails any patch that escapes the Test File boundary regardless of score.
-_Avoid_: Test execution, CI validation, model-decided accept/reject, reviewer as the sole gate
+_Avoid_: executing tests within Patch Review (that is Patch Execution), CI validation, model-decided accept/reject, reviewer as the sole gate
 
 **Generation Retries**:
 The configurable number of opportunities (default two) for the code generator to correct a Test Patch scored below threshold by Patch Review. Exhausting the retries never fails the Coding Run: the best-scoring attempt is still escalated to human review with its score and findings, so the owner always gets to inspect and decide. The same generator agent performs both generation and revision; revision is not tool-free.
@@ -85,7 +93,7 @@ A code-generation attempt performed in the Repository's local checkout on a temp
 _Avoid_: Concurrent run, isolated worktree
 
 **Agent Stream**:
-The synchronous server-sent event response for a Repository question or Code Generation Task. It reports stage progress, generated content, review findings, and the final persisted result without polling or background agent execution. Its events form a closed vocabulary: Stage progress markers (classifying, planning, retrieving, researching, generating, reviewing, revising, re_reviewing), Token chunks, a RunStarted marker identifying the Coding Run, and exactly one terminal event — Result for a Repository question (citations ride on it), ReviewResult for a generated Test Patch escalated to the owner's decision, RunApproved or RunRejected for the owner's resolved decision, or RunFailure for a failed Coding Run. The internal PatchResult record is built into graph state but never emitted on the stream; the generated patch and files are read afterward from the Coding Run's persisted state. Deliberate outcomes — including insufficient Repository Documents, an out-of-scope Code Generation Task, or a rejected Test Patch — are normal terminal events in this vocabulary. Only unexpected transport failures (a dropped connection, an upstream crash) are surfaced as an out-of-band error frame by the SSE adapter, outside the event vocabulary.
+The synchronous server-sent event response for a Repository question or Code Generation Task. It reports stage progress, generated content, review findings, and the final persisted result without polling or background agent execution. Its events form a closed vocabulary: Stage progress markers (classifying, planning, retrieving, researching, generating, executing, reviewing, revising, re_reviewing), Token chunks, a RunStarted marker identifying the Coding Run, and exactly one terminal event — Result for a Repository question (citations ride on it), ReviewResult for a generated Test Patch escalated to the owner's decision, RunApproved or RunRejected for the owner's resolved decision, or RunFailure for a failed Coding Run. The internal PatchResult record is built into graph state but never emitted on the stream; the generated patch and files are read afterward from the Coding Run's persisted state. Deliberate outcomes — including insufficient Repository Documents, an out-of-scope Code Generation Task, or a rejected Test Patch — are normal terminal events in this vocabulary. Only unexpected transport failures (a dropped connection, an upstream crash) are surfaced as an out-of-band error frame by the SSE adapter, outside the event vocabulary.
 _Avoid_: WebSocket, polling workflow, error event for a deliberate outcome
 
 **Approval**:
