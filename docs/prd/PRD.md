@@ -12,6 +12,8 @@ The user needs a demo in which answers are grounded in one connected Repository,
 
 The authenticated frontend currently exposes leftover template navigation and branding instead of the Repository-centered workflow. Its Repository and Repository Session behavior is difficult to discover, selecting obsolete navigation can lead to a generic error screen, session creation is implicit, and reloading an existing conversation cannot restore its complete history or durable Coding Run results.
 
+Backend module interfaces also use nullable dependency parameters with `None` defaults in places where the dependency is required for correct production behavior. Omitting one of these dependencies can silently select a null, local, or in-memory adapter, degrade Code Generation behavior, or translate missing infrastructure into a misleading domain error. This makes the application composition less explicit and allows invalid configurations to survive until runtime.
+
 ## Solution
 
 Build an authenticated AI Codebase Copilot workspace and FastAPI workflow for public and private Python repositories hosted on GitHub.
@@ -30,6 +32,8 @@ Repository Synchronization keeps Repository Documents aligned with the latest de
 The authenticated product uses an AI-chat-style workspace. Repositories and their nested Repository Sessions live in a collapsible left panel, while the main area presents Repository onboarding, processing status, credential maintenance, a contextual empty state, or the selected chat. Repository Sessions use durable URLs, restore the user's last selection, display complete paginated Session History, and reconstruct Code Generation Task results from durable Coding Runs.
 
 The project remains a focused demonstration. It does not install dependencies, execute generated tests, create pull requests, support arbitrary coding tasks, or provide production concurrency guarantees.
+
+Backend module interfaces prefer strict required parameters. A parameter uses `| None` only when absence is a meaningful, documented part of the domain or request contract. Required adapters, stores, factories, policies, and Code Generation invariants are supplied explicitly at the application composition root; tests explicitly select fakes, mocks, null adapters, or in-memory adapters rather than receiving them through silent defaults.
 
 ## User Stories
 
@@ -151,6 +155,16 @@ The project remains a focused demonstration. It does not install dependencies, e
 116. As a Repository owner, I want the Repository Credential never exposed in pull-request creation errors or logs, so that approving tests cannot leak my token.
 117. As a Repository owner connected to GitHub Enterprise, I want pull-request creation to honor a configurable API base URL, so that the feature works against my GitHub host.
 118. As a Repository owner, I want no Pull Request, issue, or comment created on the question or rejection paths, so that only an explicit Approval writes to GitHub.
+119. As a backend maintainer, I want required dependencies represented by non-nullable parameters, so that invalid application composition is rejected before a workflow runs.
+120. As a backend maintainer, I want the application composition root to select production adapters explicitly, so that persistence, publishing, checkout behavior, and checkpoint durability cannot change through parameter omission.
+121. As a backend maintainer, I want null and in-memory adapters selected explicitly in tests, so that test isolation remains intentional and visible.
+122. As a backend maintainer, I want module interfaces to depend on protocols or callable interfaces instead of unnecessary concrete implementations, so that strict dependency requirements do not remove useful substitution seams.
+123. As a backend maintainer, I want missing infrastructure distinguished from missing domain records, so that configuration errors cannot appear as ordinary not-found outcomes.
+124. As a backend maintainer, I want review policy values resolved once during application composition, so that Patch Review and Generation Retries use one visible configuration.
+125. As a backend maintainer, I want required Code Generation checkout context validated before retrieval and generation, so that missing context cannot silently discard candidate paths or weaken validation.
+126. As a test author, I want fakes and mocks checked against the same interfaces used by production modules, so that tests remain representative without requiring production infrastructure.
+127. As a backend maintainer, I want nullable parameters retained when absence carries real domain meaning, so that strict typing does not replace clear optional behavior with artificial sentinel values.
+128. As a backend maintainer, I want every remaining `None` default to have an identifiable absence case, so that future contributors can distinguish optional domain data from omitted dependencies.
 
 ## Implementation Decisions
 
@@ -242,6 +256,15 @@ The project remains a focused demonstration. It does not install dependencies, e
 - Pull-request creation extends the existing `PatchPublisher` port (which the approve node already uses for commit and push) with an `open_pull_request` operation; the production adapter owns the credential and the network, and the existing fake keeps graph and node tests offline.
 - PyGithub failures translate to a new sanitized `GitHubError` mirroring `GitError`, with the Repository Credential redacted. Pull-request creation failure is a Run Failure on a distinct `github_pull_request` stage, separate from `git_push`.
 - The Approval response surfaces the created Pull Request's URL to the owner; default-branch protection in the push path is unchanged.
+- Backend interfaces use non-nullable parameters for required adapters, stores, factories, policies, and execution invariants. `| None = None` is not used merely to make construction or testing convenient.
+- `| None` remains valid when absence is part of the documented domain or request contract, including optional collection filters, nullable persisted lifecycle fields, optional user input, optional credentials for unauthenticated operations, and optional error-detail overrides.
+- Strict dependency parameters continue to target protocols or callable interfaces where multiple adapters exist. Strictness does not require callers to depend on a concrete production implementation.
+- The unified graph requires callers to provide its Coding Run recorder, workspace factory, Patch Publisher factory, and checkpointer explicitly. Production composition supplies durable adapters; isolated tests explicitly supply null, fake, or in-memory adapters.
+- The Repository Session application module requires its Coding Run store. Absence of that store is a composition error and must not be translated into a `Coding Run` not-found result.
+- Patch Review threshold and Generation Retries configuration are resolved at application composition and passed as required policy values to the graph modules that apply them. A configured zero remains a valid explicit value where the policy permits it.
+- Code Generation requires checkout context before Repository Document partitioning, Test File validation, or workspace mutation. Missing checkout context produces an explicit precondition failure rather than silently omitting candidate paths.
+- Default construction that is entirely internal to a module may remain when it does not weaken the module's external invariants or silently replace a required external adapter. Each such default is assessed individually rather than removed mechanically.
+- Existing FastAPI response contracts, Agent Stream vocabulary, Coding Run state transitions, persistence schema, and GitHub behavior do not change as part of this strict-interface work.
 
 ## Testing Decisions
 
@@ -267,6 +290,13 @@ The project remains a focused demonstration. It does not install dependencies, e
 - Persistence and service tests additionally cover deterministic first-request titles, stable title preservation, activity ordering, complete-history pagination independent from the ten-message AI window, and durable Session History references to Coding Runs.
 - Model and migration tests verify required foreign keys, cascade behavior, uniqueness constraints, enum values, and removal of duplicate session memory.
 - Existing Agent Stream tests remain the regression seam for ensuring Repository questions, Code Generation Tasks, and Approval or rejection decisions update durable conversation state without changing terminal-event behavior.
+- Application composition tests are the highest seam for strict dependencies: they verify that production providers supply the durable recorder, workspace factory, Patch Publisher factory, checkpointer, Coding Run store, and resolved review policy.
+- Interface-focused tests verify that required dependencies cannot be omitted and that explicit null, fake, mock, and in-memory adapters remain accepted when they satisfy the same protocol or callable interface.
+- Unified graph tests explicitly provide every runtime adapter. They verify external graph behavior and emitted Agent Stream events rather than asserting private calls used to select adapters.
+- Repository Session application tests explicitly provide a fake Coding Run store, including tests unrelated to Coding Run lookup, so construction matches the production interface.
+- Code Generation tests cover missing checkout context as an explicit precondition failure and verify that valid context continues to confine candidate paths and Test Files.
+- Review policy tests pass explicit threshold and Generation Retries values, including zero and configured defaults resolved by the composition root, so falsey values cannot be mistaken for omitted configuration.
+- A static type-checking regression check covers the strict interfaces and their production and test adapters, ensuring protocol conformance without coupling tests to concrete production implementations.
 - Tests do not clone real repositories, push real branches, install target Repository dependencies, execute generated tests, call OpenAI, call Tavily, or require a live Weaviate instance.
 - A small manually operated end-to-end demo remains appropriate for course presentation: connect a controlled GitHub Repository, ask a cited question, generate a Test Patch, reject one run, approve another, and verify the non-default remote branch.
 
@@ -302,6 +332,9 @@ The project remains a focused demonstration. It does not install dependencies, e
 - A date picker for Repository Credential expiration; the contract remains an optional numeric period in days.
 - Duplicating mutable Coding Run patches, findings, or lifecycle snapshots inside Session History.
 - Production security, scalability, observability, cost controls, and multi-region deployment beyond what is necessary for the course demo.
+- Removing every nullable type mechanically. Nullable fields and parameters remain in scope wherever absence is a real domain, persistence, configuration, or request state.
+- Replacing protocols with concrete production classes merely to make parameters non-nullable.
+- Changing user-visible behavior, Agent Stream events, persistence schema, or Coding Run lifecycle semantics while tightening module interfaces.
 
 ## Further Notes
 
@@ -313,3 +346,4 @@ The project remains a focused demonstration. It does not install dependencies, e
 - ADR 0005 records the decision to reference durable Coding Runs from Session History and reconstruct current coding cards rather than persisting duplicate snapshots.
 - Approval pushes the generated branch and opens a Pull Request into the default branch, carrying the Patch Review in its body (ADR 0006). The Pull Request is the terminal integration artifact; reviewing and merging it remain the owner's decision on GitHub.
 - The implementation plan and domain glossary remain the controlling references for terminology and scope.
+- The preferred backend style is strict-by-default: require a value unless the interface can name and test the meaning of its absence. Convenience for tests is handled with explicit adapters, fakes, or mocks rather than nullable production dependencies.
