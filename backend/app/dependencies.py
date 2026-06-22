@@ -27,6 +27,7 @@ from app.schemas import TokenPayload
 from app.services import RepositoryService, RepositorySessionService
 from app.services.coding_runs.patch_publisher import build_patch_publisher_factory
 from app.services.coding_runs.recorder import CodingRunRecorder
+from app.services.coding_runs.workspace import LocalGitWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -186,10 +187,13 @@ def get_session_graph(
     """Compile the unified intent-routed graph for one request.
 
     Classifier and planner reuse the chat model via structured output; retrieval
-    and generation reuse the repository-scoped components; the Coding Run recorder
-    persists the code-generation lifecycle. The durable
-    ``PostgresSaver`` checkpointer is the process-wide singleton opened in the
-    application lifespan; only the (in-memory) graph wiring is rebuilt per request.
+    and generation reuse the repository-scoped components. This composition root
+    chooses every production runtime adapter explicitly: the Coding Run recorder
+    persists the code-generation lifecycle, the local checkout workspace factory
+    drives Git plumbing, the patch publisher factory publishes approved patches,
+    and the durable ``PostgresSaver`` checkpointer (the process-wide singleton
+    opened in the application lifespan) holds graph state; only the (in-memory)
+    graph wiring is rebuilt per request.
     """
     return build_graph(
         classifier_llm=chat_model,
@@ -199,6 +203,7 @@ def get_session_graph(
         code_generator=CodeGenerator(strong_chat_model),
         code_reviewer=CodeReviewer(strongest_chat_model),
         run_recorder=CodingRunRecorder(coding_run_store),
+        workspace_factory=LocalGitWorkspace,
         publisher_factory=build_patch_publisher_factory(repository_store),
         checkpointer=request.app.state.session_checkpointer,
     )

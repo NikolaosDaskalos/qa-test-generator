@@ -14,7 +14,6 @@ import uuid
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
@@ -34,9 +33,6 @@ from app.agents.nodes.code_generation import (
 from app.agents.nodes.planner import build_plan_node
 from app.agents.nodes.repository_question import build_generate_node, build_retrieve_node
 from app.schemas import Citation, PatchResult, RetrievalRequest, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
-from app.services.coding_runs.patch_publisher import NullPatchPublisher
-from app.services.coding_runs.recorder import NullRunRecorder
-from app.services.coding_runs.workspace import LocalGitWorkspace
 from app.streaming import emit
 
 Intent = Literal["repository_question", "code_generation"]
@@ -164,16 +160,6 @@ def _fail_run_node(recorder):
     return fail_run
 
 
-def _default_workspace_factory(checkout_root):
-    """Default workspace seam: a local-Git workspace over the checkout."""
-    return LocalGitWorkspace(checkout_root)
-
-
-def _default_publisher_factory(_repository_id):
-    """Default publisher seam: a no-op publisher when no credential seam is wired."""
-    return NullPatchPublisher()
-
-
 def build_graph(
     *,
     classifier_llm,
@@ -182,23 +168,32 @@ def build_graph(
     planner_llm,
     code_generator,
     code_reviewer,
-    run_recorder=None,
-    workspace_factory=None,
-    publisher_factory=None,
-    checkpointer=None,
+    run_recorder,
+    workspace_factory,
+    publisher_factory,
+    checkpointer,
     max_generation_retries=None,
 ):
     """Compile the unified intent-routed graph.
 
-    ``checkpointer`` is the durable graph-state store. Production passes the
-    process-wide ``PostgresSaver`` (its connection pool is the singleton, opened
-    once in the FastAPI lifespan); compiling the graph itself is an in-memory
-    wiring step done per request. Tests omit it and get an ephemeral
-    ``MemorySaver``.
+    Every runtime adapter is an explicit, required input: ``run_recorder``
+    (Coding Run persistence), ``workspace_factory`` (checkout workspace
+    behavior), ``publisher_factory`` (Test Patch publishing), and
+    ``checkpointer`` (the durable graph-state store). None has an omission-based
+    fallback — leaving one out raises here, at the graph-construction boundary,
+    rather than silently compiling a graph with no-op recording, no-op
+    publishing, local-Git workspace, or in-memory checkpointing.
+
+    The application composition root chooses the production adapters: the
+    process-wide ``PostgresSaver`` (its connection pool opened once in the
+    FastAPI lifespan; only the in-memory graph wiring is rebuilt per request),
+    the ``CodingRunRecorder``, the local checkout workspace factory, and the Git
+    patch publisher. Tests deliberately choose their null, fake, local, or
+    in-memory adapters according to the behavior under test (ADR-0002).
     """
-    recorder = run_recorder or NullRunRecorder()
-    workspaces = workspace_factory or _default_workspace_factory
-    publishers = publisher_factory or _default_publisher_factory
+    recorder = run_recorder
+    workspaces = workspace_factory
+    publishers = publisher_factory
     graph = StateGraph(GraphState)
     graph.add_node("classify", _classify_node(classifier_llm))
     graph.add_node("plan", build_plan_node(planner_llm, recorder))
@@ -231,4 +226,4 @@ def build_graph(
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)
 
-    return graph.compile(checkpointer=checkpointer or MemorySaver())
+    return graph.compile(checkpointer=checkpointer)

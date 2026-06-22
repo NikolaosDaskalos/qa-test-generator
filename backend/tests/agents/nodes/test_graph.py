@@ -8,6 +8,8 @@ import subprocess
 import uuid
 from pathlib import Path
 
+import pytest
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from app.agents import Classification, build_graph
@@ -334,11 +336,35 @@ def _build(
         planner_llm=planner_llm if planner_llm is not None else FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
         code_generator=code_generator if code_generator is not None else FakeCodeGenerator(),
         code_reviewer=code_reviewer if code_reviewer is not None else FakeCodeReviewer(),
-        run_recorder=recorder,
+        run_recorder=recorder if recorder is not None else RecordingRecorder(),
         workspace_factory=_workspace_factory(workspace),
         publisher_factory=_publisher_factory(publisher),
+        checkpointer=MemorySaver(),
         max_generation_retries=max_generation_retries,
     )
+
+
+# ── Runtime adapter wiring ────────────────────────────────────────
+
+
+def test_build_graph_requires_every_runtime_adapter() -> None:
+    """Omitting any runtime adapter fails at construction, never compiling a degraded graph."""
+    complete = dict(
+        classifier_llm=FakeClassifierLLM("repository_question"),
+        retriever=FakeRetriever(),
+        llm=FakeGeneratorLLM(),
+        planner_llm=FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
+        code_generator=FakeCodeGenerator(),
+        code_reviewer=FakeCodeReviewer(),
+        run_recorder=RecordingRecorder(),
+        workspace_factory=_workspace_factory(),
+        publisher_factory=_publisher_factory(),
+        checkpointer=MemorySaver(),
+    )
+    for adapter in ("run_recorder", "workspace_factory", "publisher_factory", "checkpointer"):
+        incomplete = {key: value for key, value in complete.items() if key != adapter}
+        with pytest.raises(TypeError):
+            build_graph(**incomplete)
 
 
 # ── Routing ───────────────────────────────────────────────────────
@@ -1474,6 +1500,8 @@ def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_
         code_reviewer=reviewer,
         run_recorder=recorder,
         workspace_factory=lambda checkout_root: LocalGitWorkspace(checkout_root),
+        publisher_factory=_publisher_factory(),
+        checkpointer=MemorySaver(),
     )
 
     final = graph.invoke(
