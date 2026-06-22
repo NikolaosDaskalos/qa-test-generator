@@ -25,7 +25,7 @@ from app.streaming import map_graph_stream
 class RepositorySessionService:
     """Own Repository Session authorization and lifecycle rules."""
 
-    def __init__(self, session_store: RepositorySessionStore, repository_store: RepositoryStore, coding_run_store: CodingRunStore | None = None) -> None:
+    def __init__(self, session_store: RepositorySessionStore, repository_store: RepositoryStore, coding_run_store: CodingRunStore) -> None:
         self.session_store = session_store
         self.repository_store = repository_store
         self.coding_run_store = coding_run_store
@@ -79,7 +79,7 @@ class RepositorySessionService:
         session the caller does not own.
         """
         repository_session = self._get_accessible(repository_session_id, user)
-        run = self.coding_run_store.get_by_id(coding_run_id) if self.coding_run_store else None
+        run = self.coding_run_store.get_by_id(coding_run_id)
         if run is None or run.repository_session_id != repository_session.id:
             raise CodingRunNotFound()
         return run

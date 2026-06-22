@@ -60,6 +60,14 @@ class FakeGraph:
         return SimpleNamespace(values=self._final, next=self._next)
 
 
+class FakeCodingRunStore:
+    def __init__(self, run) -> None:
+        self.run = run
+
+    def get_by_id(self, coding_run_id):
+        return self.run if self.run is not None and self.run.repository_session_id is not None else None
+
+
 def _user():
     return User(id=uuid.uuid4(), email="o@example.com", hashed_password="x")
 
@@ -76,7 +84,7 @@ def _wiring(user, *, indexed_commit_sha=None):
     )
     repository_session = RepositorySession(id=uuid.uuid4(), user_id=user.id, repository_id=repository.id)
     session_store = FakeSessionStore(repository_session)
-    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore(None))
     return service, session_store, repository_session
 
 
@@ -179,14 +187,6 @@ def test_stream_session_rejects_a_session_owned_by_another_user():
 
     with pytest.raises(RepositorySessionAccessForbidden):
         list(service.stream_session(repository_session_id=repository_session.id, user=other, question="q", graph=FakeGraph([], {}), thread_id="t"))
-
-
-class FakeCodingRunStore:
-    def __init__(self, run) -> None:
-        self.run = run
-
-    def get_by_id(self, coding_run_id):
-        return self.run if self.run is not None and self.run.repository_session_id is not None else None
 
 
 def test_stream_session_resumes_a_paused_run_with_the_owner_decision():

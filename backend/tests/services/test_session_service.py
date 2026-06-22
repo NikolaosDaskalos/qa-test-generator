@@ -22,6 +22,16 @@ class FakeRepositoryStore:
         return None
 
 
+class FakeCodingRunStore:
+    def __init__(self, run=None) -> None:
+        self.run = run
+        self.lookups = []
+
+    def get_by_id(self, coding_run_id):
+        self.lookups.append(coding_run_id)
+        return self.run
+
+
 class FakeRepositorySessionStore:
     def __init__(self, repository_session: RepositorySession | None = None, *, page: list[RepositorySession] | None = None, total: int = 0) -> None:
         self.repository_session = repository_session
@@ -70,7 +80,7 @@ def test_unfiltered_list_scopes_to_owner_and_wraps_data_with_total_count() -> No
     user_id = uuid.uuid4()
     sessions = [RepositorySession(user_id=user_id, repository_id=uuid.uuid4())]
     session_store = FakeRepositorySessionStore(page=sessions, total=5)
-    service = RepositorySessionService(session_store, FakeRepositoryStore(None))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None), FakeCodingRunStore())
 
     result = service.list_sessions(user=_user(user_id), repository_id=None, skip=10, limit=20)
 
@@ -82,7 +92,7 @@ def test_unfiltered_list_scopes_to_owner_and_wraps_data_with_total_count() -> No
 
 def test_superuser_list_bypasses_owner_scoping() -> None:
     session_store = FakeRepositorySessionStore(page=[], total=0)
-    service = RepositorySessionService(session_store, FakeRepositoryStore(None))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None), FakeCodingRunStore())
     superuser = User(id=uuid.uuid4(), email="root@example.com", hashed_password="not-used", is_superuser=True)
 
     service.list_sessions(user=superuser, repository_id=None, skip=0, limit=100)
@@ -95,7 +105,7 @@ def test_filtered_list_validates_then_passes_repository_id_to_the_store() -> Non
     user_id = uuid.uuid4()
     repository = _repository(user_id)
     session_store = FakeRepositorySessionStore(page=[], total=0)
-    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore())
 
     service.list_sessions(user=_user(user_id), repository_id=repository.id, skip=0, limit=100)
 
@@ -105,7 +115,7 @@ def test_filtered_list_validates_then_passes_repository_id_to_the_store() -> Non
 
 def test_filtered_list_returns_404_when_repository_is_missing() -> None:
     session_store = FakeRepositorySessionStore()
-    service = RepositorySessionService(session_store, FakeRepositoryStore(None))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None), FakeCodingRunStore())
 
     with pytest.raises(RepositoryNotFound):
         service.list_sessions(user=_user(uuid.uuid4()), repository_id=uuid.uuid4(), skip=0, limit=100)
@@ -116,7 +126,7 @@ def test_filtered_list_returns_404_when_repository_is_missing() -> None:
 def test_filtered_list_returns_403_when_caller_does_not_own_the_repository() -> None:
     repository = _repository(uuid.uuid4())
     session_store = FakeRepositorySessionStore()
-    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore())
 
     with pytest.raises(RepositoryAccessForbidden):
         service.list_sessions(user=_user(uuid.uuid4()), repository_id=repository.id, skip=0, limit=100)
@@ -127,7 +137,7 @@ def test_filtered_list_returns_403_when_caller_does_not_own_the_repository() -> 
 def test_superuser_filtered_list_bypasses_repository_ownership() -> None:
     repository = _repository(uuid.uuid4())
     session_store = FakeRepositorySessionStore(page=[], total=0)
-    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore())
     superuser = User(id=uuid.uuid4(), email="root@example.com", hashed_password="not-used", is_superuser=True)
 
     service.list_sessions(user=superuser, repository_id=repository.id, skip=0, limit=100)
@@ -139,7 +149,7 @@ def test_filtered_list_does_not_enforce_repository_readiness() -> None:
     user_id = uuid.uuid4()
     repository = _repository(user_id, status=RepositoryStatus.indexing)
     session_store = FakeRepositorySessionStore(page=[], total=0)
-    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore())
 
     result = service.list_sessions(user=_user(user_id), repository_id=repository.id, skip=0, limit=100)
 
@@ -150,7 +160,7 @@ def test_filtered_list_does_not_enforce_repository_readiness() -> None:
 def test_user_cannot_create_session_for_another_users_repository() -> None:
     repository = _repository(uuid.uuid4())
     session_store = FakeRepositorySessionStore()
-    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore())
 
     with pytest.raises(RepositoryAccessForbidden):
         service.create_session(session_in=RepositorySessionCreate(repository_id=repository.id), user=_user(uuid.uuid4()))
@@ -162,7 +172,7 @@ def test_user_cannot_create_session_until_repository_is_ready() -> None:
     user_id = uuid.uuid4()
     repository = _repository(user_id, status=RepositoryStatus.indexing)
     session_store = FakeRepositorySessionStore()
-    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore())
 
     with pytest.raises(RepositoryNotReady):
         service.create_session(session_in=RepositorySessionCreate(repository_id=repository.id), user=_user(user_id))
@@ -174,7 +184,7 @@ def test_create_session_uses_blank_placeholder_title() -> None:
     user_id = uuid.uuid4()
     repository = _repository(user_id)
     session_store = FakeRepositorySessionStore()
-    service = RepositorySessionService(session_store, FakeRepositoryStore(repository))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore())
 
     created = service.create_session(session_in=RepositorySessionCreate(repository_id=repository.id, title="Client supplied title"), user=_user(user_id))
 
@@ -184,7 +194,7 @@ def test_create_session_uses_blank_placeholder_title() -> None:
 
 def test_user_cannot_read_another_users_session_history() -> None:
     repository_session = RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4())
-    service = RepositorySessionService(FakeRepositorySessionStore(repository_session), FakeRepositoryStore(None))
+    service = RepositorySessionService(FakeRepositorySessionStore(repository_session), FakeRepositoryStore(None), FakeCodingRunStore())
 
     with pytest.raises(RepositorySessionAccessForbidden):
         service.get_recent_history(repository_session_id=repository_session.id, user=_user(uuid.uuid4()))
@@ -194,9 +204,14 @@ def test_owned_exchange_is_persisted_through_one_store_operation() -> None:
     user_id = uuid.uuid4()
     repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
     session_store = FakeRepositorySessionStore(repository_session)
-    service = RepositorySessionService(session_store, FakeRepositoryStore(None))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None), FakeCodingRunStore())
     user = _user(user_id)
 
     service.record_exchange(repository_session_id=repository_session.id, user=user, user_message="question", assistant_message="answer")
 
     assert session_store.append_calls == [(repository_session.id, {"user_message": "question", "assistant_message": "answer"})]
+
+
+def test_service_construction_requires_a_coding_run_store() -> None:
+    with pytest.raises(TypeError):
+        RepositorySessionService(FakeRepositorySessionStore(), FakeRepositoryStore(None))  # type: ignore[call-arg]
