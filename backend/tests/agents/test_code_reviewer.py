@@ -5,6 +5,8 @@ extraction, prompt assembly, and loop boundary are verified without any real
 model or network call.
 """
 
+import anthropic
+import httpx
 from langchain_core.messages import HumanMessage
 
 from app.agents.code_reviewer import CodeReviewer
@@ -22,6 +24,21 @@ class FakeAgent:
     def invoke(self, agent_input, config=None):
         self.invocations.append((agent_input, config))
         return self.final_state
+
+
+class RaisingAgent:
+    """A stand-in agent that always fails with the given provider error."""
+
+    def __init__(self, error) -> None:
+        self.error = error
+
+    def invoke(self, agent_input, config=None):
+        raise self.error
+
+
+def _anthropic_status_error(status_code: int) -> anthropic.APIStatusError:
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    return anthropic.APIStatusError("boom", response=httpx.Response(status_code, request=request), body=None)
 
 
 def _source(source: str, content: str) -> RepositoryDocument:
@@ -97,3 +114,47 @@ def test_code_reviewer_caps_the_web_search_loop_with_a_tool_call_limit(monkeypat
     assert len(middleware) == 1
     assert middleware[0].run_limit == 3
     assert middleware[0].exit_behavior == "continue"
+
+
+def test_code_reviewer_falls_over_to_the_fallback_provider_on_a_transient_error(monkeypatch) -> None:
+    """A transient failure in the primary (Anthropic) reviewer re-runs review on the gpt-4o-mini fallback agent."""
+
+    def fake_create_agent(llm, **kwargs):
+        if llm == "primary":
+            return RaisingAgent(_anthropic_status_error(529))
+        return FakeAgent({"messages": [], "structured_response": PatchReview(score=8, findings=[])})
+
+    monkeypatch.setattr("app.agents.code_reviewer.create_agent", fake_create_agent)
+    reviewer = CodeReviewer(llm="primary", fallback_llm="fallback")
+
+    review = reviewer.review(task="add tests", source_documents=[], test_documents=[], generated_files=[], diff="d")
+
+    assert review.score == 8
+
+
+def test_code_reviewer_fails_fast_on_a_deterministic_error_without_the_fallback(monkeypatch) -> None:
+    """A deterministic primary failure (400) is not masked by the fallback; the reviewer surfaces it."""
+    fallback_invoked = {"count": 0}
+
+    def fake_create_agent(llm, **kwargs):
+        if llm == "primary":
+            return RaisingAgent(_anthropic_status_error(400))
+
+        class _Counting(FakeAgent):
+            def invoke(self, agent_input, config=None):
+                fallback_invoked["count"] += 1
+                return super().invoke(agent_input, config)
+
+        return _Counting({"messages": [], "structured_response": PatchReview(score=8, findings=[])})
+
+    monkeypatch.setattr("app.agents.code_reviewer.create_agent", fake_create_agent)
+    reviewer = CodeReviewer(llm="primary", fallback_llm="fallback")
+
+    try:
+        reviewer.review(task="add tests", source_documents=[], test_documents=[], generated_files=[], diff="d")
+    except anthropic.APIStatusError:
+        pass
+    else:
+        raise AssertionError("expected the deterministic 400 to propagate")
+
+    assert fallback_invoked["count"] == 0

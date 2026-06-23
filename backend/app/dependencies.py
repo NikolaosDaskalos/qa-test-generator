@@ -147,22 +147,28 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
 
 def get_openai_llm() -> ChatOpenAI:
     """Build the default streaming chat model (gpt-4o-mini)."""
-    return create_chat_model(settings.LLM_MODEL, settings.LLM_MAX_TOKENS)
+    return create_chat_model(settings.LLM_MODEL, settings.LLM_MAX_TOKENS, settings.LLM_MAX_RETRIES)
 
 
 def get_openai_llm_strong() -> ChatOpenAI:
     """Build the strong streaming chat model (gpt-4o)."""
-    return create_chat_model(settings.LLM_MODEL_STRONG, settings.STRONG_LLM_MAX_TOKENS)
+    return create_chat_model(settings.LLM_MODEL_STRONG, settings.STRONG_LLM_MAX_TOKENS, settings.LLM_MAX_RETRIES)
 
 
 def get_anthropic_llm() -> ChatAnthropic:
     """Build the strongest streaming chat model (Claude Haiku 4.5, via Anthropic)."""
-    return create_anthropic_chat_model(settings.LLM_MODEL_STRONGEST, settings.STRONGEST_LLM_MAX_TOKENS)
+    return create_anthropic_chat_model(settings.LLM_MODEL_STRONGEST, settings.STRONGEST_LLM_MAX_TOKENS, settings.LLM_MAX_RETRIES)
+
+
+def get_reviewer_fallback_llm() -> ChatOpenAI:
+    """Build the Code Reviewer's cross-provider fallback model (gpt-4o-mini, via OpenAI)."""
+    return create_chat_model(settings.REVIEWER_FALLBACK_LLM_MODEL, settings.REVIEWER_FALLBACK_LLM_MAX_TOKENS, settings.LLM_MAX_RETRIES)
 
 
 ChatOpenAIDep = Annotated[ChatOpenAI, Depends(get_openai_llm)]
 ChatOpenAIStrongDep = Annotated[ChatOpenAI, Depends(get_openai_llm_strong)]
 ChatAnthropicStrongestDep = Annotated[ChatAnthropic, Depends(get_anthropic_llm)]
+ChatReviewerFallbackDep = Annotated[ChatOpenAI, Depends(get_reviewer_fallback_llm)]
 
 
 def get_document_retriever(
@@ -181,6 +187,7 @@ def get_session_graph(
     chat_model: ChatOpenAIDep,
     strong_chat_model: ChatOpenAIStrongDep,
     strongest_chat_model: ChatAnthropicStrongestDep,
+    reviewer_fallback_model: ChatReviewerFallbackDep,
     document_retriever: DocumentRetrieverDep,
     coding_run_store: CodingRunStoreDep,
     repository_store: RepositoryStoreDep,
@@ -202,7 +209,7 @@ def get_session_graph(
         llm=chat_model,
         planner_llm=chat_model,
         code_generator=CodeGenerator(strong_chat_model),
-        code_reviewer=CodeReviewer(strongest_chat_model),
+        code_reviewer=CodeReviewer(strongest_chat_model, fallback_llm=reviewer_fallback_model),
         run_recorder=CodingRunRecorder(coding_run_store),
         workspace_factory=LocalGitWorkspace,
         publisher_factory=build_patch_publisher_factory(repository_store),

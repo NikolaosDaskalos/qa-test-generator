@@ -13,13 +13,20 @@ from pydantic import SecretStr
 from app.core import settings
 
 
-def create_chat_model(model: str, max_tokens: int) -> ChatOpenAI:
-    """Build a streaming OpenAI chat model for the given model id."""
-    return ChatOpenAI(model=model, temperature=settings.TEMPERATURE, max_tokens=max_tokens, streaming=True, api_key=settings.OPENAI_API_KEY)
+def create_chat_model(model: str, max_tokens: int, max_retries: int) -> ChatOpenAI:
+    """Build a streaming OpenAI chat model for the given model id with bounded SDK retries."""
+    return ChatOpenAI(
+        model=model,
+        temperature=settings.TEMPERATURE,
+        max_tokens=max_tokens,
+        streaming=True,
+        api_key=settings.OPENAI_API_KEY,
+        max_retries=max_retries,
+    )
 
 
-def create_anthropic_chat_model(model: str, max_tokens: int) -> ChatAnthropic:
-    """Build a streaming Anthropic chat model for the given model id."""
+def create_anthropic_chat_model(model: str, max_tokens: int, max_retries: int) -> ChatAnthropic:
+    """Build a streaming Anthropic chat model for the given model id with bounded SDK retries."""
     return ChatAnthropic(
         model_name=model,
         temperature=settings.TEMPERATURE,
@@ -28,6 +35,7 @@ def create_anthropic_chat_model(model: str, max_tokens: int) -> ChatAnthropic:
         api_key=settings.ANTHROPIC_API_KEY,
         timeout=None,
         stop=None,
+        max_retries=max_retries,
     )
 
 

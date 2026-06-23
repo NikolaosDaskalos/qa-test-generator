@@ -22,15 +22,17 @@ def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:
         captured.update(kwargs)
         return graph
 
+    reviewer_fallback_model = object()
     monkeypatch.setattr(dependencies, "build_graph", fake_build_graph)
     monkeypatch.setattr(dependencies, "CodeGenerator", lambda model: ("code_generator", model))
-    monkeypatch.setattr(dependencies, "CodeReviewer", lambda model: ("code_reviewer", model))
+    monkeypatch.setattr(dependencies, "CodeReviewer", lambda model, *, fallback_llm=None: ("code_reviewer", model, fallback_llm))
 
     result = dependencies.get_session_graph(
         request=request,
         chat_model=chat_model,
         strong_chat_model=strong_chat_model,
         strongest_chat_model=strongest_chat_model,
+        reviewer_fallback_model=reviewer_fallback_model,
         document_retriever=retriever,
         coding_run_store=coding_run_store,
         repository_store=repository_store,
@@ -42,7 +44,8 @@ def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:
     assert captured["llm"] is chat_model
     assert captured["planner_llm"] is chat_model
     assert captured["code_generator"] == ("code_generator", strong_chat_model)
-    assert captured["code_reviewer"] == ("code_reviewer", strongest_chat_model)
+    # The reviewer runs as the Anthropic primary with the OpenAI fallback model composed in (ADR 0010).
+    assert captured["code_reviewer"] == ("code_reviewer", strongest_chat_model, reviewer_fallback_model)
     assert captured["checkpointer"] is request.app.state.session_checkpointer
 
 
@@ -55,7 +58,7 @@ def test_session_graph_supplies_every_production_runtime_adapter(monkeypatch) ->
 
     monkeypatch.setattr(dependencies, "build_graph", lambda **kwargs: captured.update(kwargs))
     monkeypatch.setattr(dependencies, "CodeGenerator", lambda model: ("code_generator", model))
-    monkeypatch.setattr(dependencies, "CodeReviewer", lambda model: ("code_reviewer", model))
+    monkeypatch.setattr(dependencies, "CodeReviewer", lambda model, *, fallback_llm=None: ("code_reviewer", model, fallback_llm))
     monkeypatch.setattr(dependencies, "CodingRunRecorder", lambda store: ("recorder", store))
     monkeypatch.setattr(dependencies, "build_patch_publisher_factory", lambda store: ("publisher_factory", store))
 
@@ -64,6 +67,7 @@ def test_session_graph_supplies_every_production_runtime_adapter(monkeypatch) ->
         chat_model=object(),
         strong_chat_model=object(),
         strongest_chat_model=object(),
+        reviewer_fallback_model=object(),
         document_retriever=object(),
         coding_run_store=coding_run_store,
         repository_store=repository_store,
@@ -86,7 +90,7 @@ def test_session_graph_resolves_the_review_policy_from_settings_once(monkeypatch
 
     monkeypatch.setattr(dependencies, "build_graph", lambda **kwargs: captured.update(kwargs))
     monkeypatch.setattr(dependencies, "CodeGenerator", lambda model: ("code_generator", model))
-    monkeypatch.setattr(dependencies, "CodeReviewer", lambda model: ("code_reviewer", model))
+    monkeypatch.setattr(dependencies, "CodeReviewer", lambda model, *, fallback_llm=None: ("code_reviewer", model, fallback_llm))
     monkeypatch.setattr(dependencies, "CodingRunRecorder", lambda store: ("recorder", store))
     monkeypatch.setattr(dependencies, "build_patch_publisher_factory", lambda store: ("publisher_factory", store))
 
@@ -95,6 +99,7 @@ def test_session_graph_resolves_the_review_policy_from_settings_once(monkeypatch
         chat_model=object(),
         strong_chat_model=object(),
         strongest_chat_model=object(),
+        reviewer_fallback_model=object(),
         document_retriever=object(),
         coding_run_store=object(),
         repository_store=object(),

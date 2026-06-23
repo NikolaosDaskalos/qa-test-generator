@@ -16,6 +16,7 @@ import logging
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 
+from app.agents.fallback import with_agent_fallback
 from app.agents.middleware import build_tool_call_limit_middleware
 from app.agents.tools import web_search
 from app.prompts.prompts import CODE_REVIEWER_SYSTEM_PROMPT
@@ -26,12 +27,23 @@ logger = logging.getLogger(__name__)
 
 
 class CodeReviewer:
-    """Production ``CodeReviewer``: a bounded ``create_agent`` loop over ``web_search``."""
+    """Production ``CodeReviewer``: a bounded ``create_agent`` loop over ``web_search``.
 
-    def __init__(self, llm, *, agent=None) -> None:
-        self._agent = agent or create_agent(
-            llm, tools=[web_search], system_prompt=CODE_REVIEWER_SYSTEM_PROMPT, response_format=PatchReview, middleware=[build_tool_call_limit_middleware()]
-        )
+    When a ``fallback_llm`` is supplied the reviewer runs as a primary agent with a
+    cross-provider fallback agent composed via ``with_agent_fallback``: a transient
+    primary failure (e.g. an Anthropic 529) re-runs the whole bounded review on the
+    fallback provider, while a deterministic failure fails fast (see ADR 0010).
+    """
+
+    def __init__(self, llm, *, fallback_llm=None, agent=None) -> None:
+        if agent is not None:
+            self._agent = agent
+        elif fallback_llm is not None:
+            self._agent = with_agent_fallback(
+                _build_agent(llm), _build_agent(fallback_llm), primary_label=_model_label(llm), fallback_label=_model_label(fallback_llm)
+            )
+        else:
+            self._agent = _build_agent(llm)
 
     def review(self, *, task: str, source_documents: list, test_documents: list, generated_files: list, diff: str) -> PatchReview:
         prompt = _build_prompt(task, source_documents, test_documents, generated_files, diff)
@@ -41,6 +53,18 @@ class CodeReviewer:
 
     def __call__(self, *, task: str, source_documents: list, test_documents: list, generated_files: list, diff: str) -> PatchReview:
         return self.review(task=task, source_documents=source_documents, test_documents=test_documents, generated_files=generated_files, diff=diff)
+
+
+def _build_agent(llm):
+    """Build a bounded ReAct review agent over ``web_search`` for the given chat model."""
+    return create_agent(
+        llm, tools=[web_search], system_prompt=CODE_REVIEWER_SYSTEM_PROMPT, response_format=PatchReview, middleware=[build_tool_call_limit_middleware()]
+    )
+
+
+def _model_label(llm) -> str:
+    """A human-readable model id for fallback logging (e.g. ``claude-haiku-4-5``)."""
+    return getattr(llm, "model", None) or getattr(llm, "model_name", None) or type(llm).__name__
 
 
 def _build_prompt(task: str, source_documents: list, test_documents: list, generated_files: list, diff: str) -> str:

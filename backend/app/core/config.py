@@ -158,6 +158,17 @@ class Settings(BaseSettings):
     STRONGEST_LLM_MAX_TOKENS: int = 7000
     TEMPERATURE: float = 0.0
 
+    # Cross-provider fallback for the Code Reviewer (ADR 0010): the primary reviewer is
+    # the Anthropic STRONGEST model; on a transient failure it falls over to this OpenAI
+    # model so a single-provider blip no longer fails a Coding Run. max_tokens mirrors the
+    # existing *_MAX_TOKENS pattern; TEMPERATURE stays 0.0 across every model.
+    REVIEWER_FALLBACK_LLM_MODEL: str = "gpt-4o-mini"
+    REVIEWER_FALLBACK_LLM_MAX_TOKENS: int = 7000
+
+    # SDK-level bounded retry budget applied on each chat-model constructor, using the
+    # provider SDK's built-in exponential backoff, before any cross-provider fallback fires.
+    LLM_MAX_RETRIES: int = Field(default=3, ge=0)
+
     LANGSMITH_TRACING: bool = False
     LANGSMITH_API_KEY: str | None = None
     LANGSMITH_PROJECT: str = "qa-test-generator"

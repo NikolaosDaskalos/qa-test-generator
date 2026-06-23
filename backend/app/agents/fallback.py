@@ -1,0 +1,83 @@
+"""Cross-provider retry/fallback foundation for the unified graph's LLM call sites.
+
+Bounded SDK-level retry lives on the model constructors (``app/integrations/llm``);
+this module owns the two pieces that retry cannot express: a shared predicate that
+decides which provider errors are worth falling back on, and an agent-level fallback
+wrapper that re-runs a compiled agent on a cross-provider replacement when — and only
+when — the primary failed transiently.
+"""
+
+import logging
+
+import anthropic
+import openai
+from langchain_core.runnables import Runnable, RunnableLambda
+
+logger = logging.getLogger(__name__)
+
+# Transient HTTP statuses worth retrying on the other provider: request timeout,
+# conflict, and rate-limit. 5xx (and Anthropic's 529 overloaded, which arrives as the
+# base APIStatusError rather than a 5xx subclass) are handled by the >= 500 check.
+_TRANSIENT_STATUS = {408, 409, 429}
+
+
+def is_transient_llm_error(exc: BaseException) -> bool:
+    """Return whether a provider error is an availability blip worth a cross-provider fallback.
+
+    Transient: connection failures and timeouts, rate-limits (429), and any 5xx —
+    including Anthropic's 529 ``overloaded_error``, which surfaces as the base
+    ``APIStatusError`` and so must be caught by status code, not by exception type.
+    Deterministic errors (400 bad-request, 401 auth, context-length, content-policy,
+    404, 422) are not transient and must fail fast rather than burn a second call.
+    """
+    if isinstance(exc, (openai.APIConnectionError, anthropic.APIConnectionError)):
+        return True
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status in _TRANSIENT_STATUS or status >= 500
+    return False
+
+
+class _TransientProviderError(Exception):
+    """Internal marker: a transient primary failure that should trigger the fallback.
+
+    ``Runnable.with_fallbacks`` matches handled exceptions by type, but a precise
+    transient-only filter cannot — a 529 and a 400 both arrive as the base
+    ``APIStatusError``. So the guarded primary re-raises only *transient* failures as
+    this marker, which ``with_fallbacks`` is configured to catch; deterministic
+    failures propagate as themselves and fail fast.
+    """
+
+
+def with_agent_fallback(primary: Runnable, fallback: Runnable, *, primary_label: str, fallback_label: str) -> Runnable:
+    """Compose ``primary`` with a cross-provider ``fallback`` that fires only on transient errors.
+
+    ``create_agent`` rejects a non-``BaseChatModel`` model, so fallback cannot live on
+    the model object and must wrap the compiled agent: the whole bounded ReAct loop
+    re-runs on the fallback provider. A transient primary failure logs a WARNING and is
+    re-raised as the internal marker ``with_fallbacks`` catches; a deterministic failure
+    propagates untouched so the run fails fast without burning a second provider call.
+    """
+
+    def guarded(agent_input):
+        try:
+            return primary.invoke(agent_input)
+        except _TransientProviderError:
+            raise
+        except BaseException as exc:
+            if not is_transient_llm_error(exc):
+                raise
+            logger.warning("LLM provider fallback firing primary=%s fallback=%s reason=%s", primary_label, fallback_label, _reason(exc))
+            raise _TransientProviderError(str(exc)) from exc
+
+    return RunnableLambda(guarded).with_fallbacks(
+        [RunnableLambda(lambda agent_input: fallback.invoke(agent_input))],
+        exceptions_to_handle=(_TransientProviderError,),
+    )
+
+
+def _reason(exc: BaseException) -> str:
+    """A compact, log-safe description of why the fallback fired (type plus HTTP status)."""
+    status = getattr(exc, "status_code", None)
+    name = type(exc).__name__
+    return f"{name} status={status}" if isinstance(status, int) else name
