@@ -165,10 +165,16 @@ def get_reviewer_fallback_llm() -> ChatOpenAI:
     return create_chat_model(settings.REVIEWER_FALLBACK_LLM_MODEL, settings.REVIEWER_FALLBACK_LLM_MAX_TOKENS, settings.LLM_MAX_RETRIES)
 
 
+def get_generator_fallback_llm() -> ChatAnthropic:
+    """Build the Code Generator's cross-provider fallback model (Claude Sonnet, via Anthropic)."""
+    return create_anthropic_chat_model(settings.STRONG_LLM_FALLBACK_MODEL, settings.STRONG_LLM_FALLBACK_MAX_TOKENS, settings.LLM_MAX_RETRIES)
+
+
 ChatOpenAIDep = Annotated[ChatOpenAI, Depends(get_openai_llm)]
 ChatOpenAIStrongDep = Annotated[ChatOpenAI, Depends(get_openai_llm_strong)]
 ChatAnthropicStrongestDep = Annotated[ChatAnthropic, Depends(get_anthropic_llm)]
 ChatReviewerFallbackDep = Annotated[ChatOpenAI, Depends(get_reviewer_fallback_llm)]
+ChatGeneratorFallbackDep = Annotated[ChatAnthropic, Depends(get_generator_fallback_llm)]
 
 
 def get_document_retriever(
@@ -186,6 +192,7 @@ def get_session_graph(
     request: Request,
     chat_model: ChatOpenAIDep,
     strong_chat_model: ChatOpenAIStrongDep,
+    generator_fallback_model: ChatGeneratorFallbackDep,
     strongest_chat_model: ChatAnthropicStrongestDep,
     reviewer_fallback_model: ChatReviewerFallbackDep,
     document_retriever: DocumentRetrieverDep,
@@ -208,7 +215,7 @@ def get_session_graph(
         retriever=document_retriever,
         llm=chat_model,
         planner_llm=chat_model,
-        code_generator=CodeGenerator(strong_chat_model),
+        code_generator=CodeGenerator(strong_chat_model, fallback_llm=generator_fallback_model),
         code_reviewer=CodeReviewer(strongest_chat_model, fallback_llm=reviewer_fallback_model),
         run_recorder=CodingRunRecorder(coding_run_store),
         workspace_factory=LocalGitWorkspace,

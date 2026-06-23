@@ -71,3 +71,11 @@ def test_reranking_configuration_is_independent_of_candidate_count(tmp_path: Pat
     assert configured.COHERE_RERANK_MODEL == "rerank-test-model"
     assert configured.TOP_K == 12
     assert configured.FINAL_PARENT_LIMIT == 4
+
+
+def test_strong_tier_fallback_configuration_defaults_to_claude_sonnet(tmp_path: Path) -> None:
+    """The Code Generator's strong tier has a configurable cross-provider fallback model and token budget."""
+    configured = build_settings(tmp_path, REPOSITORY_TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode())
+
+    assert configured.STRONG_LLM_FALLBACK_MODEL == "claude-sonnet-4-6"
+    assert configured.STRONG_LLM_FALLBACK_MAX_TOKENS == configured.STRONG_LLM_MAX_TOKENS

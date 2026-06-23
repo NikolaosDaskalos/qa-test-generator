@@ -165,6 +165,12 @@ class Settings(BaseSettings):
     REVIEWER_FALLBACK_LLM_MODEL: str = "gpt-4o-mini"
     REVIEWER_FALLBACK_LLM_MAX_TOKENS: int = 7000
 
+    # Cross-provider fallback for the Code Generator's strong tier (ADR 0010): the
+    # primary generator is OpenAI gpt-4o; on a transient failure it falls over to
+    # Anthropic Claude Sonnet. The token budget mirrors STRONG_LLM_MAX_TOKENS.
+    STRONG_LLM_FALLBACK_MODEL: str = "claude-sonnet-4-6"
+    STRONG_LLM_FALLBACK_MAX_TOKENS: int = 7000
+
     # SDK-level bounded retry budget applied on each chat-model constructor, using the
     # provider SDK's built-in exponential backoff, before any cross-provider fallback fires.
     LLM_MAX_RETRIES: int = Field(default=3, ge=0)

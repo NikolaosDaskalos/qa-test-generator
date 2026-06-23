@@ -18,6 +18,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
+from app.agents.fallback import with_agent_fallback
 from app.agents.middleware import build_tool_call_limit_middleware
 from app.agents.tools import web_search
 from app.prompts.prompts import CODE_GENERATOR_SYSTEM_PROMPT
@@ -38,15 +39,17 @@ class _GeneratorResponse(BaseModel):
 
 
 class CodeGenerator:
-    """Production ``CodeGenerator``: one web-backed agent for both generation and revision."""
+    """Production ``CodeGenerator``: one web-backed agent for both generation and revision.
 
-    def __init__(self, llm) -> None:
-        self._agent = create_agent(
-            llm,
-            tools=[web_search],
-            system_prompt=CODE_GENERATOR_SYSTEM_PROMPT,
-            response_format=_GeneratorResponse,
-            middleware=[build_tool_call_limit_middleware()],
+    The generator runs as a primary agent with a cross-provider fallback agent
+    composed via ``with_agent_fallback``: a transient primary failure (e.g. an
+    OpenAI 429/5xx) re-runs the whole bounded generation or revision loop on the
+    fallback provider, while deterministic failures fail fast.
+    """
+
+    def __init__(self, llm, *, fallback_llm) -> None:
+        self._agent = with_agent_fallback(
+            _build_agent(llm), _build_agent(fallback_llm), primary_label=_model_label(llm), fallback_label=_model_label(fallback_llm)
         )
 
     def generate(self, *, task: str, source_documents: list, test_documents: list) -> GenerationProposal:
@@ -72,6 +75,20 @@ class CodeGenerator:
 
     def __call__(self, *, task: str, source_documents: list, test_documents: list) -> GenerationProposal:
         return self.generate(task=task, source_documents=source_documents, test_documents=test_documents)
+
+
+def _build_agent(llm):
+    """Build a bounded ReAct generation agent over ``web_search`` for the given chat model."""
+    return create_agent(
+        llm, tools=[web_search], system_prompt=CODE_GENERATOR_SYSTEM_PROMPT, response_format=_GeneratorResponse, middleware=[build_tool_call_limit_middleware()]
+    )
+
+
+def _model_label(llm) -> str:
+    """A human-readable model id for fallback logging (e.g. ``gpt-4o``)."""
+    if isinstance(llm, str):
+        return llm
+    return getattr(llm, "model", None) or getattr(llm, "model_name", None) or type(llm).__name__
 
 
 def _build_prompt(task: str, source_documents: list, test_documents: list) -> str:

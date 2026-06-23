@@ -11,6 +11,7 @@ def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(session_checkpointer=object())))
     chat_model = object()
     strong_chat_model = object()
+    generator_fallback_model = object()
     strongest_chat_model = object()
     retriever = object()
     coding_run_store = object()
@@ -24,13 +25,14 @@ def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:
 
     reviewer_fallback_model = object()
     monkeypatch.setattr(dependencies, "build_graph", fake_build_graph)
-    monkeypatch.setattr(dependencies, "CodeGenerator", lambda model: ("code_generator", model))
+    monkeypatch.setattr(dependencies, "CodeGenerator", lambda model, *, fallback_llm=None: ("code_generator", model, fallback_llm))
     monkeypatch.setattr(dependencies, "CodeReviewer", lambda model, *, fallback_llm=None: ("code_reviewer", model, fallback_llm))
 
     result = dependencies.get_session_graph(
         request=request,
         chat_model=chat_model,
         strong_chat_model=strong_chat_model,
+        generator_fallback_model=generator_fallback_model,
         strongest_chat_model=strongest_chat_model,
         reviewer_fallback_model=reviewer_fallback_model,
         document_retriever=retriever,
@@ -43,7 +45,7 @@ def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:
     assert captured["retriever"] is retriever
     assert captured["llm"] is chat_model
     assert captured["planner_llm"] is chat_model
-    assert captured["code_generator"] == ("code_generator", strong_chat_model)
+    assert captured["code_generator"] == ("code_generator", strong_chat_model, generator_fallback_model)
     # The reviewer runs as the Anthropic primary with the OpenAI fallback model composed in (ADR 0010).
     assert captured["code_reviewer"] == ("code_reviewer", strongest_chat_model, reviewer_fallback_model)
     assert captured["checkpointer"] is request.app.state.session_checkpointer
@@ -57,7 +59,7 @@ def test_session_graph_supplies_every_production_runtime_adapter(monkeypatch) ->
     captured = {}
 
     monkeypatch.setattr(dependencies, "build_graph", lambda **kwargs: captured.update(kwargs))
-    monkeypatch.setattr(dependencies, "CodeGenerator", lambda model: ("code_generator", model))
+    monkeypatch.setattr(dependencies, "CodeGenerator", lambda model, *, fallback_llm=None: ("code_generator", model, fallback_llm))
     monkeypatch.setattr(dependencies, "CodeReviewer", lambda model, *, fallback_llm=None: ("code_reviewer", model, fallback_llm))
     monkeypatch.setattr(dependencies, "CodingRunRecorder", lambda store: ("recorder", store))
     monkeypatch.setattr(dependencies, "build_patch_publisher_factory", lambda store: ("publisher_factory", store))
@@ -66,6 +68,7 @@ def test_session_graph_supplies_every_production_runtime_adapter(monkeypatch) ->
         request=request,
         chat_model=object(),
         strong_chat_model=object(),
+        generator_fallback_model=object(),
         strongest_chat_model=object(),
         reviewer_fallback_model=object(),
         document_retriever=object(),
@@ -89,7 +92,7 @@ def test_session_graph_resolves_the_review_policy_from_settings_once(monkeypatch
     captured = {}
 
     monkeypatch.setattr(dependencies, "build_graph", lambda **kwargs: captured.update(kwargs))
-    monkeypatch.setattr(dependencies, "CodeGenerator", lambda model: ("code_generator", model))
+    monkeypatch.setattr(dependencies, "CodeGenerator", lambda model, *, fallback_llm=None: ("code_generator", model, fallback_llm))
     monkeypatch.setattr(dependencies, "CodeReviewer", lambda model, *, fallback_llm=None: ("code_reviewer", model, fallback_llm))
     monkeypatch.setattr(dependencies, "CodingRunRecorder", lambda store: ("recorder", store))
     monkeypatch.setattr(dependencies, "build_patch_publisher_factory", lambda store: ("publisher_factory", store))
@@ -98,6 +101,7 @@ def test_session_graph_resolves_the_review_policy_from_settings_once(monkeypatch
         request=request,
         chat_model=object(),
         strong_chat_model=object(),
+        generator_fallback_model=object(),
         strongest_chat_model=object(),
         reviewer_fallback_model=object(),
         document_retriever=object(),
@@ -108,6 +112,27 @@ def test_session_graph_resolves_the_review_policy_from_settings_once(monkeypatch
     policy = captured["review_policy"]
     assert policy.pass_threshold == 7
     assert policy.max_generation_retries == 2
+
+
+def test_generator_fallback_llm_uses_strong_tier_fallback_settings(monkeypatch) -> None:
+    """The generator fallback provider uses the configured strong-tier Anthropic model settings."""
+    captured = {}
+    fallback_model = object()
+
+    def fake_create_anthropic_chat_model(model, max_tokens, max_retries):
+        captured["args"] = (model, max_tokens, max_retries)
+        return fallback_model
+
+    monkeypatch.setattr(dependencies, "create_anthropic_chat_model", fake_create_anthropic_chat_model)
+
+    result = dependencies.get_generator_fallback_llm()
+
+    assert result is fallback_model
+    assert captured["args"] == (
+        dependencies.settings.STRONG_LLM_FALLBACK_MODEL,
+        dependencies.settings.STRONG_LLM_FALLBACK_MAX_TOKENS,
+        dependencies.settings.LLM_MAX_RETRIES,
+    )
 
 
 def test_document_retriever_is_scoped_to_current_user(monkeypatch) -> None:
