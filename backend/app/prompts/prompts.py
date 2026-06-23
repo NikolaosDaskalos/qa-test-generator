@@ -73,7 +73,7 @@ preferring cleaner utilities only when they improve readability?
 
 Then return a structured assessment: a score from 0 to 10 rating the patch's overall \
 quality against these checks, with categorized, human-readable findings that justify the \
-score. Do not decide pass or fail — the backend judges the score against its own threshold."""
+score."""
 
 # ── Planner System Prompt (scope gate + Retrieval Request emitter) ───────────────
 PLANNER_SYSTEM_PROMPT = """You are a senior test engineer triaging an incoming request \

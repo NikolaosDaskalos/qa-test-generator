@@ -1,9 +1,8 @@
 """The single ``web_search`` tool both agents share.
 
-A thin Tavily wrapper exposed as a LangChain tool, scoped to looking up
-test-framework syntax and idioms — never the repository under test. It emits a
-``researching`` stage marker and returns JSON-serialized results, degrading to a
-JSON error payload rather than raising so the agent loop stays alive.
+A thin Tavily wrapper exposed as a LangChain tool. It emits a ``researching``
+stage marker and returns JSON-serialized results, degrading to a JSON error
+payload rather than raising so the agent loop stays alive.
 """
 
 import json
@@ -24,17 +23,7 @@ _tavily_search = create_web_search_client()
 
 @tool
 def web_search(query: str) -> str:
-    """Look up a test framework's current syntax and best practices on the web.
-
-    Use this ONLY to confirm how to write tests — e.g. a testing library's current
-    API, fixtures, assertion style, mocking patterns, or idioms (pytest, unittest,
-    etc.). Good queries name the framework and the technique, like
-    "pytest parametrize fixtures example" or "unittest mock patch async".
-
-    Do NOT use it to learn anything about the repository under test: its modules,
-    functions, behavior, or file layout come only from the provided Repository
-    Documents, never from the web. Results are external references about test-writing
-    technique and must not ground claims about the repository's own code.
+    """Search the web for information related to the query.
 
     Returns JSON-serialized search results.
     """
