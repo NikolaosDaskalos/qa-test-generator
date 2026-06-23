@@ -64,8 +64,10 @@ class TimelineRecorder:
 
     def __init__(self, timeline: list) -> None:
         self._timeline = timeline
+        self.approved_pull_request_url = None
 
-    def approve(self, coding_run_id):
+    def approve(self, coding_run_id, *, pull_request_url):
+        self.approved_pull_request_url = pull_request_url
         self._timeline.append(("approve", coding_run_id))
 
     def reject(self, coding_run_id):
@@ -108,6 +110,19 @@ def test_approve_commits_pushes_opens_pr_records_then_restores_checkout_in_order
     # Commit precedes push precedes PR precedes record-approved precedes checkout restore.
     assert [step[0] for step in timeline] == ["commit", "push", "open_pull_request", "approve", "discard_generation"]
     assert workspace.discarded == ("abc", "qa-tests/fake")
+
+
+def test_approve_records_the_pull_request_url_on_the_durable_run() -> None:
+    """The created Pull Request URL is handed to the recorder so the durable run carries it for reload."""
+    timeline: list = []
+    publisher = TimelinePublisher(timeline)
+    workspace = TimelineWorkspace(timeline)
+    recorder = TimelineRecorder(timeline)
+    finalizer = DecisionFinalizer(recorder=recorder)
+
+    _approve(finalizer, publisher, workspace, coding_run_id=uuid.uuid4())
+
+    assert recorder.approved_pull_request_url == PR_URL
 
 
 def test_approve_renders_the_patch_review_into_the_pull_request_body() -> None:

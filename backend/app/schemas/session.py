@@ -84,6 +84,8 @@ class SessionHistoryPublic(BaseModel):
     content: str
     citations: list[Citation]
     position: int
+    # The Coding Run this message belongs to, when the turn was a code-generation run; the client rebuilds the card from the durable run.
+    coding_run_id: uuid.UUID | None = None
     created_at: datetime
 
 
@@ -106,6 +108,8 @@ class CodingRunPublic(BaseModel):
     failure_reason: str | None = None
     review_findings: list[ReviewFinding] = Field(default_factory=list)
     diff: str | None = None
+    # The URL of the Pull Request opened on Approval, restored so the approved card links to it after a reload.
+    pull_request_url: str | None = None
     disclaimer: str = REVIEW_DISCLAIMER
 
 

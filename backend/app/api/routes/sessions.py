@@ -91,7 +91,13 @@ def read_coding_run(
     """
     run = repository_session_service.get_owned_run(repository_session_id=repository_session_id, coding_run_id=coding_run_id, user=current_user)
     return CodingRunPublic(
-        id=run.id, status=run.status, failed_stage=run.failed_stage, failure_reason=run.failure_reason, review_findings=run.review_findings or [], diff=run.diff
+        id=run.id,
+        status=run.status,
+        failed_stage=run.failed_stage,
+        failure_reason=run.failure_reason,
+        review_findings=run.review_findings or [],
+        diff=run.diff,
+        pull_request_url=run.pull_request_url,
     )
 
 

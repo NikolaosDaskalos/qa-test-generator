@@ -46,8 +46,8 @@ class RunRecorder(Protocol):
     def reject(self, coding_run_id: uuid.UUID) -> None:
         """Record an owner's rejection of a reviewed run, leaving its review record intact."""
 
-    def approve(self, coding_run_id: uuid.UUID) -> None:
-        """Record an owner's approval of a reviewed run after its branch is pushed."""
+    def approve(self, coding_run_id: uuid.UUID, *, pull_request_url: str) -> None:
+        """Record an owner's approval of a reviewed run after its branch is pushed and its Pull Request opened."""
 
     def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
         """Record a run that proposed no test changes across all attempts as succeeded."""
@@ -108,10 +108,10 @@ class CodingRunRecorder:
         if run is not None:
             self.store.reject(run)
 
-    def approve(self, coding_run_id: uuid.UUID) -> None:
+    def approve(self, coding_run_id: uuid.UUID, *, pull_request_url: str) -> None:
         run = self.store.get_by_id(coding_run_id)
         if run is not None:
-            self.store.approve(run)
+            self.store.approve(run, pull_request_url=pull_request_url)
 
     def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
         self._advance(coding_run_id, CodingRunStatus.succeeded)
@@ -149,7 +149,7 @@ class NullRunRecorder:
     def reject(self, coding_run_id: uuid.UUID) -> None:
         return None
 
-    def approve(self, coding_run_id: uuid.UUID) -> None:
+    def approve(self, coding_run_id: uuid.UUID, *, pull_request_url: str) -> None:
         return None
 
     def record_no_changes(self, coding_run_id: uuid.UUID) -> None:

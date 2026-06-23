@@ -38,7 +38,13 @@ class RepositorySessionStore:
         return list(self.session.exec(statement).all())
 
     def append_exchange(
-        self, repository_session_id: uuid.UUID, *, user_message: str, assistant_message: str, assistant_citations: list[CitationData] | None = None
+        self,
+        repository_session_id: uuid.UUID,
+        *,
+        user_message: str,
+        assistant_message: str,
+        assistant_citations: list[CitationData] | None = None,
+        coding_run_id: uuid.UUID | None = None,
     ) -> tuple[SessionHistory, SessionHistory]:
         """Append a user/assistant message pair at the next positions under a row lock.
 
@@ -56,6 +62,7 @@ class RepositorySessionStore:
             content=assistant_message,
             citations=assistant_citations or [],
             position=next_position + 1,
+            coding_run_id=coding_run_id,
         )
         if isinstance(repository_session, RepositorySession):
             _touch_session_activity(repository_session, user_message=user_message)

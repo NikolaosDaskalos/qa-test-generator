@@ -94,7 +94,7 @@ class DecisionFinalizer:
         except Exception:
             logger.error("Approved patch Pull Request creation failed: %s", PULL_REQUEST_FAILED)
             return RunFailure(failed_stage=CodingRunStage.github_pull_request, reason=PULL_REQUEST_FAILED)
-        self._recorder.approve(coding_run_id)
+        self._recorder.approve(coding_run_id, pull_request_url=pull_request_url)
         self._restore_checkout(workspace, indexed_commit_sha, generation_branch)
         branch = generation_branch or ""
         return RunApproved(

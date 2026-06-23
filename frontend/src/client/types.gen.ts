@@ -29,13 +29,14 @@ export type CodingRunPublic = {
     failure_reason?: (string | null);
     review_findings?: Array<ReviewFinding>;
     diff?: (string | null);
+    pull_request_url?: (string | null);
     disclaimer?: string;
 };
 
 /**
  * A working stage a Coding Run can fail at, recorded as ``failed_stage``.
  */
-export type CodingRunStage = 'planning' | 'retrieving' | 'generating' | 'reviewing' | 'git_commit' | 'git_push';
+export type CodingRunStage = 'planning' | 'retrieving' | 'generating' | 'reviewing' | 'git_commit' | 'git_push' | 'github_pull_request';
 
 /**
  * The lifecycle states of a Coding Run.
@@ -255,6 +256,7 @@ export type SessionHistoryPublic = {
     content: string;
     citations: Array<Citation>;
     position: number;
+    coding_run_id?: (string | null);
     created_at: string;
 };
 

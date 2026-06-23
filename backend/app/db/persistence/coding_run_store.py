@@ -64,9 +64,10 @@ class CodingRunStore:
         self.session.refresh(coding_run)
         return coding_run
 
-    def approve(self, coding_run: CodingRun) -> CodingRun:
-        """Mark a reviewed run approved, leaving its pushed patch record intact."""
+    def approve(self, coding_run: CodingRun, *, pull_request_url: str) -> CodingRun:
+        """Mark a reviewed run approved and store the opened Pull Request URL, leaving its pushed patch record intact."""
         coding_run.status = CodingRunStatus.approved
+        coding_run.pull_request_url = pull_request_url
         self.session.add(coding_run)
         self.session.commit()
         self.session.refresh(coding_run)

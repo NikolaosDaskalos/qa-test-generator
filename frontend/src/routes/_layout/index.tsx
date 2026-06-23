@@ -69,6 +69,7 @@ type RunDecisionView =
       status: "approved"
       branch: string
       message: string
+      pullRequestUrl: string
       diff: string
       disclaimer: string
     }
@@ -976,6 +977,16 @@ function RunDecisionSummary({ decision }: { decision: RunDecisionView }) {
           <p className="text-sm text-muted-foreground">
             Branch {decision.branch}
           </p>
+          {decision.pullRequestUrl ? (
+            <a
+              className="text-sm text-primary underline"
+              href={decision.pullRequestUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View Pull Request
+            </a>
+          ) : null}
           <DiffView diff={decision.diff} />
         </>
       ) : (
@@ -1085,6 +1096,16 @@ function RunDetails({
             </div>
             {run.failure_reason ? (
               <p className="text-destructive">{run.failure_reason}</p>
+            ) : null}
+            {run.pull_request_url ? (
+              <a
+                className="text-primary underline"
+                href={run.pull_request_url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View Pull Request
+              </a>
             ) : null}
             {run.review_findings && run.review_findings.length > 0 ? (
               <ul className="space-y-1">
@@ -1208,6 +1229,8 @@ function toChatMessages(history: SessionHistoryPublic[]): ChatMessage[] {
     role: message.role,
     content: message.content,
     citations: message.citations,
+    // Restore the link to the durable Coding Run so its card is reconstructed from the run on reload.
+    codingRunId: message.coding_run_id ?? undefined,
   }))
 }
 
@@ -1454,6 +1477,7 @@ async function submitDecision({
                     status: "approved",
                     branch: event.branch,
                     message: event.message ?? "",
+                    pullRequestUrl: event.pull_request_url ?? "",
                     diff: event.diff,
                     disclaimer: event.disclaimer,
                   },
@@ -1517,6 +1541,7 @@ function isRunApprovedEvent(event: { [key: string]: unknown }): event is {
   coding_run_id: string
   branch: string
   message?: string
+  pull_request_url?: string
   diff: string
   disclaimer: string
 } {

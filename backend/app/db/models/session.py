@@ -67,6 +67,9 @@ class SessionHistory(SQLModel, table=True):
         default_factory=list, sa_column=Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False, server_default=text("'[]'"))
     )
     position: int = Field(ge=1)
+    # The Coding Run this message belongs to, when the turn was a code-generation run; lets the card be
+    # reconstructed from the durable run on reload without snapshotting its review/approval into the message.
+    coding_run_id: uuid.UUID | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), sa_type=DateTime(timezone=True))  # type: ignore
 
     session: RepositorySession = Relationship(back_populates="history")

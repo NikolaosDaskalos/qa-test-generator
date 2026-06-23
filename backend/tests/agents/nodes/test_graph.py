@@ -158,8 +158,8 @@ class RecordingRecorder:
     def reject(self, coding_run_id):
         self.events.append(("reject", coding_run_id))
 
-    def approve(self, coding_run_id):
-        self.events.append(("approve", coding_run_id))
+    def approve(self, coding_run_id, *, pull_request_url):
+        self.events.append(("approve", coding_run_id, pull_request_url))
 
     def record_no_changes(self, coding_run_id):
         self.events.append(("record_no_changes", coding_run_id))
@@ -1106,8 +1106,8 @@ def test_approval_records_the_run_and_restores_the_checkout_to_the_indexed_commi
 
     final = graph.invoke(Command(resume={"approved": True}), config=config)
 
-    # The run is recorded approved, after the accepted review was recorded.
-    assert ("approve", recorder.run_id) in recorder.events
+    # The run is recorded approved with the opened Pull Request URL, after the accepted review was recorded.
+    assert ("approve", recorder.run_id, FakePublisher.PULL_REQUEST_URL) in recorder.events
     assert ("reject", recorder.run_id) not in recorder.events
     # The local checkout is restored to the indexed commit and the temporary branch removed.
     assert workspace.discarded == ("abc", "qa-tests/fake")

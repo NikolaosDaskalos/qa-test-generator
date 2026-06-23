@@ -153,10 +153,12 @@ def test_recorder_approves_a_reviewed_run_through_the_store() -> None:
         run_id = recorder.start(thread_id="t-approve", repository_session_id=session_id)
         recorder.record_review(run_id, accepted=True, findings=[ReviewFinding(category="conventions", detail="matches existing tests")])
 
-        recorder.approve(run_id)
+        recorder.approve(run_id, pull_request_url="https://github.com/o/r/pull/7")
 
         approved = store.get_by_id(run_id)
         assert approved.status == CodingRunStatus.approved
+        # The opened Pull Request URL reaches the durable run through the recorder.
+        assert approved.pull_request_url == "https://github.com/o/r/pull/7"
         # The persisted review record survives the approval for later inspection.
         assert approved.review_findings == [{"category": "conventions", "detail": "matches existing tests"}]
 
@@ -174,7 +176,7 @@ def test_run_awaits_a_decision_only_while_awaiting_approval() -> None:
         recorder.record_review(run_id, accepted=True, findings=[])
         assert store.get_by_id(run_id).awaiting_decision is True
 
-        recorder.approve(run_id)
+        recorder.approve(run_id, pull_request_url="https://github.com/o/r/pull/7")
         assert store.get_by_id(run_id).awaiting_decision is False
 
 

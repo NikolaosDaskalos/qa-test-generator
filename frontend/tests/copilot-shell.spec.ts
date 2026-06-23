@@ -1003,9 +1003,7 @@ test("User can request code generation and see the reviewed Test Patch", async (
     page.getByText("Covers the successful login path."),
   ).toBeVisible()
   await expect(page.getByText("Uses existing test fixtures.")).toBeVisible()
-  await expect(
-    page.getByText("diff --git a/tests/test_login.py").last(),
-  ).toBeVisible()
+  await expect(page.getByText("tests/test_login.py").last()).toBeVisible()
   await expect(
     page
       .getByText(
@@ -1082,15 +1080,17 @@ test("User can approve a reviewed Test Patch and see the pushed branch", async (
       }
 
       expect(route.request().postDataJSON()).toEqual({
-        coding_run_id: "run-approve",
-        approved: true,
-        feedback: "",
+        decision: {
+          coding_run_id: "run-approve",
+          approved: true,
+          feedback: "",
+        },
       })
       await route.fulfill({
         contentType: "text/event-stream",
         body: [
           'data: {"type":"stage","stage":"git_push"}\n\n',
-          'data: {"type":"run_approved","coding_run_id":"run-approve","branch":"qa-tests/run-approve","diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+          'data: {"type":"run_approved","coding_run_id":"run-approve","branch":"qa-tests/run-approve","diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","pull_request_url":"https://github.com/acme/ready-api/pull/7","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
         ].join(""),
       })
     },
@@ -1110,9 +1110,15 @@ test("User can approve a reviewed Test Patch and see the pushed branch", async (
   await expect(page.getByText("git_push")).toBeVisible()
   await expect(page.getByText("Approved and pushed")).toBeVisible()
   await expect(page.getByText("Branch qa-tests/run-approve")).toBeVisible()
-  await expect(
-    page.getByText("diff --git a/tests/test_login.py").last(),
-  ).toBeVisible()
+  const pullRequestLink = page.getByRole("link", {
+    name: "View Pull Request",
+  })
+  await expect(pullRequestLink).toBeVisible()
+  await expect(pullRequestLink).toHaveAttribute(
+    "href",
+    "https://github.com/acme/ready-api/pull/7",
+  )
+  await expect(page.getByText("tests/test_login.py").last()).toBeVisible()
   await expect(
     page
       .getByText(
@@ -1122,6 +1128,222 @@ test("User can approve a reviewed Test Patch and see the pushed branch", async (
   ).toBeVisible()
   await expect(page.getByRole("button", { name: "Approve" })).not.toBeVisible()
   await expect(page.getByRole("button", { name: "Reject" })).not.toBeVisible()
+})
+
+test("Approved card omits the Pull Request link when none was opened", async ({
+  page,
+}) => {
+  let streamCount = 0
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      streamCount += 1
+
+      if (streamCount === 1) {
+        await route.fulfill({
+          contentType: "text/event-stream",
+          body: [
+            'data: {"type":"run_started","coding_run_id":"run-nopr"}\n\n',
+            'data: {"type":"review_result","coding_run_id":"run-nopr","accepted":true,"score":8,"threshold":7,"findings":[{"category":"coverage","detail":"Covers the successful login path."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+          ].join(""),
+        })
+        return
+      }
+
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"stage","stage":"git_push"}\n\n',
+          'data: {"type":"run_approved","coding_run_id":"run-nopr","branch":"qa-tests/run-nopr","diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","pull_request_url":"","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests for login")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(page.getByRole("button", { name: "Approve" })).toBeVisible()
+  await page.getByRole("button", { name: "Approve" }).click()
+
+  await expect(page.getByText("Approved and pushed")).toBeVisible()
+  await expect(page.getByText("Branch qa-tests/run-nopr")).toBeVisible()
+  await expect(
+    page.getByRole("link", { name: "View Pull Request" }),
+  ).toHaveCount(0)
+})
+
+test("Reloading restores the Pull Request link from the durable Coding Run", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-ready",
+            title: "Login coding run",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-user",
+              session_id: "session-ready",
+              role: "user",
+              content: "Add tests for login",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+            {
+              id: "message-coding",
+              session_id: "session-ready",
+              role: "assistant",
+              content: "",
+              citations: [],
+              position: 2,
+              coding_run_id: "run-reload",
+              created_at: "2026-06-17T09:00:02Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-reload/patch",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          coding_run_id: "run-reload",
+          diff: "diff --git a/tests/test_login.py b/tests/test_login.py\n+def test_login_success():\n+    assert True\n",
+          generated_files: [],
+          external_references: [],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-reload",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          id: "run-reload",
+          status: "approved",
+          failed_stage: null,
+          failure_reason: null,
+          review_findings: [
+            {
+              category: "coverage",
+              detail: "Covers the successful login path.",
+            },
+          ],
+          diff: "diff --git a/tests/test_login.py b/tests/test_login.py\n+def test_login_success():\n+    assert True\n",
+          pull_request_url: "https://github.com/acme/ready-api/pull/7",
+          disclaimer:
+            "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-ready")
+
+  // The coding card is reconstructed from the durable run on reload, with no live decision event.
+  await page.getByRole("button", { name: "View run details" }).click()
+
+  const pullRequestLink = page.getByRole("link", { name: "View Pull Request" })
+  await expect(pullRequestLink).toBeVisible()
+  await expect(pullRequestLink).toHaveAttribute(
+    "href",
+    "https://github.com/acme/ready-api/pull/7",
+  )
 })
 
 test("User can reject a reviewed Test Patch with optional feedback", async ({
@@ -1190,9 +1412,11 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
       }
 
       expect(route.request().postDataJSON()).toEqual({
-        coding_run_id: "run-reject",
-        approved: false,
-        feedback: "Please cover the locked account path too.",
+        decision: {
+          coding_run_id: "run-reject",
+          approved: false,
+          feedback: "Please cover the locked account path too.",
+        },
       })
       await route.fulfill({
         contentType: "text/event-stream",
@@ -1218,9 +1442,7 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
 
   await expect(page.getByText("Rejected and discarded")).toBeVisible()
   await expect(page.getByText("Missing locked account coverage.")).toBeVisible()
-  await expect(
-    page.getByText("diff --git a/tests/test_login.py").last(),
-  ).toBeVisible()
+  await expect(page.getByText("tests/test_login.py").last()).toBeVisible()
   await expect(
     page
       .getByText(

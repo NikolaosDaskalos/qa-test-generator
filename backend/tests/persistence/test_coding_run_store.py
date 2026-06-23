@@ -164,10 +164,12 @@ def test_approve_marks_a_run_approved_and_preserves_its_review_record() -> None:
         )
         store.record_review(run, accepted=True, review_findings=[{"category": "readability", "detail": "clear and idiomatic"}])
 
-        store.approve(run)
+        store.approve(run, pull_request_url="https://github.com/o/r/pull/7")
 
         reloaded = store.get_by_id(run.id)
         assert reloaded.status == CodingRunStatus.approved
+        # The opened Pull Request URL is persisted so the approved card can link to it on reload.
+        assert reloaded.pull_request_url == "https://github.com/o/r/pull/7"
         # The persisted review record and the patch are preserved for inspection.
         assert reloaded.review_findings == [{"category": "readability", "detail": "clear and idiomatic"}]
         assert reloaded.generation_branch == "qa-tests/abc123"

@@ -33,9 +33,11 @@ class FakeSessionStore:
     def get_recent_history(self, repository_session_id):
         return []
 
-    def append_exchange(self, repository_session_id, *, user_message, assistant_message, assistant_citations=None):
-        self.appended.append((repository_session_id, user_message, assistant_message, assistant_citations))
-        assistant = SessionHistory(id=uuid.uuid4(), session_id=repository_session_id, role="assistant", content=assistant_message, position=2)
+    def append_exchange(self, repository_session_id, *, user_message, assistant_message, assistant_citations=None, coding_run_id=None):
+        self.appended.append((repository_session_id, user_message, assistant_message, assistant_citations, coding_run_id))
+        assistant = SessionHistory(
+            id=uuid.uuid4(), session_id=repository_session_id, role="assistant", content=assistant_message, position=2, coding_run_id=coding_run_id
+        )
         return SimpleNamespace(), assistant
 
     def record_user_activity(self, repository_session_id, *, user_message):
@@ -167,6 +169,26 @@ def test_stream_session_emits_review_result_terminal_for_a_reviewed_patch():
     assert "not executed" in terminal.disclaimer.lower()
     # A reviewed patch is reported, not persisted as a session answer exchange.
     assert session_store.appended == []
+
+
+def test_stream_session_persists_the_code_generation_turn_with_its_coding_run_id():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    run_id = uuid.uuid4()
+    review = ReviewResult(
+        coding_run_id=run_id, accepted=True, score=8, threshold=7, findings=[], diff="diff --git a/tests/test_x.py b/tests/test_x.py"
+    )
+    items = [("custom", Stage(stage="reviewing")), ("custom", review)]
+    final = {"intent": "code_generation", "coding_run_id": run_id}
+    graph = FakeGraph(items, final)
+
+    list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-cg"))
+
+    # The coding turn persists an exchange carrying its run id, so the card is reconstructed from the durable run on reload.
+    assert len(session_store.appended) == 1
+    _session_id, user_message, _assistant_message, _citations, coding_run_id = session_store.appended[0]
+    assert user_message == "add tests"
+    assert coding_run_id == run_id
 
 
 def test_stream_session_passes_the_indexed_commit_to_the_graph():

@@ -133,6 +133,10 @@ class RepositorySessionService:
                 repository_session.id, user_message=question, assistant_message=answer, assistant_citations=[citation.model_dump() for citation in citations]
             )
             yield Result(repository_session_id=repository_session.id, assistant_message_id=assistant_message.id, answer=answer, citations=citations)
+        elif final.get("intent") == "code_generation" and final.get("coding_run_id") is not None:
+            # Persist the coding turn linked to its durable Coding Run so the card — its review, failure,
+            # approval, and Pull Request link — is reconstructed from that run on reload, not snapshotted here.
+            self.session_store.append_exchange(repository_session.id, user_message=question, assistant_message="", coding_run_id=final.get("coding_run_id"))
 
     def _resume_decision(
         self, *, repository_session_id: uuid.UUID, user: User, decision: HumanDecisionRequest, graph: Any

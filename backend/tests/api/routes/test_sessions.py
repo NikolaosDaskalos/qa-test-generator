@@ -182,6 +182,7 @@ def test_session_domain_error_is_translated_to_http_at_the_api_seam() -> None:
 def test_owner_can_read_session_history() -> None:
     user_id = uuid.uuid4()
     repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
+    run_id = uuid.uuid4()
     history = [
         SessionHistory(session_id=repository_session.id, role=SessionMessageRole.user, content="How is authentication tested?", position=1),
         SessionHistory(
@@ -190,6 +191,13 @@ def test_owner_can_read_session_history() -> None:
             content="The repository uses route tests.",
             citations=[{"source": "app/auth.py"}, {"source": "app/login.py"}],
             position=2,
+        ),
+        SessionHistory(
+            session_id=repository_session.id,
+            role=SessionMessageRole.assistant,
+            content="",
+            position=3,
+            coding_run_id=run_id,
         ),
     ]
     service = FakeRepositorySessionService(repository_session, history)
@@ -204,10 +212,14 @@ def test_owner_can_read_session_history() -> None:
 
     assert response.status_code == 200
     messages = response.json()["data"]
-    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert [message["role"] for message in messages] == ["user", "assistant", "assistant"]
     # Citations surface structurally on the read contract instead of being parsed out of the message text.
     assert messages[0]["citations"] == []
     assert messages[1]["citations"] == [{"source": "app/auth.py"}, {"source": "app/login.py"}]
+    # The coding turn carries its durable Coding Run id so the client rebuilds the card on reload; other turns carry none.
+    assert messages[0]["coding_run_id"] is None
+    assert messages[1]["coding_run_id"] is None
+    assert messages[2]["coding_run_id"] == str(run_id)
     assert service.history_calls == [{"repository_session_id": repository_session.id, "user": user}]
 
 
@@ -448,6 +460,28 @@ def test_owner_can_read_coding_run_state_and_findings() -> None:
     assert call["repository_session_id"] == session_id
     assert call["coding_run_id"] == run.id
     assert call["user"] is user
+
+
+def test_run_lookup_exposes_the_pull_request_url_for_an_approved_run() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    run = CodingRun(
+        repository_session_id=session_id,
+        thread_id="t-pr",
+        status=CodingRunStatus.approved,
+        diff="diff --git a/tests/test_x.py b/tests/test_x.py",
+        pull_request_url="https://github.com/o/r/pull/7",
+    )
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, user_id=user.id, repository_id=uuid.uuid4()), run=run)
+    app = _lookup_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{session_id}/runs/{run.id}")
+
+    body = response.json()
+    assert body["status"] == "approved"
+    # The opened Pull Request URL is restored so the approved card can link to it after a reload.
+    assert body["pull_request_url"] == "https://github.com/o/r/pull/7"
 
 
 def test_run_lookup_exposes_failure_information() -> None:

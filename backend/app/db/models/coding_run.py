@@ -36,6 +36,8 @@ class CodingRun(SQLModel, table=True):
     revision_count: int = Field(default=0, ge=0)
     # The uniquely named, non-default temporary branch the Test Patch was built on.
     generation_branch: str | None = Field(default=None, max_length=255)
+    # The URL of the Pull Request opened on Approval; carried to the owner so the approved card links to it on reload.
+    pull_request_url: str | None = Field(default=None, max_length=2048)
     # The canonical unified diff (Test Patch) derived by Git; the displayed record of truth.
     diff: str | None = Field(default=None, sa_column=Column(Text))
     # The complete generated file proposals ({path, content}) and the External References

@@ -119,6 +119,17 @@ export const CodingRunPublicSchema = {
             ],
             title: 'Diff'
         },
+        pull_request_url: {
+            anyOf: [
+                {
+                    type: 'string'
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Pull Request Url'
+        },
         disclaimer: {
             type: 'string',
             title: 'Disclaimer',
@@ -136,7 +147,7 @@ runtime correctness was not verified — the Patch Review was static only.`
 
 export const CodingRunStageSchema = {
     type: 'string',
-    enum: ['planning', 'retrieving', 'generating', 'reviewing', 'git_commit', 'git_push'],
+    enum: ['planning', 'retrieving', 'generating', 'reviewing', 'git_commit', 'git_push', 'github_pull_request'],
     title: 'CodingRunStage',
     description: 'A working stage a Coding Run can fail at, recorded as ``failed_stage``.'
 } as const;
@@ -518,7 +529,7 @@ export const RepositorySessionPublicSchema = {
         user_id: {
             type: 'string',
             format: 'uuid',
-            title: 'Owner Id'
+            title: 'User Id'
         },
         repository_id: {
             type: 'string',
@@ -693,6 +704,18 @@ export const SessionHistoryPublicSchema = {
         position: {
             type: 'integer',
             title: 'Position'
+        },
+        coding_run_id: {
+            anyOf: [
+                {
+                    type: 'string',
+                    format: 'uuid'
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Coding Run Id'
         },
         created_at: {
             type: 'string',
