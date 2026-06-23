@@ -79,3 +79,11 @@ def test_strong_tier_fallback_configuration_defaults_to_claude_sonnet(tmp_path: 
 
     assert configured.STRONG_LLM_FALLBACK_MODEL == "claude-sonnet-4-6"
     assert configured.STRONG_LLM_FALLBACK_MAX_TOKENS == configured.STRONG_LLM_MAX_TOKENS
+
+
+def test_default_tier_fallback_configuration_defaults_to_claude_haiku(tmp_path: Path) -> None:
+    """The direct default-tier call sites have a configurable Anthropic fallback model and token budget."""
+    configured = build_settings(tmp_path, REPOSITORY_TOKEN_ENCRYPTION_KEY=Fernet.generate_key().decode())
+
+    assert configured.DEFAULT_LLM_FALLBACK_MODEL == "claude-haiku-4-5"
+    assert configured.DEFAULT_LLM_FALLBACK_MAX_TOKENS == configured.LLM_MAX_TOKENS

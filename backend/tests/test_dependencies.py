@@ -10,6 +10,7 @@ def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:
     """The session graph is built from the model and retriever, not a RAG facade."""
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(session_checkpointer=object())))
     chat_model = object()
+    default_fallback_model = object()
     strong_chat_model = object()
     generator_fallback_model = object()
     strongest_chat_model = object()
@@ -31,6 +32,7 @@ def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:
     result = dependencies.get_session_graph(
         request=request,
         chat_model=chat_model,
+        default_fallback_model=default_fallback_model,
         strong_chat_model=strong_chat_model,
         generator_fallback_model=generator_fallback_model,
         strongest_chat_model=strongest_chat_model,
@@ -42,6 +44,7 @@ def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:
 
     assert result is graph
     assert captured["classifier_llm"] is chat_model
+    assert captured["default_fallback_llm"] is default_fallback_model
     assert captured["retriever"] is retriever
     assert captured["llm"] is chat_model
     assert captured["planner_llm"] is chat_model
@@ -67,6 +70,7 @@ def test_session_graph_supplies_every_production_runtime_adapter(monkeypatch) ->
     dependencies.get_session_graph(
         request=request,
         chat_model=object(),
+        default_fallback_model=object(),
         strong_chat_model=object(),
         generator_fallback_model=object(),
         strongest_chat_model=object(),
@@ -100,6 +104,7 @@ def test_session_graph_resolves_the_review_policy_from_settings_once(monkeypatch
     dependencies.get_session_graph(
         request=request,
         chat_model=object(),
+        default_fallback_model=object(),
         strong_chat_model=object(),
         generator_fallback_model=object(),
         strongest_chat_model=object(),
@@ -131,6 +136,27 @@ def test_generator_fallback_llm_uses_strong_tier_fallback_settings(monkeypatch) 
     assert captured["args"] == (
         dependencies.settings.STRONG_LLM_FALLBACK_MODEL,
         dependencies.settings.STRONG_LLM_FALLBACK_MAX_TOKENS,
+        dependencies.settings.LLM_MAX_RETRIES,
+    )
+
+
+def test_default_fallback_llm_uses_default_tier_fallback_settings(monkeypatch) -> None:
+    """The direct-site fallback provider uses the configured default-tier Anthropic model settings."""
+    captured = {}
+    fallback_model = object()
+
+    def fake_create_anthropic_chat_model(model, max_tokens, max_retries):
+        captured["args"] = (model, max_tokens, max_retries)
+        return fallback_model
+
+    monkeypatch.setattr(dependencies, "create_anthropic_chat_model", fake_create_anthropic_chat_model)
+
+    result = dependencies.get_default_fallback_llm()
+
+    assert result is fallback_model
+    assert captured["args"] == (
+        dependencies.settings.DEFAULT_LLM_FALLBACK_MODEL,
+        dependencies.settings.DEFAULT_LLM_FALLBACK_MAX_TOKENS,
         dependencies.settings.LLM_MAX_RETRIES,
     )
 

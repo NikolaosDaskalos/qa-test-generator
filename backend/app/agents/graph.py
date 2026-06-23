@@ -18,6 +18,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
+from app.agents.fallback import model_label, with_provider_fallback
 from app.agents.nodes.code_generation import (
     build_approval_router,
     build_approve_patch_node,
@@ -111,9 +112,15 @@ class GraphState(SharedState, RepositoryQuestionState, CodeGenerationState):
     """
 
 
-def _classify_node(classifier_llm):
+def _classify_node(classifier_llm, fallback_llm):
     """Build the classify node; uncertain classification falls back to read-only."""
-    structured = classifier_llm.with_structured_output(Classification)
+    structured = with_provider_fallback(
+        classifier_llm,
+        fallback_llm,
+        lambda model: model.with_structured_output(Classification),
+        primary_label=model_label(classifier_llm),
+        fallback_label=model_label(fallback_llm),
+    )
 
     def classify(state: GraphState) -> dict:
         emit(Stage(stage="classifying"))
@@ -164,6 +171,7 @@ def _fail_run_node(recorder):
 def build_graph(
     *,
     classifier_llm,
+    default_fallback_llm,
     retriever,
     llm,
     planner_llm,
@@ -202,8 +210,8 @@ def build_graph(
     workspaces = workspace_factory
     publishers = publisher_factory
     graph = StateGraph(GraphState)
-    graph.add_node("classify", _classify_node(classifier_llm))
-    graph.add_node("plan", build_plan_node(planner_llm, recorder))
+    graph.add_node("classify", _classify_node(classifier_llm, default_fallback_llm))
+    graph.add_node("plan", build_plan_node(planner_llm, recorder, fallback_llm=default_fallback_llm))
     graph.add_node("gather_documents", build_gather_documents_node(retriever, recorder))
     graph.add_node("generate_code", build_generate_code_node(code_generator, workspaces, recorder))
     graph.add_node("review_patch", build_review_patch_node(code_reviewer, recorder, policy=review_policy))
@@ -213,7 +221,7 @@ def build_graph(
     graph.add_node("report_no_changes", build_report_no_changes_node(recorder))
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("retrieve", build_retrieve_node(retriever))
-    graph.add_node("generate", build_generate_node(llm))
+    graph.add_node("generate", build_generate_node(llm, fallback_llm=default_fallback_llm))
 
     graph.add_edge(START, "classify")
     graph.add_conditional_edges("classify", _route_intent, {"code_generation": "plan", "repository_question": "retrieve"})

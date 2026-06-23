@@ -165,6 +165,13 @@ class Settings(BaseSettings):
     REVIEWER_FALLBACK_LLM_MODEL: str = "gpt-4o-mini"
     REVIEWER_FALLBACK_LLM_MAX_TOKENS: int = 7000
 
+    # Cross-provider fallback for direct default-tier calls (ADR 0010): the
+    # classifier, planner, and repository-question answerer run OpenAI
+    # gpt-4o-mini first; on a transient failure they fall over to Anthropic
+    # Claude Haiku. The token budget mirrors LLM_MAX_TOKENS.
+    DEFAULT_LLM_FALLBACK_MODEL: str = "claude-haiku-4-5"
+    DEFAULT_LLM_FALLBACK_MAX_TOKENS: int = 2000
+
     # Cross-provider fallback for the Code Generator's strong tier (ADR 0010): the
     # primary generator is OpenAI gpt-4o; on a transient failure it falls over to
     # Anthropic Claude Sonnet. The token budget mirrors STRONG_LLM_MAX_TOKENS.

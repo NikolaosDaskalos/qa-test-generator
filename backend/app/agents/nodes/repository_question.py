@@ -9,6 +9,7 @@ citations on the shared state.
 # pyrefly: ignore [missing-import]
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.fallback import model_label, with_provider_fallback
 from app.core import settings
 from app.prompts.prompts import QA_SYSTEM_PROMPT
 from app.prompts.rendering import format_repository_documents
@@ -37,8 +38,15 @@ def build_retrieve_node(retriever):
     return retrieve
 
 
-def build_generate_node(llm):
+def build_generate_node(llm, fallback_llm):
     """Build the grounded generate node that streams an answer with citations."""
+    answer_llm = with_provider_fallback(
+        llm,
+        fallback_llm,
+        lambda model: model,
+        primary_label=model_label(llm),
+        fallback_label=model_label(fallback_llm),
+    )
 
     def generate(state) -> dict:
         emit(Stage(stage="generating"))
@@ -49,7 +57,7 @@ def build_generate_node(llm):
         context = format_repository_documents(documents)
         messages = [SystemMessage(content=f"{QA_SYSTEM_PROMPT}\n\nContext:\n{context}"), HumanMessage(content=state["question"])]
         collected = ""
-        for chunk in llm.stream(messages):
+        for chunk in answer_llm.stream(messages):
             token = getattr(chunk, "content", "") or ""
             if token:
                 collected += token

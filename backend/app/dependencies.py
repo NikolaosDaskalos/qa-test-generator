@@ -165,6 +165,11 @@ def get_reviewer_fallback_llm() -> ChatOpenAI:
     return create_chat_model(settings.REVIEWER_FALLBACK_LLM_MODEL, settings.REVIEWER_FALLBACK_LLM_MAX_TOKENS, settings.LLM_MAX_RETRIES)
 
 
+def get_default_fallback_llm() -> ChatAnthropic:
+    """Build the direct default-tier fallback model (Claude Haiku, via Anthropic)."""
+    return create_anthropic_chat_model(settings.DEFAULT_LLM_FALLBACK_MODEL, settings.DEFAULT_LLM_FALLBACK_MAX_TOKENS, settings.LLM_MAX_RETRIES)
+
+
 def get_generator_fallback_llm() -> ChatAnthropic:
     """Build the Code Generator's cross-provider fallback model (Claude Sonnet, via Anthropic)."""
     return create_anthropic_chat_model(settings.STRONG_LLM_FALLBACK_MODEL, settings.STRONG_LLM_FALLBACK_MAX_TOKENS, settings.LLM_MAX_RETRIES)
@@ -173,6 +178,7 @@ def get_generator_fallback_llm() -> ChatAnthropic:
 ChatOpenAIDep = Annotated[ChatOpenAI, Depends(get_openai_llm)]
 ChatOpenAIStrongDep = Annotated[ChatOpenAI, Depends(get_openai_llm_strong)]
 ChatAnthropicStrongestDep = Annotated[ChatAnthropic, Depends(get_anthropic_llm)]
+ChatDefaultFallbackDep = Annotated[ChatAnthropic, Depends(get_default_fallback_llm)]
 ChatReviewerFallbackDep = Annotated[ChatOpenAI, Depends(get_reviewer_fallback_llm)]
 ChatGeneratorFallbackDep = Annotated[ChatAnthropic, Depends(get_generator_fallback_llm)]
 
@@ -191,6 +197,7 @@ DocumentRetrieverDep = Annotated[DocumentRetriever, Depends(get_document_retriev
 def get_session_graph(
     request: Request,
     chat_model: ChatOpenAIDep,
+    default_fallback_model: ChatDefaultFallbackDep,
     strong_chat_model: ChatOpenAIStrongDep,
     generator_fallback_model: ChatGeneratorFallbackDep,
     strongest_chat_model: ChatAnthropicStrongestDep,
@@ -212,6 +219,7 @@ def get_session_graph(
     """
     return build_graph(
         classifier_llm=chat_model,
+        default_fallback_llm=default_fallback_model,
         retriever=document_retriever,
         llm=chat_model,
         planner_llm=chat_model,

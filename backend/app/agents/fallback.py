@@ -8,6 +8,8 @@ when — the primary failed transiently.
 """
 
 import logging
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import anthropic
 import openai
@@ -74,6 +76,66 @@ def with_agent_fallback(primary: Runnable, fallback: Runnable, *, primary_label:
         [RunnableLambda(lambda agent_input: fallback.invoke(agent_input))],
         exceptions_to_handle=(_TransientProviderError,),
     )
+
+
+class _TransientGuard(Runnable):
+    """Runnable wrapper that converts only transient provider failures into the fallback marker."""
+
+    def __init__(self, runnable: Runnable, *, primary_label: str, fallback_label: str) -> None:
+        self._runnable = runnable
+        self._primary_label = primary_label
+        self._fallback_label = fallback_label
+
+    def invoke(self, direct_input: Any, config=None, **kwargs):
+        try:
+            return self._runnable.invoke(direct_input, config=config, **kwargs)
+        except _TransientProviderError:
+            raise
+        except BaseException as exc:
+            self._raise_for_fallback(exc)
+
+    def stream(self, direct_input: Any, config=None, **kwargs) -> Iterator[Any]:
+        try:
+            yield from self._runnable.stream(direct_input, config=config, **kwargs)
+        except _TransientProviderError:
+            raise
+        except BaseException as exc:
+            self._raise_for_fallback(exc)
+
+    def _raise_for_fallback(self, exc: BaseException) -> None:
+        if not is_transient_llm_error(exc):
+            raise exc
+        logger.warning(
+            "LLM provider fallback firing primary=%s fallback=%s reason=%s",
+            self._primary_label,
+            self._fallback_label,
+            _reason(exc),
+        )
+        raise _TransientProviderError(str(exc)) from exc
+
+
+def with_provider_fallback(primary: Any, fallback: Any, adapt: Callable[[Any], Runnable], *, primary_label: str, fallback_label: str) -> Runnable:
+    """Adapt two direct-provider models, then compose transient-only fallback.
+
+    Direct sites such as structured classification/planning and streamed repository
+    answers must adapt real ``BaseChatModel`` instances before fallback wrapping, since
+    the wrapper is no longer itself a chat model.
+    """
+    primary_runnable = adapt(primary)
+    fallback_runnable = adapt(fallback)
+    return _TransientGuard(primary_runnable, primary_label=primary_label, fallback_label=fallback_label).with_fallbacks(
+        [fallback_runnable],
+        exceptions_to_handle=(_TransientProviderError,),
+    )
+
+
+def model_label(model: Any) -> str:
+    """Return a stable human label for provider fallback logs."""
+    for attr in ("model_name", "model"):
+        value = getattr(model, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return type(model).__name__
 
 
 def _reason(exc: BaseException) -> str:

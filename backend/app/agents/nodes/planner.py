@@ -10,6 +10,7 @@ out-of-scope (or uncommitted) request is rejected here as a terminal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.agents.fallback import model_label, with_provider_fallback
 from app.agents.nodes.failures import fail_state
 from app.enums import CodingRunStage
 from app.prompts.prompts import PLANNER_SYSTEM_PROMPT
@@ -30,7 +31,7 @@ class PlannerOutput(BaseModel):
     reason: str | None = Field(default=None, description="Short user-safe explanation when the request is out of scope; leave null for in-scope requests.")
 
 
-def build_plan_node(planner_llm, recorder):
+def build_plan_node(planner_llm, recorder, fallback_llm):
     """Build the planner node, the code-generation branch entry point.
 
     Planning owns the Coding Run's birth: it creates the queued run (minting
@@ -38,7 +39,13 @@ def build_plan_node(planner_llm, recorder):
     run-started and planning markers before invoking the planner LLM. An
     out-of-scope request still creates the run, which is then failed at planning.
     """
-    structured = planner_llm.with_structured_output(PlannerOutput)
+    structured = with_provider_fallback(
+        planner_llm,
+        fallback_llm,
+        lambda model: model.with_structured_output(PlannerOutput),
+        primary_label=model_label(planner_llm),
+        fallback_label=model_label(fallback_llm),
+    )
 
     def plan(state, config) -> dict:
         thread_id = config["configurable"]["thread_id"]

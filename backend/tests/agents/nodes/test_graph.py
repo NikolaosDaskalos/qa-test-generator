@@ -8,7 +8,10 @@ import subprocess
 import uuid
 from pathlib import Path
 
+import anthropic
+import httpx
 import pytest
+from langchain_core.runnables import Runnable
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
@@ -52,7 +55,7 @@ class FakeClassifierLLM:
         self._schema = schema
         return self
 
-    def invoke(self, _messages):
+    def invoke(self, _messages, config=None):
         return self._schema(intent=self._intent)
 
 
@@ -62,7 +65,7 @@ class UncertainClassifierLLM:
     def with_structured_output(self, _schema):
         return self
 
-    def invoke(self, _messages):
+    def invoke(self, _messages, config=None):
         return None
 
 
@@ -80,7 +83,7 @@ class FakeGeneratorLLM:
         self._tokens = tokens
         self.stream_calls = []
 
-    def stream(self, messages):
+    def stream(self, messages, config=None):
         self.stream_calls.append(messages)
         for token in self._tokens:
             yield _Chunk(token)
@@ -119,8 +122,57 @@ class FakePlannerLLM:
     def with_structured_output(self, _schema):
         return self
 
-    def invoke(self, _messages):
+    def invoke(self, _messages, config=None):
         return self._output
+
+
+class DirectStructuredLLM(Runnable):
+    """A structured-output and streaming chat model fake for direct fallback behavior."""
+
+    def __init__(self, *, output=None, outputs=None, error=None, stream_tokens=(), stream_error=None, model_name: str = "model") -> None:
+        self._output = output
+        self._outputs = outputs or {}
+        self._error = error
+        self._stream_tokens = stream_tokens
+        self._stream_error = stream_error
+        self.model_name = model_name
+        self.invoke_calls = 0
+        self.stream_calls = 0
+
+    def with_structured_output(self, schema):
+        output = self._outputs.get(schema, self._output)
+        return _DirectStructuredRunnable(self, output=output, error=self._error)
+
+    def invoke(self, _messages, config=None):
+        return self.with_structured_output(None).invoke(_messages, config=config)
+
+    def stream(self, _messages, config=None):
+        self.stream_calls += 1
+        if self._stream_error is not None:
+            raise self._stream_error
+        for token in self._stream_tokens:
+            yield _Chunk(token)
+
+
+class _DirectStructuredRunnable(Runnable):
+    """Runnable returned by the schema-aware fake's structured-output adaptation."""
+
+    def __init__(self, parent: DirectStructuredLLM, *, output=None, error=None) -> None:
+        self._parent = parent
+        self._output = output
+        self._error = error
+
+    def invoke(self, _messages, config=None):
+        self._parent.invoke_calls += 1
+        if self._error is not None:
+            raise self._error
+        return self._output
+
+
+def _anthropic_status_error(status_code: int) -> anthropic.APIStatusError:
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(status_code, request=request)
+    return anthropic.APIStatusError("boom", response=response, body=None)
 
 
 class RecordingRecorder:
@@ -331,6 +383,7 @@ def _init_repo_with_test_root(tmp_path: Path) -> tuple[Path, str]:
 def _build(
     classifier_llm,
     *,
+    default_fallback_llm=None,
     retriever=None,
     llm=None,
     planner_llm=None,
@@ -346,6 +399,7 @@ def _build(
         review_policy = ReviewPolicy(pass_threshold=7, max_generation_retries=2 if max_generation_retries is None else max_generation_retries)
     return build_graph(
         classifier_llm=classifier_llm,
+        default_fallback_llm=default_fallback_llm if default_fallback_llm is not None else DirectStructuredLLM(model_name="claude-haiku-4-5"),
         retriever=retriever if retriever is not None else FakeRetriever(),
         llm=llm if llm is not None else FakeGeneratorLLM(),
         planner_llm=planner_llm if planner_llm is not None else FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
@@ -366,6 +420,7 @@ def test_build_graph_requires_every_runtime_adapter() -> None:
     """Omitting any runtime adapter fails at construction, never compiling a degraded graph."""
     complete = dict(
         classifier_llm=FakeClassifierLLM("repository_question"),
+        default_fallback_llm=DirectStructuredLLM(model_name="claude-haiku-4-5"),
         retriever=FakeRetriever(),
         llm=FakeGeneratorLLM(),
         planner_llm=FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
@@ -377,7 +432,7 @@ def test_build_graph_requires_every_runtime_adapter() -> None:
         checkpointer=MemorySaver(),
         review_policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2),
     )
-    for adapter in ("run_recorder", "workspace_factory", "publisher_factory", "checkpointer", "review_policy"):
+    for adapter in ("default_fallback_llm", "run_recorder", "workspace_factory", "publisher_factory", "checkpointer", "review_policy"):
         incomplete = {key: value for key, value in complete.items() if key != adapter}
         with pytest.raises(TypeError):
             build_graph(**incomplete)
@@ -418,6 +473,21 @@ def test_graph_routes_repository_question_intent_to_the_retrieval_branch() -> No
     assert final["trace"][:2] == ["classify", "retrieve"]
 
 
+def test_classifier_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
+    """A transient primary classifier failure re-runs classification on the default-tier fallback provider."""
+    repository_id = uuid.uuid4()
+    primary = DirectStructuredLLM(error=_anthropic_status_error(429), model_name="gpt-4o-mini")
+    fallback = DirectStructuredLLM(output=Classification(intent="repository_question"), model_name="claude-haiku-4-5")
+    retriever = FakeRetriever([_source(repository_id, "app/service.py", "def answer(): ...")])
+    graph = _build(primary, default_fallback_llm=fallback, retriever=retriever, llm=FakeGeneratorLLM(("ok",)))
+
+    final = graph.invoke({"question": "how does this work?", "repository_id": repository_id}, config=_config())
+
+    assert final["intent"] == "repository_question"
+    assert final["answer"] == "ok"
+    assert fallback.invoke_calls == 1
+
+
 def test_uncertain_classification_falls_back_to_the_repository_question_branch() -> None:
     """When the classifier cannot commit, the graph takes the read-only branch."""
     graph = _build(UncertainClassifierLLM())
@@ -449,6 +519,37 @@ def test_repository_question_branch_answers_from_retrieved_documents() -> None:
     assert retriever.calls[-1][1]["repository_id"] == repository_id
     assert final["answer"] == "the answer"
     assert final["citations"] == [Citation(source="app/auth.py"), Citation(source="app/login.py")]
+
+
+def test_repository_question_answerer_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
+    """A transient primary answer-stream failure resumes answer generation on the default-tier fallback provider."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/auth.py", "auth code")])
+    primary = DirectStructuredLLM(stream_error=_anthropic_status_error(429), model_name="gpt-4o-mini")
+    fallback = DirectStructuredLLM(stream_tokens=("fallback ", "answer"), model_name="claude-haiku-4-5")
+    classifier = DirectStructuredLLM(output=Classification(intent="repository_question"), model_name="gpt-4o-mini")
+    graph = _build(classifier, default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    final = graph.invoke({"question": "how is auth tested?", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == "fallback answer"
+    assert final["citations"] == [Citation(source="app/auth.py")]
+    assert fallback.stream_calls == 1
+
+
+def test_repository_question_answerer_fails_fast_on_a_deterministic_error() -> None:
+    """A deterministic answer-stream failure does not invoke the default-tier fallback provider."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/auth.py", "auth code")])
+    primary = DirectStructuredLLM(stream_error=_anthropic_status_error(400), model_name="gpt-4o-mini")
+    fallback = DirectStructuredLLM(stream_tokens=("unused",), model_name="claude-haiku-4-5")
+    classifier = DirectStructuredLLM(output=Classification(intent="repository_question"), model_name="gpt-4o-mini")
+    graph = _build(classifier, default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    with pytest.raises(anthropic.APIStatusError):
+        graph.invoke({"question": "how is auth tested?", "repository_id": repository_id}, config=_config())
+
+    assert fallback.stream_calls == 0
 
 
 def test_repository_question_branch_reports_insufficient_documents_without_calling_the_model() -> None:
@@ -484,6 +585,26 @@ def test_planner_emits_retrieval_requests_tagged_source_and_test(tmp_path) -> No
     requests = final["retrieval_requests"]
     assert [request.document_type for request in requests] == ["source", "test"]
     assert requests[0].candidate_paths == ["app/auth.py"]
+
+
+def test_planner_falls_over_to_the_default_fallback_on_a_transient_error(tmp_path) -> None:
+    """A transient primary planner failure re-runs planning on the default-tier fallback provider."""
+    planner_output = PlannerOutput(
+        in_scope=True,
+        retrieval_requests=[RetrievalRequest(document_type="source", description="auth tests", candidate_paths=["app/auth.py"])],
+    )
+    classifier = DirectStructuredLLM(output=Classification(intent="code_generation"), model_name="gpt-4o-mini")
+    primary_planner = DirectStructuredLLM(error=_anthropic_status_error(429), model_name="gpt-4o-mini")
+    fallback = DirectStructuredLLM(outputs={PlannerOutput: planner_output}, model_name="claude-haiku-4-5")
+    graph = _build(classifier, default_fallback_llm=fallback, planner_llm=primary_planner)
+
+    final = graph.invoke(
+        {"question": "write tests for auth", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4(), "checkout_root": str(tmp_path)},
+        config=_config(),
+    )
+
+    assert final["retrieval_requests"] == planner_output.retrieval_requests
+    assert fallback.invoke_calls == 1
 
 
 def test_out_of_scope_task_is_rejected_at_the_planning_stage() -> None:
@@ -1568,6 +1689,7 @@ def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_
     )
     graph = build_graph(
         classifier_llm=FakeClassifierLLM("code_generation"),
+        default_fallback_llm=DirectStructuredLLM(model_name="claude-haiku-4-5"),
         retriever=FakeRetriever(),
         llm=FakeGeneratorLLM(),
         planner_llm=FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),

@@ -11,8 +11,9 @@ import anthropic
 import httpx
 import openai
 import pytest
+from langchain_core.runnables import Runnable
 
-from app.agents.fallback import is_transient_llm_error, with_agent_fallback
+from app.agents.fallback import is_transient_llm_error, with_agent_fallback, with_provider_fallback
 
 
 class _Agent:
@@ -24,6 +25,21 @@ class _Agent:
         self.calls = 0
 
     def invoke(self, agent_input, config=None):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+class _DirectRunnable(Runnable):
+    """A stand-in for an adapted direct LLM call site."""
+
+    def __init__(self, *, result=None, error=None) -> None:
+        self.result = result
+        self.error = error
+        self.calls = 0
+
+    def invoke(self, direct_input, config=None):
         self.calls += 1
         if self.error is not None:
             raise self.error
@@ -107,3 +123,49 @@ def test_with_agent_fallback_fails_fast_on_a_deterministic_primary_error() -> No
         agent.invoke({"messages": []})
 
     assert fallback.calls == 0
+
+
+def test_with_provider_fallback_adapts_each_model_and_falls_over_on_a_transient_primary_error(caplog) -> None:
+    """Direct LLM sites adapt each provider first, then fall over to the adapted fallback on transient failure."""
+    primary = object()
+    fallback = object()
+    primary_runnable = _DirectRunnable(error=_anthropic_status_error(529))
+    fallback_runnable = _DirectRunnable(result="from-fallback")
+    adapted = []
+
+    def adapt(model):
+        adapted.append(model)
+        return primary_runnable if model is primary else fallback_runnable
+
+    direct = with_provider_fallback(primary, fallback, adapt, primary_label="gpt-4o-mini", fallback_label="claude-haiku-4-5")
+
+    with caplog.at_level(logging.WARNING):
+        result = direct.invoke("messages")
+
+    assert adapted == [primary, fallback]
+    assert result == "from-fallback"
+    assert fallback_runnable.calls == 1
+    message = caplog.records[0].getMessage()
+    assert "gpt-4o-mini" in message
+    assert "claude-haiku-4-5" in message
+    assert "529" in message
+
+
+def test_with_provider_fallback_fails_fast_on_a_deterministic_primary_error() -> None:
+    """Direct LLM sites do not invoke the fallback when the primary failure is deterministic."""
+    primary = object()
+    fallback = object()
+    primary_runnable = _DirectRunnable(error=_anthropic_status_error(400))
+    fallback_runnable = _DirectRunnable(result="from-fallback")
+    direct = with_provider_fallback(
+        primary,
+        fallback,
+        lambda model: primary_runnable if model is primary else fallback_runnable,
+        primary_label="gpt-4o-mini",
+        fallback_label="claude-haiku-4-5",
+    )
+
+    with pytest.raises(anthropic.APIStatusError):
+        direct.invoke("messages")
+
+    assert fallback_runnable.calls == 0
