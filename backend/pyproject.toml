@@ -34,6 +34,7 @@ dependencies = [
   "langgraph>=1.2.1",
   "langgraph-checkpoint-postgres>=2.0.0",
   "langchain-anthropic>=1.0.0",
+  "pygithub>=2.9.1",
 ]
 
 [dependency-groups]

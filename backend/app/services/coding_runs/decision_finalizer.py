@@ -20,16 +20,37 @@ from app.services.coding_runs.workspace import GenerationWorkspace
 
 logger = logging.getLogger(__name__)
 
-# The fixed commit message for an approved Test Patch; the run identity lives on the Coding Run, not the message.
+# The fixed commit message and Pull Request title for an approved Test Patch; the run identity lives on the Coding Run.
 APPROVAL_COMMIT_MESSAGE = "Add generated tests"
-# User-safe reasons for an approval-stage Git failure; never raw exception text or the credential.
+PULL_REQUEST_TITLE = "Add generated tests"
+# User-safe reasons for an approval-stage failure; never raw exception text or the credential.
 COMMIT_FAILED = "Could not commit the approved Test Patch."
 PUSH_FAILED = "Could not push the approved Test Patch branch."
+# The branch is already on the remote; only Pull Request creation failed.
+PULL_REQUEST_FAILED = "Pushed the Test Patch branch, but could not open a Pull Request for it."
 
 
-def _pushed_message(branch: str) -> str:
-    """Ready-to-show copy naming the pushed branch and directing the owner to open it."""
-    return f"Your tests were pushed to branch '{branch}'. Open it on your repository to review."
+def _pull_request_message(url: str) -> str:
+    """Ready-to-show copy pointing the owner to the opened Pull Request."""
+    return f"Your tests were pushed and a Pull Request was opened for review: {url}"
+
+
+def _pull_request_body(score: int, threshold: int, findings: list[ReviewFinding]) -> str:
+    """Render the Patch Review — score, configured pass threshold, and categorized findings — as the PR body."""
+    lines = [
+        "## Patch Review",
+        "",
+        f"**Score:** {score}/10 (pass threshold: {threshold})",
+        "",
+        "_The generated tests were not executed; runtime correctness was not verified._",
+        "",
+        "### Findings",
+    ]
+    if findings:
+        lines += [f"- **{finding.category}:** {finding.detail}" for finding in findings]
+    else:
+        lines.append("- None.")
+    return "\n".join(lines)
 
 
 class DecisionFinalizer:
@@ -39,9 +60,23 @@ class DecisionFinalizer:
         self._recorder = recorder
 
     def approve(
-        self, *, publisher, workspace: GenerationWorkspace, coding_run_id: uuid.UUID, generation_branch: str, diff: str, indexed_commit_sha: str
+        self,
+        *,
+        publisher,
+        workspace: GenerationWorkspace,
+        coding_run_id: uuid.UUID,
+        generation_branch: str,
+        diff: str,
+        indexed_commit_sha: str,
+        score: int,
+        threshold: int,
+        findings: list[ReviewFinding],
     ) -> RunApproved | RunFailure:
-        """Commit, push, record approved, and restore the checkout; map Git errors to a typed failure."""
+        """Commit, push, open the PR, record approved, and restore the checkout; map failures to a typed Run Failure.
+
+        Push happens before PR creation, so a PR failure (a distinct ``github_pull_request`` stage)
+        means the branch is on the remote but no Pull Request was opened — never approving or restoring.
+        """
         try:
             publisher.commit(APPROVAL_COMMIT_MESSAGE)
         except Exception:
@@ -52,10 +87,19 @@ class DecisionFinalizer:
         except Exception:
             logger.error("Approved patch push failed: %s", PUSH_FAILED)
             return RunFailure(failed_stage=CodingRunStage.git_push, reason=PUSH_FAILED)
+        try:
+            pull_request_url = publisher.open_pull_request(
+                title=PULL_REQUEST_TITLE, body=_pull_request_body(score, threshold, findings), head=generation_branch or ""
+            )
+        except Exception:
+            logger.error("Approved patch Pull Request creation failed: %s", PULL_REQUEST_FAILED)
+            return RunFailure(failed_stage=CodingRunStage.github_pull_request, reason=PULL_REQUEST_FAILED)
         self._recorder.approve(coding_run_id)
         self._restore_checkout(workspace, indexed_commit_sha, generation_branch)
         branch = generation_branch or ""
-        return RunApproved(coding_run_id=coding_run_id, branch=branch, diff=diff or "", message=_pushed_message(branch))
+        return RunApproved(
+            coding_run_id=coding_run_id, branch=branch, diff=diff or "", pull_request_url=pull_request_url, message=_pull_request_message(pull_request_url)
+        )
 
     def discard(
         self,

@@ -136,17 +136,19 @@ class RunApproved(BaseModel):
 
     Approval is a deliberate outcome: the reviewed patch is committed on its unique
     non-default ``branch`` and pushed to the remote with the Repository Credential,
-    leaving that remote branch available for manual inspection or pull-request
-    creation. The local checkout is then restored to the indexed commit. This carries
-    the pushed branch and the approved canonical diff, a ready-to-show ``message``
-    naming the pushed branch, and a ``disclaimer`` restating that the tests were never
-    executed.
+    after which the backend opens a Pull Request from that branch into the Repository's
+    default branch, carrying the Patch Review in the PR body. The local checkout is then
+    restored to the indexed commit. This carries the pushed branch, the approved canonical
+    diff, the created Pull Request's ``pull_request_url``, a ready-to-show ``message``
+    pointing the owner to the Pull Request, and a ``disclaimer`` restating that the tests
+    were never executed.
     """
 
     type: Literal["run_approved"] = "run_approved"
     coding_run_id: uuid.UUID
     branch: str
     diff: str
+    pull_request_url: str = ""
     message: str = ""
     disclaimer: str = REVIEW_DISCLAIMER
 

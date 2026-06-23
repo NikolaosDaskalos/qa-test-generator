@@ -411,18 +411,20 @@ def build_discard_patch_node(workspace_factory, recorder):
 def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
     """Build the thin adapter that finalizes an owner-approved Test Patch.
 
-    The node unpacks state, builds the publisher and workspace, delegates the
-    commit → push → record-approved → restore-checkout orchestration to the deep
-    ``DecisionFinalizer``, and returns plain state — never a ``Command``. A
-    ``git_commit`` / ``git_push`` Run Failure is folded onto state via ``fail_state``
-    so the post-approval router routes it to the single ``fail_run`` sink, which owns
-    its terminal emission; a successful ``RunApproved`` is emitted here and routed to
-    the run's end. The finalizer holds no wire knowledge.
+    The node unpacks state (including the Patch Review the PR body is rendered from),
+    builds the publisher and workspace, delegates the commit → push → open-pull-request
+    → record-approved → restore-checkout orchestration to the deep ``DecisionFinalizer``,
+    and returns plain state — never a ``Command``. A ``git_commit`` / ``git_push`` /
+    ``github_pull_request`` Run Failure is folded onto state via ``fail_state`` so the
+    post-approval router routes it to the single ``fail_run`` sink, which owns its terminal
+    emission; a successful ``RunApproved`` (carrying the opened Pull Request's URL) is
+    emitted here and routed to the run's end. The finalizer holds no wire knowledge.
     """
 
     finalizer = DecisionFinalizer(recorder=recorder)
 
     def approve_patch(state) -> dict:
+        review: ReviewResult | None = state.get("review_result")
         outcome = finalizer.approve(
             publisher=publisher_factory(state["repository_id"]),
             workspace=workspace_factory(state.get("checkout_root")),
@@ -430,6 +432,9 @@ def build_approve_patch_node(publisher_factory, workspace_factory, recorder):
             generation_branch=state.get("generation_branch"),
             diff=state.get("diff") or "",
             indexed_commit_sha=state.get("indexed_commit_sha"),
+            score=review.score if review is not None else 0,
+            threshold=review.threshold if review is not None else 0,
+            findings=list(review.findings) if review is not None else [],
         )
         if isinstance(outcome, RunFailure):
             return fail_state(outcome, trace="approve_patch")

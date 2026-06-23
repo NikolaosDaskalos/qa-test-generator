@@ -34,3 +34,4 @@ class CodingRunStage(str, Enum):
     reviewing = "reviewing"
     git_commit = "git_commit"
     git_push = "git_push"
+    github_pull_request = "github_pull_request"

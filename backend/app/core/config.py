@@ -203,6 +203,10 @@ class Settings(BaseSettings):
 
     REPO_PATH: Path = Field(default_factory=lambda: PROJECT_PATH / ".tmp/repositories")
 
+    # The GitHub REST API base URL used when opening a Pull Request on Approval.
+    # Defaults to public GitHub; override for a GitHub Enterprise Server install.
+    GITHUB_API_BASE_URL: str = "https://api.github.com"
+
     def model_post_init(self, __context) -> None:
         """Create the local repository storage directory and wire LangSmith tracing."""
         self.REPO_PATH.mkdir(parents=True, exist_ok=True)

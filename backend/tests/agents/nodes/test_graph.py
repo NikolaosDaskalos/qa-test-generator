@@ -18,6 +18,7 @@ from app.agents.nodes.planner import PlannerOutput
 from app.agents.nodes.repository_question import INSUFFICIENT_DOCUMENTS_ANSWER
 from app.services.coding_runs.review_policy import ReviewPolicy
 from app.core.errors.git_errors import GitError
+from app.core.errors.github_errors import GitHubError
 from app.db.models import RepositoryDocument
 from app.enums import CodingRunStage
 from app.schemas import (
@@ -260,15 +261,19 @@ class FakeWorkspace:
 
 
 class FakePublisher:
-    """A ``PatchPublisher`` that records the commit/push and can fail either step.
+    """A ``PatchPublisher`` that records commit/push/PR and can fail any step.
 
-    ``fail_on`` raises a ``GitError`` (whose text embeds a stand-in credential, so
-    sanitization can be asserted) on the named step — ``"commit"`` or ``"push"``.
+    ``fail_on`` raises on the named step — ``"commit"`` / ``"push"`` raise a ``GitError``
+    and ``"pull_request"`` a ``GitHubError`` (each embedding a stand-in credential so
+    sanitization can be asserted). It records the opened PR's URL when one is created.
     """
+
+    PULL_REQUEST_URL = "https://github.com/o/r/pull/7"
 
     def __init__(self, *, fail_on: str | None = None) -> None:
         self.committed = None
         self.pushed = False
+        self.pull_request_kwargs = None
         self._fail_on = fail_on
 
     def commit(self, message):
@@ -280,6 +285,12 @@ class FakePublisher:
         if self._fail_on == "push":
             raise GitError("git push rejected for secret-token")
         self.pushed = True
+
+    def open_pull_request(self, *, title, body, head):
+        if self._fail_on == "pull_request":
+            raise GitHubError("pull request rejected for secret-token")
+        self.pull_request_kwargs = {"title": title, "body": body, "head": head}
+        return self.PULL_REQUEST_URL
 
 
 def _workspace_factory(workspace=None):
@@ -942,7 +953,8 @@ def test_rejecting_a_paused_run_discards_the_patch_and_records_the_rejection(tmp
     reviewer = FakeCodeReviewer(PatchReview(score=10, findings=findings))
     workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py\n+def test_x(): ...")
     generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer)
+    publisher = FakePublisher()
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer, publisher=publisher)
     config = _config()
     graph.invoke(
         {
@@ -959,6 +971,10 @@ def test_rejecting_a_paused_run_discards_the_patch_and_records_the_rejection(tmp
 
     # The discarded patch restores the checkout to the indexed commit and removes the temporary branch.
     assert workspace.discarded == ("abc", "qa-tests/fake")
+    # Rejection makes no GitHub write: nothing is committed, pushed, or opened as a Pull Request.
+    assert publisher.committed is None
+    assert publisher.pushed is False
+    assert publisher.pull_request_kwargs is None
     # The run is recorded rejected, after the accepted review was recorded.
     assert ("reject", recorder.run_id) in recorder.events
     # The terminal outcome preserves the assessed diff and findings for inspection.
@@ -1023,16 +1039,17 @@ def test_approving_a_paused_run_commits_pushes_and_emits_run_approved(tmp_path) 
 
     final = graph.invoke(Command(resume={"approved": True}), config=config)
 
-    # The reviewed patch was committed and its branch pushed.
+    # The reviewed patch was committed, its branch pushed, and a PR opened from that branch.
     assert publisher.committed is not None
     assert publisher.pushed is True
+    assert publisher.pull_request_kwargs["head"] == "qa-tests/fake"
     # The terminal outcome identifies the approved run and is not a rejection or failure.
     approval = final["approval_result"]
     assert isinstance(approval, RunApproved)
     assert approval.coding_run_id == recorder.run_id
-    # The terminal carries ready-to-show copy naming the pushed branch the owner should open.
-    assert approval.branch and approval.branch in approval.message
-    assert "Open it on your repository" in approval.message
+    # The terminal exposes the opened Pull Request's URL and ready-to-show copy pointing the owner to it.
+    assert approval.pull_request_url == FakePublisher.PULL_REQUEST_URL
+    assert approval.pull_request_url in approval.message
     assert final.get("rejection_result") is None
     assert final.get("failure") is None
 
@@ -1159,6 +1176,41 @@ def test_approval_push_failure_is_a_git_push_stage_failure(tmp_path, caplog) -> 
     assert failure.coding_run_id == recorder.run_id
     # The commit happened but the run was not approved, and the credential is never leaked.
     assert publisher.committed is not None
+    assert ("approve", recorder.run_id) not in recorder.events
+    assert final.get("approval_result") is None
+    assert "secret-token" not in failure.reason
+    assert "secret-token" not in caplog.text
+
+
+def test_approval_pull_request_failure_is_a_github_pull_request_stage_failure(tmp_path, caplog) -> None:
+    """A PR creation failure after a successful push records a github_pull_request-stage failure, distinct from git_push."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    publisher = FakePublisher(fail_on="pull_request")
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer, publisher=publisher)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    final = graph.invoke(Command(resume={"approved": True}), config=config)
+
+    failure = final["failure"]
+    # The branch is on the remote (push succeeded); only the Pull Request failed, on its own stage.
+    assert failure.failed_stage == "github_pull_request"
+    assert failure.coding_run_id == recorder.run_id
+    assert publisher.pushed is True
+    # The run was not approved and the credential is never leaked into the reason or logs.
     assert ("approve", recorder.run_id) not in recorder.events
     assert final.get("approval_result") is None
     assert "secret-token" not in failure.reason

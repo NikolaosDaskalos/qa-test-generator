@@ -80,7 +80,7 @@ def upgrade() -> None:
     sa.Column('repository_session_id', sa.Uuid(), nullable=False),
     sa.Column('status', sa.Enum('queued', 'planning', 'retrieving', 'generating', 'awaiting_review', 'reviewing', 'awaiting_approval', 'changes_requested', 'approved', 'succeeded', 'rejected', 'failed', name='codingrunstatus'), nullable=False),
     sa.Column('thread_id', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
-    sa.Column('failed_stage', sa.Enum('planning', 'retrieving', 'generating', 'reviewing', 'git_commit', 'git_push', name='codingrunstage'), nullable=True),
+    sa.Column('failed_stage', sa.Enum('planning', 'retrieving', 'generating', 'reviewing', 'git_commit', 'git_push', 'github_pull_request', name='codingrunstage'), nullable=True),
     sa.Column('failure_reason', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.Column('revision_count', sa.Integer(), nullable=False),
     sa.Column('generation_branch', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
