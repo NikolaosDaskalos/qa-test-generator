@@ -1,45 +1,76 @@
-"""The ``repository_question`` branch nodes: retrieval-grounded answering.
+"""The ``repository_question`` branch: Question Shape analysis and retrieval strategies.
 
-The ``retrieve`` node scopes Repository Documents to the session's Repository; the
-``generate`` node streams the grounded answer (its token chunks ride LangGraph's
-``messages`` stream mode) and records the answer text plus de-duplicated file
-citations on the shared state.
+After Request Intent routes a turn here, the ``analyzing`` node infers the Question
+Shape (``simple`` | ``independent`` | ``chained``) and routes to a strategy node. The
+``simple_rag`` strategy answers a single focused question with multi-query + RAG-fusion:
+generate N query reformulations, fuse their raw hybrid results with Reciprocal Rank
+Fusion, Cohere-rerank the fused pool against the original question, and stream a single
+grounded answer via the shared generation helper. Uncertain shape falls back to
+``simple`` — read-only and side-effect-free.
 """
+
+from typing import Literal
 
 # pyrefly: ignore [missing-import]
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 from app.agents.fallback import model_label, with_provider_fallback
+from app.agents.nodes.generation import generate_grounded_answer
 from app.core import settings
-from app.prompts.prompts import QA_SYSTEM_PROMPT
-from app.prompts.rendering import format_repository_documents
-from app.schemas import Citation, Stage
+from app.prompts.prompts import MULTI_QUERY_PROMPT
+from app.schemas import Stage
 from app.streaming import emit
 
-# Returned verbatim when retrieval yields no Repository Documents, so the answer
-# states the limitation instead of letting the model fill gaps from its own knowledge.
-INSUFFICIENT_DOCUMENTS_ANSWER = "I don't have enough Repository Documents in this session to answer that question."
+QuestionShape = Literal["simple", "independent", "chained"]
 
 
-def build_retrieve_node(retriever):
-    """Build the repository-scoped retrieve node."""
+class ShapeClassification(BaseModel):
+    """Structured output of the ``analyzing`` node: the inferred Question Shape."""
 
-    def retrieve(state) -> dict:
-        emit(Stage(stage="retrieving"))
-        documents = retriever.retrieve_documents(
-            state["question"],
-            repository_id=state["repository_id"],
-            k=settings.TOP_K,
-            alpha=settings.HYBRID_SEARCH_ALPHA,
-            parent_limit=settings.FINAL_PARENT_LIMIT,
-        )
-        return {"documents": documents, "trace": ["retrieve"]}
-
-    return retrieve
+    shape: QuestionShape = Field(
+        description="The structural shape of the repository question: 'simple' for a single focused ask, "
+        "'independent' for several unrelated sub-questions in one message, or 'chained' for a multi-hop "
+        "question whose later parts depend on answering the earlier ones."
+    )
 
 
-def build_generate_node(llm, fallback_llm):
-    """Build the grounded generate node that streams an answer with citations."""
+class QueryVariants(BaseModel):
+    """Structured output of multi-query reformulation: alternative search queries."""
+
+    variants: list[str] = Field(description="Alternative search-query reformulations of the original question for hybrid code retrieval.")
+
+
+def build_analyzing_node(classifier_llm, fallback_llm):
+    """Build the ``analyzing`` node; uncertain classification falls back to the read-only ``simple`` shape."""
+    structured = with_provider_fallback(
+        classifier_llm,
+        fallback_llm,
+        lambda model: model.with_structured_output(ShapeClassification),
+        primary_label=model_label(classifier_llm),
+        fallback_label=model_label(fallback_llm),
+    )
+
+    def analyzing(state) -> dict:
+        emit(Stage(stage="analyzing"))
+        # Read recent Session History when present so a follow-up's shape fits the conversation.
+        messages = state.get("messages") or [HumanMessage(content=state["question"])]
+        result = structured.invoke(messages)
+        shape: QuestionShape = result.shape if result else "simple"
+        return {"question_shape": shape, "trace": ["analyzing"]}
+
+    return analyzing
+
+
+def build_simple_rag_node(retriever, llm, fallback_llm):
+    """Build the ``simple_rag`` strategy: multi-query + RAG-fusion, then a single streamed answer."""
+    variant_llm = with_provider_fallback(
+        llm,
+        fallback_llm,
+        lambda model: model.with_structured_output(QueryVariants),
+        primary_label=model_label(llm),
+        fallback_label=model_label(fallback_llm),
+    )
     answer_llm = with_provider_fallback(
         llm,
         fallback_llm,
@@ -48,36 +79,40 @@ def build_generate_node(llm, fallback_llm):
         fallback_label=model_label(fallback_llm),
     )
 
-    def generate(state) -> dict:
-        emit(Stage(stage="generating"))
-        documents = state.get("documents") or []
-        if not documents:
-            return {"answer": INSUFFICIENT_DOCUMENTS_ANSWER, "citations": [], "trace": ["generate"]}
+    def simple_rag(state) -> dict:
+        emit(Stage(stage="retrieving"))
+        question = state["question"]
+        variants = _generate_variants(variant_llm, question)
+        documents = retriever.fusion_retrieve_documents(
+            variants,
+            original_query=question,
+            repository_id=state["repository_id"],
+            k=settings.TOP_K,
+            alpha=settings.HYBRID_SEARCH_ALPHA,
+            parent_limit=settings.FINAL_PARENT_LIMIT,
+            rrf_k=settings.RRF_K,
+        )
+        answer = generate_grounded_answer(answer_llm, question=question, documents=documents)
+        return {"documents": documents, "trace": ["simple_rag"], **answer}
 
-        context = format_repository_documents(documents)
-        messages = [SystemMessage(content=f"{QA_SYSTEM_PROMPT}\n\nContext:\n{context}"), HumanMessage(content=state["question"])]
-        collected = ""
-        for chunk in answer_llm.stream(messages):
-            token = getattr(chunk, "content", "") or ""
-            if token:
-                collected += token
-
-        return {"answer": collected, "citations": _to_citations(_extract_sources(documents)), "trace": ["generate"]}
-
-    return generate
-
-
-def _extract_sources(docs) -> list[str]:
-    """Extract source paths from selected parent RepositoryDocuments."""
-    return [document.doc_metadata.get("source", "Unknown") for document in docs]
+    return simple_rag
 
 
-def _to_citations(sources: list[str]) -> list[Citation]:
-    """Project retrieved source paths into file citations, de-duplicated in order."""
-    citations: list[Citation] = []
+def _generate_variants(variant_llm, question: str) -> list[str]:
+    """Reformulate the question into search variants, capped at the configured count.
+
+    The structured schema does not bound the list, so a verbose or prompt-influenced
+    response is de-duplicated and trimmed to ``QUERY_VARIANT_COUNT`` here — otherwise each
+    extra variant would cost another vector search. Falls back to the original question
+    when the model yields nothing usable.
+    """
+    messages = [SystemMessage(content=MULTI_QUERY_PROMPT.format(count=settings.QUERY_VARIANT_COUNT)), HumanMessage(content=question)]
+    result = variant_llm.invoke(messages)
     seen: set[str] = set()
-    for path in sources:
-        if path and path not in seen:
-            seen.add(path)
-            citations.append(Citation(source=path))
-    return citations
+    variants: list[str] = []
+    for variant in result.variants if result else []:
+        cleaned = variant.strip() if variant else ""
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            variants.append(cleaned)
+    return variants[: settings.QUERY_VARIANT_COUNT] or [question]

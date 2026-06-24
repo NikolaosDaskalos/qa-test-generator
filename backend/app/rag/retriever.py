@@ -18,6 +18,44 @@ from app.integrations.weaviate import TEXT_PROPERTY, WeaviateResources
 logger = logging.getLogger(__name__)
 
 
+def _chunk_identity(document: Document) -> tuple:
+    """A stable per-chunk identity for fusion: parent document plus chunk text.
+
+    Keying on text alone would collapse identical-text chunks from *different* parents
+    into one fused candidate, making a dropped parent unreachable (only the fused pool is
+    later reranked and hydrated). Pairing the parent id with the text keeps distinct
+    parents distinct, while still treating the same chunk found by several query variants
+    as one. Sibling chunks of a single parent that happen to share text collapse harmlessly,
+    since hydration de-duplicates by parent anyway.
+    """
+    return (document.metadata.get("parent_id"), document.page_content)
+
+
+def reciprocal_rank_fusion(ranked_lists: list[list[Document]], *, k: int) -> list[Document]:
+    """Merge several ranked Code Chunk lists into one by Reciprocal Rank Fusion.
+
+    Each chunk scores ``sum(1 / (k + rank))`` over every list it appears in (rank
+    1-based), so a chunk surfacing under several query reformulations outranks one
+    found by a single variant — this is the cross-reformulation recall signal. Chunks
+    are identified by ``(parent_id, text)`` (see ``_chunk_identity``); the first-seen
+    instance is kept. Returns chunks in descending fused score, ties broken by first
+    appearance (stable).
+    """
+    scores: dict[tuple, float] = {}
+    first_seen: dict[tuple, Document] = {}
+    order: list[tuple] = []
+    for ranked in ranked_lists:
+        for rank, document in enumerate(ranked, start=1):
+            identity = _chunk_identity(document)
+            if identity not in first_seen:
+                first_seen[identity] = document
+                order.append(identity)
+                scores[identity] = 0.0
+            scores[identity] += 1.0 / (k + rank)
+    order.sort(key=lambda identity: scores[identity], reverse=True)
+    return [first_seen[identity] for identity in order]
+
+
 class DocumentRetriever:
     """Wrap Weaviate hybrid retrieval behind the RAG query contract."""
 
@@ -46,8 +84,28 @@ class DocumentRetriever:
         return results
 
     def retrieve_documents(self, query: str, *, repository_id: uuid.UUID, k: int, alpha: float, parent_limit: int) -> list[RepositoryDocument]:
-        """Rerank candidate Code Chunks and hydrate their parent documents."""
+        """Rerank candidate Code Chunks from a single query and hydrate their parent documents."""
         candidates = [document for document, _ in self.search_with_scores(query, repository_id=repository_id, k=k, alpha=alpha)]
+        return self._rerank_and_hydrate(candidates, query, repository_id=repository_id, parent_limit=parent_limit)
+
+    def fusion_retrieve_documents(
+        self, queries: list[str], *, original_query: str, repository_id: uuid.UUID, k: int, alpha: float, parent_limit: int, rrf_k: int
+    ) -> list[RepositoryDocument]:
+        """Multi-query + RAG-fusion: raw hybrid search per variant, RRF-fuse, then rerank against the original.
+
+        Each query variant runs the same raw hybrid search as the single-query path; the
+        ranked Code Chunk lists are merged by Reciprocal Rank Fusion (widening recall across
+        reformulations) and the fused pool is handed to the same rerank/hydrate tail —
+        scored once by the Cohere cross-encoder against the original question for precision.
+        """
+        ranked_lists = [
+            [document for document, _ in self.search_with_scores(query, repository_id=repository_id, k=k, alpha=alpha)] for query in queries
+        ]
+        fused = reciprocal_rank_fusion(ranked_lists, k=rrf_k)
+        return self._rerank_and_hydrate(fused, original_query, repository_id=repository_id, parent_limit=parent_limit)
+
+    def _rerank_and_hydrate(self, candidates: list[Document], query: str, *, repository_id: uuid.UUID, parent_limit: int) -> list[RepositoryDocument]:
+        """Rerank candidate Code Chunks against ``query`` and hydrate their parent documents."""
         if not candidates:
             return []
 

@@ -28,11 +28,12 @@ def test_custom_events_pass_through_and_messages_become_tokens_in_order() -> Non
         ("custom", Stage(stage="classifying")),
         ("custom", RunStarted(coding_run_id=run_id)),
         ("custom", Stage(stage="planning")),
+        ("custom", Stage(stage="analyzing")),
         ("custom", Stage(stage="retrieving")),
         ("custom", Stage(stage="generating")),
-        ("messages", (_Message("the "), {"langgraph_node": "generate"})),
-        ("messages", (_Message(""), {"langgraph_node": "generate"})),
-        ("messages", (_Message("answer"), {"langgraph_node": "generate"})),
+        ("messages", (_Message("the "), {"langgraph_node": "simple_rag"})),
+        ("messages", (_Message(""), {"langgraph_node": "simple_rag"})),
+        ("messages", (_Message("answer"), {"langgraph_node": "simple_rag"})),
     ]
 
     events = list(map_graph_stream(items))
@@ -41,6 +42,7 @@ def test_custom_events_pass_through_and_messages_become_tokens_in_order() -> Non
         Stage(stage="classifying"),
         RunStarted(coding_run_id=run_id),
         Stage(stage="planning"),
+        Stage(stage="analyzing"),
         Stage(stage="retrieving"),
         Stage(stage="generating"),
         Token(content="the "),
@@ -51,7 +53,7 @@ def test_custom_events_pass_through_and_messages_become_tokens_in_order() -> Non
 def test_message_chunks_from_non_answer_nodes_are_not_streamed_as_tokens() -> None:
     items = [
         ("messages", (_Message('{"intent":'), {"langgraph_node": "classify"})),
-        ("messages", (_Message("visible answer"), {"langgraph_node": "generate"})),
+        ("messages", (_Message("visible answer"), {"langgraph_node": "simple_rag"})),
         ("messages", (_Message('{"plan":'), {"langgraph_node": "plan"})),
         ("messages", (_Message("metadata missing"), {})),
     ]

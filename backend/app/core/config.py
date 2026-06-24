@@ -195,6 +195,10 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 10
     TOP_K: int = Field(default=10, ge=1)
     FINAL_PARENT_LIMIT: int = Field(default=5, ge=1)
+    # Multi-query + RAG-fusion on the simple repository-question strategy: how many query
+    # reformulations to generate (N), and the Reciprocal Rank Fusion rank constant (k).
+    QUERY_VARIANT_COUNT: int = Field(default=3, ge=1)
+    RRF_K: int = Field(default=60, ge=1)
     COHERE_RERANK_MODEL: str = "rerank-v4.0-pro"
 
     WEAVIATE_HTTP_HOST: str = "localhost"

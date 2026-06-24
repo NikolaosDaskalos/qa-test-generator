@@ -38,7 +38,11 @@ def emit(event: AgentStreamEvent) -> None:
         writer(event)
 
 
-_ANSWER_GENERATION_NODE = "generate"
+# The repository-question strategy nodes whose grounded-answer token stream becomes
+# ``Token`` events. Each Question Shape strategy owns its own final-answer streaming, so
+# tokens are attributed by strategy-node name (the analyzing/variant structured calls do
+# not stream and so never reach here).
+_ANSWER_GENERATION_NODES = frozenset({"simple_rag"})
 
 
 def map_graph_stream(stream_items: Iterable[tuple[str, object]]) -> Iterator[AgentStreamEvent]:
@@ -53,7 +57,7 @@ def map_graph_stream(stream_items: Iterable[tuple[str, object]]) -> Iterator[Age
             yield chunk  # type: ignore[misc]
         elif mode == "messages":
             message, metadata = chunk  # type: ignore[misc]
-            if not isinstance(metadata, dict) or metadata.get("langgraph_node") != _ANSWER_GENERATION_NODE:
+            if not isinstance(metadata, dict) or metadata.get("langgraph_node") not in _ANSWER_GENERATION_NODES:
                 continue
             content = getattr(message, "content", "") or ""
             if content:

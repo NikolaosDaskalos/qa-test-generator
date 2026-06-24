@@ -17,8 +17,9 @@ from langgraph.types import Command
 
 from app.agents import Classification, build_graph
 from app.agents.nodes.code_generation import NO_CHANGES_MESSAGE, build_review_patch_node
+from app.agents.nodes.generation import INSUFFICIENT_DOCUMENTS_ANSWER
 from app.agents.nodes.planner import PlannerOutput
-from app.agents.nodes.repository_question import INSUFFICIENT_DOCUMENTS_ANSWER
+from app.agents.nodes.repository_question import QueryVariants, ShapeClassification
 from app.services.coding_runs.review_policy import ReviewPolicy
 from app.core.errors.git_errors import GitError
 from app.core.errors.github_errors import GitHubError
@@ -45,17 +46,31 @@ from app.services.coding_runs.workspace import LocalGitWorkspace
 
 
 class FakeClassifierLLM:
-    """A structured-output LLM that always classifies to a fixed intent."""
+    """A structured-output LLM that classifies both Request Intent and Question Shape to fixed values.
 
-    def __init__(self, intent: str) -> None:
+    The same instance backs the ``classify`` and ``analyzing`` nodes, so structured
+    adaptation must dispatch on the requested schema rather than mutating shared state.
+    """
+
+    def __init__(self, intent: str = "repository_question", *, shape: str = "simple") -> None:
         self._intent = intent
-        self._schema = None
+        self._shape = shape
 
     def with_structured_output(self, schema):
+        return _FixedClassification(schema, intent=self._intent, shape=self._shape)
+
+
+class _FixedClassification:
+    """Structured runnable returning a fixed verdict for the schema it was bound to."""
+
+    def __init__(self, schema, *, intent: str, shape: str) -> None:
         self._schema = schema
-        return self
+        self._intent = intent
+        self._shape = shape
 
     def invoke(self, _messages, config=None):
+        if self._schema is ShapeClassification:
+            return ShapeClassification(shape=self._shape)
         return self._schema(intent=self._intent)
 
 
@@ -95,10 +110,44 @@ class FakeRetriever:
     def __init__(self, documents=None) -> None:
         self.documents = documents or []
         self.calls = []
+        self.fusion_calls = []
 
     def retrieve_documents(self, query, **kwargs):
         self.calls.append((query, kwargs))
         return self.documents
+
+    def fusion_retrieve_documents(self, queries, **kwargs):
+        self.fusion_calls.append((queries, kwargs))
+        return self.documents
+
+
+class FakeSimpleRagLLM:
+    """An LLM for ``simple_rag``: returns fixed query variants and streams fixed answer tokens."""
+
+    def __init__(self, *, variants=("variant",), tokens=("answer",)) -> None:
+        self._variants = list(variants)
+        self._tokens = tokens
+        self.variant_calls = []
+        self.stream_calls = []
+
+    def with_structured_output(self, _schema):
+        return _FixedVariants(self)
+
+    def stream(self, messages, config=None):
+        self.stream_calls.append(messages)
+        for token in self._tokens:
+            yield _Chunk(token)
+
+
+class _FixedVariants:
+    """Structured runnable returning the parent fake's fixed query variants."""
+
+    def __init__(self, parent: "FakeSimpleRagLLM") -> None:
+        self._parent = parent
+
+    def invoke(self, messages, config=None):
+        self._parent.variant_calls.append(messages)
+        return QueryVariants(variants=list(self._parent._variants))
 
 
 class QueryRetriever:
@@ -166,6 +215,10 @@ class _DirectStructuredRunnable(Runnable):
         self._parent.invoke_calls += 1
         if self._error is not None:
             raise self._error
+        # A per-schema output may itself be an exception, modelling a call that succeeds for
+        # one structured schema but fails for another (e.g. intent ok, Question Shape transient).
+        if isinstance(self._output, BaseException):
+            raise self._output
         return self._output
 
 
@@ -401,7 +454,7 @@ def _build(
         classifier_llm=classifier_llm,
         default_fallback_llm=default_fallback_llm if default_fallback_llm is not None else DirectStructuredLLM(model_name="claude-haiku-4-5"),
         retriever=retriever if retriever is not None else FakeRetriever(),
-        llm=llm if llm is not None else FakeGeneratorLLM(),
+        llm=llm if llm is not None else FakeSimpleRagLLM(),
         planner_llm=planner_llm if planner_llm is not None else FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
         code_generator=code_generator if code_generator is not None else FakeCodeGenerator(),
         code_reviewer=code_reviewer if code_reviewer is not None else FakeCodeReviewer(),
@@ -443,7 +496,7 @@ def test_build_graph_requires_every_runtime_adapter() -> None:
 
 def test_structured_output_models_describe_all_llm_fields() -> None:
     """Structured LLM schemas carry field descriptions for better model guidance."""
-    structured_output_models = [Classification, PlannerOutput, RetrievalRequest]
+    structured_output_models = [Classification, ShapeClassification, QueryVariants, PlannerOutput, RetrievalRequest]
 
     for model in structured_output_models:
         properties = model.model_json_schema()["properties"]
@@ -460,49 +513,63 @@ def test_graph_routes_code_generation_intent_to_the_code_generation_branch() -> 
     assert final["intent"] == "code_generation"
     assert final["trace"][0] == "classify"
     assert "plan" in final["trace"]
-    assert "retrieve" not in final["trace"]
+    assert "analyzing" not in final["trace"]
+    assert "simple_rag" not in final["trace"]
 
 
-def test_graph_routes_repository_question_intent_to_the_retrieval_branch() -> None:
-    """A repository-question classification skips planning and retrieves first."""
+def test_graph_routes_repository_question_intent_to_the_analyzing_branch() -> None:
+    """A repository-question classification skips planning and analyzes the Question Shape first."""
     graph = _build(FakeClassifierLLM("repository_question"))
 
     final = graph.invoke({"question": "how does the auth module work?", "repository_id": uuid.uuid4()}, config=_config())
 
     assert final["intent"] == "repository_question"
-    assert final["trace"][:2] == ["classify", "retrieve"]
+    assert final["trace"][:2] == ["classify", "analyzing"]
 
 
 def test_classifier_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
     """A transient primary classifier failure re-runs classification on the default-tier fallback provider."""
     repository_id = uuid.uuid4()
     primary = DirectStructuredLLM(error=_anthropic_status_error(429), model_name="gpt-4o-mini")
-    fallback = DirectStructuredLLM(output=Classification(intent="repository_question"), model_name="claude-haiku-4-5")
+    fallback = DirectStructuredLLM(
+        outputs={Classification: Classification(intent="repository_question"), ShapeClassification: ShapeClassification(shape="simple")},
+        model_name="claude-haiku-4-5",
+    )
     retriever = FakeRetriever([_source(repository_id, "app/service.py", "def answer(): ...")])
-    graph = _build(primary, default_fallback_llm=fallback, retriever=retriever, llm=FakeGeneratorLLM(("ok",)))
+    graph = _build(primary, default_fallback_llm=fallback, retriever=retriever, llm=FakeSimpleRagLLM(tokens=("ok",)))
 
     final = graph.invoke({"question": "how does this work?", "repository_id": repository_id}, config=_config())
 
     assert final["intent"] == "repository_question"
     assert final["answer"] == "ok"
-    assert fallback.invoke_calls == 1
+    # Both the intent classifier and the Question Shape classifier fell over to the fallback provider.
+    assert fallback.invoke_calls == 2
 
 
 def test_uncertain_classification_falls_back_to_the_repository_question_branch() -> None:
-    """When the classifier cannot commit, the graph takes the read-only branch."""
+    """When the classifier cannot commit, the graph takes the read-only branch and the simple shape."""
     graph = _build(UncertainClassifierLLM())
 
     final = graph.invoke({"question": "do something ambiguous", "repository_id": uuid.uuid4()}, config=_config())
 
     assert final["intent"] == "repository_question"
-    assert final["trace"][:2] == ["classify", "retrieve"]
+    assert final["question_shape"] == "simple"
+    assert final["trace"][:2] == ["classify", "analyzing"]
 
 
 # ── repository_question branch ────────────────────────────────────
 
 
-def test_repository_question_branch_answers_from_retrieved_documents() -> None:
-    """The retrieve → generate branch grounds an answer and emits de-duplicated citations."""
+def _shape_classifier(shape: str = "simple", *, model_name: str = "gpt-4o-mini") -> "DirectStructuredLLM":
+    """A direct-provider classifier answering both Request Intent and Question Shape."""
+    return DirectStructuredLLM(
+        outputs={Classification: Classification(intent="repository_question"), ShapeClassification: ShapeClassification(shape=shape)},
+        model_name=model_name,
+    )
+
+
+def test_simple_rag_answers_a_simple_question_with_multi_query_fusion_and_dedup_citations() -> None:
+    """A ``simple`` question reformulates into variants, fusion-retrieves against the original, and answers with de-duplicated citations."""
     repository_id = uuid.uuid4()
     retriever = FakeRetriever(
         [
@@ -511,24 +578,58 @@ def test_repository_question_branch_answers_from_retrieved_documents() -> None:
             _source(repository_id, "app/login.py", "login code"),
         ]
     )
-    graph = _build(FakeClassifierLLM("repository_question"), retriever=retriever, llm=FakeGeneratorLLM(("the ", "answer")))
+    llm = FakeSimpleRagLLM(variants=("auth flow", "login handling", "session tokens"), tokens=("the ", "answer"))
+    graph = _build(FakeClassifierLLM("repository_question", shape="simple"), retriever=retriever, llm=llm)
 
     final = graph.invoke({"question": "how is auth tested?", "repository_id": repository_id}, config=_config())
 
-    assert retriever.calls[-1][0] == "how is auth tested?"
-    assert retriever.calls[-1][1]["repository_id"] == repository_id
+    # The generated variants are fusion-retrieved against the original question under the session Repository.
+    variants, kwargs = retriever.fusion_calls[-1]
+    assert variants == ["auth flow", "login handling", "session tokens"]
+    assert kwargs["original_query"] == "how is auth tested?"
+    assert kwargs["repository_id"] == repository_id
+    assert final["question_shape"] == "simple"
+    assert final["trace"][-1] == "simple_rag"
     assert final["answer"] == "the answer"
     assert final["citations"] == [Citation(source="app/auth.py"), Citation(source="app/login.py")]
 
 
-def test_repository_question_answerer_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
+def test_simple_rag_caps_and_dedupes_query_variants_to_the_configured_count() -> None:
+    """A verbose or duplicated variant response is de-duplicated and trimmed before retrieval (one search per variant)."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    # Five items with a duplicate; QUERY_VARIANT_COUNT defaults to 3.
+    llm = FakeSimpleRagLLM(variants=("alpha", "alpha", "beta", "gamma", "delta"), tokens=("a",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="simple"), retriever=retriever, llm=llm)
+
+    graph.invoke({"question": "how?", "repository_id": repository_id}, config=_config())
+
+    variants, _ = retriever.fusion_calls[-1]
+    assert variants == ["alpha", "beta", "gamma"]
+
+
+def test_independent_and_chained_shapes_route_to_simple_rag_for_now() -> None:
+    """``independent`` and ``chained`` are recognized but route to ``simple_rag`` until their slices land."""
+    for shape in ("independent", "chained"):
+        repository_id = uuid.uuid4()
+        retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+        graph = _build(FakeClassifierLLM("repository_question", shape=shape), retriever=retriever, llm=FakeSimpleRagLLM(tokens=("a",)))
+
+        final = graph.invoke({"question": "two things and then a third", "repository_id": repository_id}, config=_config())
+
+        assert final["question_shape"] == shape
+        assert final["trace"][-1] == "simple_rag"
+        assert retriever.fusion_calls  # routed through the multi-query fusion strategy
+        assert final["answer"] == "a"
+
+
+def test_simple_rag_answerer_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
     """A transient primary answer-stream failure resumes answer generation on the default-tier fallback provider."""
     repository_id = uuid.uuid4()
     retriever = FakeRetriever([_source(repository_id, "app/auth.py", "auth code")])
     primary = DirectStructuredLLM(stream_error=_anthropic_status_error(429), model_name="gpt-4o-mini")
     fallback = DirectStructuredLLM(stream_tokens=("fallback ", "answer"), model_name="claude-haiku-4-5")
-    classifier = DirectStructuredLLM(output=Classification(intent="repository_question"), model_name="gpt-4o-mini")
-    graph = _build(classifier, default_fallback_llm=fallback, retriever=retriever, llm=primary)
+    graph = _build(_shape_classifier(), default_fallback_llm=fallback, retriever=retriever, llm=primary)
 
     final = graph.invoke({"question": "how is auth tested?", "repository_id": repository_id}, config=_config())
 
@@ -537,14 +638,13 @@ def test_repository_question_answerer_falls_over_to_the_default_fallback_on_a_tr
     assert fallback.stream_calls == 1
 
 
-def test_repository_question_answerer_fails_fast_on_a_deterministic_error() -> None:
+def test_simple_rag_answerer_fails_fast_on_a_deterministic_error() -> None:
     """A deterministic answer-stream failure does not invoke the default-tier fallback provider."""
     repository_id = uuid.uuid4()
     retriever = FakeRetriever([_source(repository_id, "app/auth.py", "auth code")])
     primary = DirectStructuredLLM(stream_error=_anthropic_status_error(400), model_name="gpt-4o-mini")
     fallback = DirectStructuredLLM(stream_tokens=("unused",), model_name="claude-haiku-4-5")
-    classifier = DirectStructuredLLM(output=Classification(intent="repository_question"), model_name="gpt-4o-mini")
-    graph = _build(classifier, default_fallback_llm=fallback, retriever=retriever, llm=primary)
+    graph = _build(_shape_classifier(), default_fallback_llm=fallback, retriever=retriever, llm=primary)
 
     with pytest.raises(anthropic.APIStatusError):
         graph.invoke({"question": "how is auth tested?", "repository_id": repository_id}, config=_config())
@@ -552,10 +652,10 @@ def test_repository_question_answerer_fails_fast_on_a_deterministic_error() -> N
     assert fallback.stream_calls == 0
 
 
-def test_repository_question_branch_reports_insufficient_documents_without_calling_the_model() -> None:
-    """Empty Repository Documents yields a deterministic answer and never streams the model."""
+def test_simple_rag_reports_insufficient_documents_without_calling_the_model() -> None:
+    """An empty fused retrieval yields the deterministic answer and never streams the model."""
     repository_id = uuid.uuid4()
-    llm = FakeGeneratorLLM(("unused",))
+    llm = FakeSimpleRagLLM(tokens=("unused",))
     graph = _build(FakeClassifierLLM("repository_question"), retriever=FakeRetriever([]), llm=llm)
 
     final = graph.invoke({"question": "anything", "repository_id": repository_id}, config=_config())
@@ -563,6 +663,40 @@ def test_repository_question_branch_reports_insufficient_documents_without_calli
     assert final["answer"] == INSUFFICIENT_DOCUMENTS_ANSWER
     assert final["citations"] == []
     assert llm.stream_calls == []
+
+
+def test_analyzing_classifier_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
+    """A transient Question Shape classifier failure re-infers the shape on the default-tier fallback provider."""
+    repository_id = uuid.uuid4()
+    # The primary classifies intent fine but fails transiently on the Question Shape call.
+    primary = DirectStructuredLLM(
+        outputs={Classification: Classification(intent="repository_question"), ShapeClassification: _anthropic_status_error(429)},
+        model_name="gpt-4o-mini",
+    )
+    fallback = DirectStructuredLLM(outputs={ShapeClassification: ShapeClassification(shape="simple")}, model_name="claude-haiku-4-5")
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    graph = _build(primary, default_fallback_llm=fallback, retriever=retriever, llm=FakeSimpleRagLLM(tokens=("ok",)))
+
+    final = graph.invoke({"question": "how?", "repository_id": repository_id}, config=_config())
+
+    assert final["question_shape"] == "simple"
+    assert final["answer"] == "ok"
+
+
+def test_analyzing_classifier_fails_fast_on_a_deterministic_error() -> None:
+    """A deterministic Question Shape classifier failure does not burn a fallback provider call."""
+    repository_id = uuid.uuid4()
+    primary = DirectStructuredLLM(
+        outputs={Classification: Classification(intent="repository_question"), ShapeClassification: _anthropic_status_error(400)},
+        model_name="gpt-4o-mini",
+    )
+    fallback = DirectStructuredLLM(outputs={ShapeClassification: ShapeClassification(shape="simple")}, model_name="claude-haiku-4-5")
+    graph = _build(primary, default_fallback_llm=fallback, retriever=FakeRetriever([_source(repository_id, "a.py", "x")]), llm=FakeSimpleRagLLM())
+
+    with pytest.raises(anthropic.APIStatusError):
+        graph.invoke({"question": "how?", "repository_id": repository_id}, config=_config())
+
+    assert fallback.invoke_calls == 0
 
 
 # ── code_generation branch: planning ──────────────────────────────
@@ -866,7 +1000,7 @@ def test_repository_question_never_reaches_the_web_search_generator() -> None:
     graph = _build(
         FakeClassifierLLM("repository_question"),
         retriever=FakeRetriever([_source(repository_id, "app/a.py", "x")]),
-        llm=FakeGeneratorLLM(("a",)),
+        llm=FakeSimpleRagLLM(tokens=("a",)),
         code_generator=generator,
     )
 
@@ -1691,7 +1825,7 @@ def test_revision_resets_prior_generated_patch_before_writing_revised_files(tmp_
         classifier_llm=FakeClassifierLLM("code_generation"),
         default_fallback_llm=DirectStructuredLLM(model_name="claude-haiku-4-5"),
         retriever=FakeRetriever(),
-        llm=FakeGeneratorLLM(),
+        llm=FakeSimpleRagLLM(),
         planner_llm=FakePlannerLLM(PlannerOutput(in_scope=True, retrieval_requests=[])),
         code_generator=generator,
         code_reviewer=reviewer,
@@ -2105,10 +2239,10 @@ def test_code_generation_stream_emits_ordered_stage_and_run_markers(tmp_path) ->
 
 
 def test_repository_question_stream_emits_ordered_stage_markers() -> None:
-    """Repository-question progress is classifying → retrieving → generating."""
+    """Repository-question progress is classifying → analyzing → retrieving → generating."""
     repository_id = uuid.uuid4()
-    graph = _build(FakeClassifierLLM("repository_question"), retriever=FakeRetriever([_source(repository_id, "app/a.py", "x")]), llm=FakeGeneratorLLM(("a",)))
+    graph = _build(FakeClassifierLLM("repository_question"), retriever=FakeRetriever([_source(repository_id, "app/a.py", "x")]), llm=FakeSimpleRagLLM(tokens=("a",)))
 
     events = _custom_events(graph, {"question": "how?", "repository_id": repository_id})
 
-    assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "retrieving", "generating"]
+    assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "analyzing", "retrieving", "generating"]

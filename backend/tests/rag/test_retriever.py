@@ -12,6 +12,7 @@ from app.core.errors.rag_errors import RetrieverError
 from app.db.models import RepositoryDocument
 from app.integrations.weaviate import WeaviateResources
 from app.rag import DocumentRetriever
+from app.rag.retriever import reciprocal_rank_fusion
 
 
 class FakeTenants:
@@ -256,6 +257,93 @@ def test_retrieve_documents_returns_empty_when_candidates_or_reranking_are_empty
 
     assert no_reranks_retriever.retrieve_documents("find behavior", repository_id=repository_id, k=10, alpha=0.5, parent_limit=2) == []
     assert used_reranker.call == ([candidate], "find behavior")
+
+
+# ── Reciprocal Rank Fusion (pure helper) ──────────────────────────
+
+
+class QueryVectorStore:
+    """Return scored hybrid results keyed by the search query, recording every query."""
+
+    def __init__(self, by_query) -> None:
+        self.by_query = by_query
+        self.queries = []
+
+    def similarity_search_with_score(self, query, **kwargs):
+        self.queries.append(query)
+        return self.by_query.get(query, [])
+
+
+def _fusion_retriever(by_query, *, reranked_documents=None, repository_documents=()):
+    """Build a retriever whose hybrid search answers per-query, for fusion tests."""
+    tenant = "player-123"
+    collection = FakeCollection([tenant])
+    vector_store = QueryVectorStore(by_query)
+    resources = WeaviateResources(FakeClient(collection), vector_store)
+    reranker = FakeReranker(reranked_documents)
+    store = FakeRepositoryDocumentStore(repository_documents)
+    return DocumentRetriever(resources, tenant, store, reranker), vector_store, reranker
+
+
+def test_fusion_retrieve_runs_raw_search_per_variant_then_one_rerank_against_the_original() -> None:
+    """Each variant runs raw hybrid search; the fused pool is reranked once against the original question."""
+    repository_id = uuid.uuid4()
+    parent_shared = RepositoryDocument(repository_id=repository_id, content="shared file", doc_metadata={"source": "shared.py"})
+    parent_a = RepositoryDocument(repository_id=repository_id, content="a file", doc_metadata={"source": "a.py"})
+    parent_b = RepositoryDocument(repository_id=repository_id, content="b file", doc_metadata={"source": "b.py"})
+    shared = Document(page_content="shared chunk", metadata={"parent_id": str(parent_shared.id)})
+    chunk_a = Document(page_content="a chunk", metadata={"parent_id": str(parent_a.id)})
+    chunk_b = Document(page_content="b chunk", metadata={"parent_id": str(parent_b.id)})
+    by_query = {"variant one": [(shared, 0.9), (chunk_a, 0.8)], "variant two": [(chunk_b, 0.9), (shared, 0.7)]}
+    retriever, vector_store, reranker = _fusion_retriever(by_query, repository_documents=[parent_shared, parent_a, parent_b])
+
+    documents = retriever.fusion_retrieve_documents(
+        ["variant one", "variant two"], original_query="orig", repository_id=repository_id, k=10, alpha=0.5, parent_limit=3, rrf_k=60
+    )
+
+    # Raw hybrid search ran once per variant — not once per variant through the reranker.
+    assert vector_store.queries == ["variant one", "variant two"]
+    # A single rerank call scored the RRF-fused pool against the ORIGINAL question.
+    fused_pool, rerank_query = reranker.call
+    assert rerank_query == "orig"
+    assert [chunk.page_content for chunk in fused_pool] == ["shared chunk", "b chunk", "a chunk"]
+    # The reranked order (FakeReranker reverses) drives which parents are hydrated.
+    assert [document.doc_metadata["source"] for document in documents] == ["a.py", "b.py", "shared.py"]
+
+
+def test_fusion_retrieve_returns_empty_without_reranking_when_no_variant_finds_anything() -> None:
+    """An empty fused pool yields no documents and never reaches the reranker."""
+    retriever, _, reranker = _fusion_retriever({}, repository_documents=[])
+
+    documents = retriever.fusion_retrieve_documents(
+        ["nothing", "here"], original_query="orig", repository_id=uuid.uuid4(), k=10, alpha=0.5, parent_limit=3, rrf_k=60
+    )
+
+    assert documents == []
+    assert reranker.call is None
+
+
+def test_rrf_ranks_a_chunk_surfacing_across_variants_above_singletons() -> None:
+    """A chunk found by several query variants outranks chunks each found by only one."""
+    shared = Document(page_content="shared chunk")
+    only_first = Document(page_content="only in first")
+    only_second = Document(page_content="only in second")
+
+    fused = reciprocal_rank_fusion([[shared, only_first], [only_second, shared]], k=60)
+
+    # ``shared`` accrues 1/(60+1) + 1/(60+2); each singleton accrues only one term.
+    assert [document.page_content for document in fused] == ["shared chunk", "only in second", "only in first"]
+
+
+def test_rrf_keeps_identical_text_chunks_from_different_parents_distinct() -> None:
+    """Two chunks with the same text but different parents are not collapsed into one candidate."""
+    first = Document(page_content="boilerplate header", metadata={"parent_id": "parent-1"})
+    second = Document(page_content="boilerplate header", metadata={"parent_id": "parent-2"})
+
+    fused = reciprocal_rank_fusion([[first], [second]], k=60)
+
+    assert len(fused) == 2
+    assert {document.metadata["parent_id"] for document in fused} == {"parent-1", "parent-2"}
 
 
 def test_stats_returns_repository_chunk_and_source_counts() -> None:

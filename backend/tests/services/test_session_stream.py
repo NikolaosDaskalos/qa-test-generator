@@ -100,9 +100,10 @@ def test_stream_session_passes_through_events_and_persists_repository_answer():
     service, session_store, repository_session = _wiring(user)
     items = [
         ("custom", Stage(stage="classifying")),
+        ("custom", Stage(stage="analyzing")),
         ("custom", Stage(stage="retrieving")),
         ("custom", Stage(stage="generating")),
-        ("messages", (_Msg("hello"), {"langgraph_node": "generate"})),
+        ("messages", (_Msg("hello"), {"langgraph_node": "simple_rag"})),
     ]
     final = {"intent": "repository_question", "answer": "hello", "citations": [Citation(source="app/a.py")]}
     graph = FakeGraph(items, final)

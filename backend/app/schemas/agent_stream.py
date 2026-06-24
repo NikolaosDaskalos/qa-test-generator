@@ -35,7 +35,7 @@ class Stage(BaseModel):
     """Ordered progress marker for a Repository question or Code Generation Task."""
 
     type: Literal["stage"] = "stage"
-    stage: Literal["classifying", "planning", "retrieving", "researching", "generating", "reviewing", "revising", "re_reviewing"]
+    stage: Literal["classifying", "analyzing", "planning", "retrieving", "researching", "generating", "reviewing", "revising", "re_reviewing"]
 
 
 class Token(BaseModel):
