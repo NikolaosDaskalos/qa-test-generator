@@ -35,6 +35,18 @@ def generate_grounded_answer(answer_llm, *, question: str, documents) -> dict:
 
     context = format_repository_documents(documents)
     messages = [SystemMessage(content=f"{QA_SYSTEM_PROMPT}\n\nContext:\n{context}"), HumanMessage(content=question)]
+    return stream_and_cite(answer_llm, messages=messages, documents=documents)
+
+
+def stream_and_cite(answer_llm, *, messages, documents) -> dict:
+    """Stream a final answer from ``messages``, collecting its text and de-duplicated citations.
+
+    The shared streaming/citation core every Question Shape strategy reuses: the token
+    chunks ride LangGraph's ``messages`` stream while the full text is collected, and the
+    citations are projected from the de-duplicated parent sources of ``documents``. The
+    caller owns the Stage marker (``generating`` for a single grounded answer,
+    ``synthesizing`` for a decomposed one) and the message construction.
+    """
     collected = ""
     for chunk in answer_llm.stream(messages):
         token = getattr(chunk, "content", "") or ""

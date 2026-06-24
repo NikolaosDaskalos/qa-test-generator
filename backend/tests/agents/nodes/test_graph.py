@@ -19,7 +19,7 @@ from app.agents import Classification, build_graph
 from app.agents.nodes.code_generation import NO_CHANGES_MESSAGE, build_review_patch_node
 from app.agents.nodes.generation import INSUFFICIENT_DOCUMENTS_ANSWER
 from app.agents.nodes.planner import PlannerOutput
-from app.agents.nodes.repository_question import QueryVariants, ShapeClassification
+from app.agents.nodes.repository_question import QueryVariants, ShapeClassification, SubQuestions
 from app.services.coding_runs.review_policy import ReviewPolicy
 from app.core.errors.git_errors import GitError
 from app.core.errors.github_errors import GitHubError
@@ -41,6 +41,7 @@ from app.schemas import (
     RunRejected,
     RunStarted,
     Stage,
+    Token,
 )
 from app.services.coding_runs.workspace import LocalGitWorkspace
 
@@ -150,6 +151,47 @@ class _FixedVariants:
         return QueryVariants(variants=list(self._parent._variants))
 
 
+class FakeDecomposeLLM:
+    """An LLM for ``decompose_parallel``: fixed sub-questions, batched sub-answers, streamed synthesis.
+
+    ``with_structured_output`` yields the fixed sub-questions; ``batch`` answers every
+    sub-question in one recorded call (never streamed); ``stream`` streams the fixed
+    synthesis tokens (the only tokens a client should see).
+    """
+
+    def __init__(self, *, sub_questions=("sub a", "sub b"), sub_answers=None, tokens=("synth",)) -> None:
+        self._sub_questions = list(sub_questions)
+        self._sub_answers = list(sub_answers) if sub_answers is not None else [f"answer to {question}" for question in sub_questions]
+        self._tokens = tokens
+        self.decompose_calls = []
+        self.batch_calls = []
+        self.stream_calls = []
+
+    def with_structured_output(self, _schema):
+        return _FixedSubQuestions(self)
+
+    def batch(self, inputs, config=None, **kwargs):
+        # One sub-answer per batched input, mirroring a real model's batch contract.
+        self.batch_calls.append(inputs)
+        return [_Chunk(self._sub_answers[index] if index < len(self._sub_answers) else "") for index in range(len(inputs))]
+
+    def stream(self, messages, config=None):
+        self.stream_calls.append(messages)
+        for token in self._tokens:
+            yield _Chunk(token)
+
+
+class _FixedSubQuestions:
+    """Structured runnable returning the parent fake's fixed sub-questions."""
+
+    def __init__(self, parent: "FakeDecomposeLLM") -> None:
+        self._parent = parent
+
+    def invoke(self, messages, config=None):
+        self._parent.decompose_calls.append(messages)
+        return SubQuestions(sub_questions=list(self._parent._sub_questions))
+
+
 class QueryRetriever:
     """Return documents keyed by the retrieval query, recording every call."""
 
@@ -178,15 +220,20 @@ class FakePlannerLLM:
 class DirectStructuredLLM(Runnable):
     """A structured-output and streaming chat model fake for direct fallback behavior."""
 
-    def __init__(self, *, output=None, outputs=None, error=None, stream_tokens=(), stream_error=None, model_name: str = "model") -> None:
+    def __init__(
+        self, *, output=None, outputs=None, error=None, stream_tokens=(), stream_error=None, batch_chunks=(), batch_error=None, model_name: str = "model"
+    ) -> None:
         self._output = output
         self._outputs = outputs or {}
         self._error = error
         self._stream_tokens = stream_tokens
         self._stream_error = stream_error
+        self._batch_chunks = batch_chunks
+        self._batch_error = batch_error
         self.model_name = model_name
         self.invoke_calls = 0
         self.stream_calls = 0
+        self.batch_calls = 0
 
     def with_structured_output(self, schema):
         output = self._outputs.get(schema, self._output)
@@ -201,6 +248,12 @@ class DirectStructuredLLM(Runnable):
             raise self._stream_error
         for token in self._stream_tokens:
             yield _Chunk(token)
+
+    def batch(self, inputs, config=None, **kwargs):
+        self.batch_calls += 1
+        if self._batch_error is not None:
+            raise self._batch_error
+        return [_Chunk(chunk) for chunk in self._batch_chunks]
 
 
 class _DirectStructuredRunnable(Runnable):
@@ -496,7 +549,7 @@ def test_build_graph_requires_every_runtime_adapter() -> None:
 
 def test_structured_output_models_describe_all_llm_fields() -> None:
     """Structured LLM schemas carry field descriptions for better model guidance."""
-    structured_output_models = [Classification, ShapeClassification, QueryVariants, PlannerOutput, RetrievalRequest]
+    structured_output_models = [Classification, ShapeClassification, QueryVariants, SubQuestions, PlannerOutput, RetrievalRequest]
 
     for model in structured_output_models:
         properties = model.model_json_schema()["properties"]
@@ -608,19 +661,213 @@ def test_simple_rag_caps_and_dedupes_query_variants_to_the_configured_count() ->
     assert variants == ["alpha", "beta", "gamma"]
 
 
-def test_independent_and_chained_shapes_route_to_simple_rag_for_now() -> None:
-    """``independent`` and ``chained`` are recognized but route to ``simple_rag`` until their slices land."""
-    for shape in ("independent", "chained"):
-        repository_id = uuid.uuid4()
-        retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
-        graph = _build(FakeClassifierLLM("repository_question", shape=shape), retriever=retriever, llm=FakeSimpleRagLLM(tokens=("a",)))
+def test_chained_shape_routes_to_simple_rag_for_now() -> None:
+    """``chained`` is recognized but routes to ``simple_rag`` until its own slice lands."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=FakeSimpleRagLLM(tokens=("a",)))
 
-        final = graph.invoke({"question": "two things and then a third", "repository_id": repository_id}, config=_config())
+    final = graph.invoke({"question": "two things and then a third", "repository_id": repository_id}, config=_config())
 
-        assert final["question_shape"] == shape
-        assert final["trace"][-1] == "simple_rag"
-        assert retriever.fusion_calls  # routed through the multi-query fusion strategy
-        assert final["answer"] == "a"
+    assert final["question_shape"] == "chained"
+    assert final["trace"][-1] == "simple_rag"
+    assert retriever.fusion_calls  # routed through the multi-query fusion strategy
+    assert final["answer"] == "a"
+
+
+def test_independent_question_decomposes_retrieves_and_synthesizes_one_answer() -> None:
+    """An ``independent`` question routes to ``decompose_parallel`` and streams one synthesized answer with citations."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    llm = FakeDecomposeLLM(sub_questions=("what is x", "what is y"), tokens=("the ", "answer"))
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), retriever=retriever, llm=llm)
+
+    final = graph.invoke({"question": "explain x and y", "repository_id": repository_id}, config=_config())
+
+    assert final["question_shape"] == "independent"
+    assert final["trace"][-1] == "decompose_parallel"
+    assert final["answer"] == "the answer"
+    assert final["citations"] == [Citation(source="app/a.py")]
+
+
+def test_decompose_parallel_retrieves_each_sub_question_with_single_query_retrieval() -> None:
+    """Each sub-question runs the existing single-query hybrid+rerank retrieval once, under the session Repository."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever(
+        {
+            "how does login work": [_source(repository_id, "app/auth.py", "auth")],
+            "how are sessions stored": [_source(repository_id, "app/session.py", "session")],
+        }
+    )
+    llm = FakeDecomposeLLM(sub_questions=("how does login work", "how are sessions stored"), tokens=("ok",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), retriever=retriever, llm=llm)
+
+    graph.invoke({"question": "login and sessions?", "repository_id": repository_id}, config=_config())
+
+    assert [query for query, _ in retriever.calls] == ["how does login work", "how are sessions stored"]
+    assert all(kwargs["repository_id"] == repository_id for _, kwargs in retriever.calls)
+    # Single-query retrieval (not the multi-query fusion path) is used per sub-question.
+    assert all("original_query" not in kwargs for _, kwargs in retriever.calls)
+
+
+def test_decompose_parallel_citations_are_the_deduplicated_union_across_sub_questions() -> None:
+    """The final citations are the de-duplicated union of parent sources across every sub-question retrieval."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever(
+        {
+            "q1": [_source(repository_id, "app/auth.py", "a"), _source(repository_id, "app/shared.py", "s")],
+            "q2": [_source(repository_id, "app/session.py", "x"), _source(repository_id, "app/shared.py", "s2")],
+        }
+    )
+    llm = FakeDecomposeLLM(sub_questions=("q1", "q2"), tokens=("ok",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), retriever=retriever, llm=llm)
+
+    final = graph.invoke({"question": "compound", "repository_id": repository_id}, config=_config())
+
+    # app/shared.py surfaced under both sub-questions but is cited once, in first-seen order.
+    assert final["citations"] == [Citation(source="app/auth.py"), Citation(source="app/shared.py"), Citation(source="app/session.py")]
+
+
+def test_decompose_parallel_streams_only_the_synthesis_not_the_sub_answers() -> None:
+    """Sub-answers come from one batched call (never streamed); only the synthesized answer is streamed."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever({"q1": [_source(repository_id, "app/a.py", "a")], "q2": [_source(repository_id, "app/b.py", "b")]})
+    llm = FakeDecomposeLLM(sub_questions=("q1", "q2"), sub_answers=("sub-ans-1", "sub-ans-2"), tokens=("final ", "synthesis"))
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), retriever=retriever, llm=llm)
+
+    final = graph.invoke({"question": "compound", "repository_id": repository_id}, config=_config())
+
+    # The sub-answers were produced in exactly one batched call over both sub-questions.
+    assert len(llm.batch_calls) == 1
+    assert len(llm.batch_calls[0]) == 2
+    # Only the synthesized answer is streamed (one stream call), and the sub-answers never leak into it.
+    assert len(llm.stream_calls) == 1
+    assert final["answer"] == "final synthesis"
+    assert "sub-ans-1" not in final["answer"] and "sub-ans-2" not in final["answer"]
+
+
+def test_decompose_parallel_caps_and_dedupes_sub_questions_to_the_configured_maximum() -> None:
+    """A sprawling or duplicated decomposition is de-duplicated and trimmed to MAX_SUB_QUESTIONS (one retrieval each)."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever({f"sq{index}": [_source(repository_id, f"app/{index}.py", "c")] for index in range(1, 6)})
+    # MAX_SUB_QUESTIONS defaults to 3; the model returns five with a duplicate.
+    llm = FakeDecomposeLLM(sub_questions=("sq1", "sq1", "sq2", "sq3", "sq4"), tokens=("a",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), retriever=retriever, llm=llm)
+
+    graph.invoke({"question": "many things at once", "repository_id": repository_id}, config=_config())
+
+    assert [query for query, _ in retriever.calls] == ["sq1", "sq2", "sq3"]
+    assert len(llm.batch_calls[0]) == 3
+
+
+def test_decompose_parallel_reports_insufficient_documents_when_every_sub_question_is_empty() -> None:
+    """When no sub-question retrieves anything, the deterministic insufficient answer is returned without any model call."""
+    repository_id = uuid.uuid4()
+    llm = FakeDecomposeLLM(sub_questions=("q1", "q2"), tokens=("unused",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), retriever=FakeRetriever([]), llm=llm)
+
+    final = graph.invoke({"question": "x and y", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == INSUFFICIENT_DOCUMENTS_ANSWER
+    assert final["citations"] == []
+    assert llm.batch_calls == []
+    assert llm.stream_calls == []
+
+
+def test_decompose_parallel_synthesizes_from_partial_retrieval_and_keeps_only_found_citations() -> None:
+    """When only some sub-questions retrieve documents, synthesis answers from what was found; citations span only found sources."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever({"q1": [_source(repository_id, "app/a.py", "a")]})  # q2 retrieves nothing
+    llm = FakeDecomposeLLM(sub_questions=("q1", "q2"), sub_answers=("found it", "context did not cover this"), tokens=("partial ", "answer"))
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), retriever=retriever, llm=llm)
+
+    final = graph.invoke({"question": "compound", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == "partial answer"
+    assert final["citations"] == [Citation(source="app/a.py")]
+    # Both sub-questions are still answered in the single batched call; the empty one states its gap.
+    assert len(llm.batch_calls[0]) == 2
+
+
+def test_decompose_parallel_stream_emits_ordered_stage_markers() -> None:
+    """Independent-question progress is classifying → analyzing → decomposing → synthesizing."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "x")])
+    llm = FakeDecomposeLLM(sub_questions=("q1", "q2"), tokens=("a",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), retriever=retriever, llm=llm)
+
+    events = _custom_events(graph, {"question": "how?", "repository_id": repository_id})
+
+    assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "analyzing", "decomposing", "synthesizing"]
+
+
+def test_decompose_parallel_decomposition_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
+    """A transient decomposition failure re-runs the split on the default-tier fallback provider; later calls stay on the primary."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    primary = DirectStructuredLLM(
+        outputs={SubQuestions: _anthropic_status_error(429)}, batch_chunks=("sub1", "sub2"), stream_tokens=("synth",), model_name="gpt-4o-mini"
+    )
+    fallback = DirectStructuredLLM(outputs={SubQuestions: SubQuestions(sub_questions=["a", "b"])}, model_name="claude-haiku-4-5")
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    final = graph.invoke({"question": "a and b", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == "synth"
+    # Only the decomposition fell over; the batched sub-answers and synthesis stayed on the primary.
+    assert fallback.invoke_calls == 1
+    assert primary.batch_calls == 1
+    assert primary.stream_calls == 1
+
+
+def test_decompose_parallel_sub_answers_fall_over_to_the_default_fallback_on_a_transient_error() -> None:
+    """A transient failure of the batched sub-answer call re-runs the whole batch on the default-tier fallback provider."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    primary = DirectStructuredLLM(
+        outputs={SubQuestions: SubQuestions(sub_questions=["a", "b"])}, batch_error=_anthropic_status_error(429), stream_tokens=("synth",), model_name="gpt-4o-mini"
+    )
+    fallback = DirectStructuredLLM(batch_chunks=("sub1", "sub2"), model_name="claude-haiku-4-5")
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    final = graph.invoke({"question": "a and b", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == "synth"
+    assert primary.batch_calls == 1
+    assert fallback.batch_calls == 1
+
+
+def test_decompose_parallel_synthesis_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
+    """A transient synthesis-stream failure resumes the streamed answer on the default-tier fallback provider."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    primary = DirectStructuredLLM(
+        outputs={SubQuestions: SubQuestions(sub_questions=["a", "b"])}, batch_chunks=("sub1", "sub2"), stream_error=_anthropic_status_error(429), model_name="gpt-4o-mini"
+    )
+    fallback = DirectStructuredLLM(stream_tokens=("fallback ", "answer"), model_name="claude-haiku-4-5")
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    final = graph.invoke({"question": "a and b", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == "fallback answer"
+    assert final["citations"] == [Citation(source="app/a.py")]
+    assert fallback.stream_calls == 1
+
+
+def test_decompose_parallel_synthesis_fails_fast_on_a_deterministic_error() -> None:
+    """A deterministic synthesis-stream failure does not burn a fallback provider call."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    primary = DirectStructuredLLM(
+        outputs={SubQuestions: SubQuestions(sub_questions=["a", "b"])}, batch_chunks=("sub1", "sub2"), stream_error=_anthropic_status_error(400), model_name="gpt-4o-mini"
+    )
+    fallback = DirectStructuredLLM(stream_tokens=("unused",), model_name="claude-haiku-4-5")
+    graph = _build(FakeClassifierLLM("repository_question", shape="independent"), default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    with pytest.raises(anthropic.APIStatusError):
+        graph.invoke({"question": "a and b", "repository_id": repository_id}, config=_config())
+
+    assert fallback.stream_calls == 0
 
 
 def test_simple_rag_answerer_falls_over_to_the_default_fallback_on_a_transient_error() -> None:

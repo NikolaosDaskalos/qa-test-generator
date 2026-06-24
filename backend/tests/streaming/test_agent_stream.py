@@ -63,6 +63,20 @@ def test_message_chunks_from_non_answer_nodes_are_not_streamed_as_tokens() -> No
     assert events == [Token(content="visible answer")]
 
 
+def test_decompose_parallel_synthesis_chunks_become_tokens() -> None:
+    """The decompose_parallel node's synthesized answer streams as Tokens, just like simple_rag."""
+    items = [
+        ("custom", Stage(stage="decomposing")),
+        ("custom", Stage(stage="synthesizing")),
+        ("messages", (_Message("final "), {"langgraph_node": "decompose_parallel"})),
+        ("messages", (_Message("answer"), {"langgraph_node": "decompose_parallel"})),
+    ]
+
+    events = list(map_graph_stream(items))
+
+    assert events == [Stage(stage="decomposing"), Stage(stage="synthesizing"), Token(content="final "), Token(content="answer")]
+
+
 def test_to_sse_frames_serializes_typed_events_as_server_sent_frames() -> None:
     run_id = uuid.uuid4()
     events = [Stage(stage="planning"), RunStarted(coding_run_id=run_id)]

@@ -199,6 +199,9 @@ class Settings(BaseSettings):
     # reformulations to generate (N), and the Reciprocal Rank Fusion rank constant (k).
     QUERY_VARIANT_COUNT: int = Field(default=3, ge=1)
     RRF_K: int = Field(default=60, ge=1)
+    # Decomposition (independent/chained Question Shapes): the cap on how many sub-questions
+    # a compound question may split into, bounding the per-sub-question retrievals.
+    MAX_SUB_QUESTIONS: int = Field(default=3, ge=1)
     COHERE_RERANK_MODEL: str = "rerank-v4.0-pro"
 
     WEAVIATE_HTTP_HOST: str = "localhost"

@@ -102,6 +102,35 @@ class _TransientGuard(Runnable):
         except BaseException as exc:
             self._raise_for_fallback(exc)
 
+    def batch(self, direct_inputs: Any, config=None, *, return_exceptions: bool = False, **kwargs):
+        # Keep the batched call a single underlying ``batch`` (not N invokes). ``with_fallbacks``
+        # drives batch via ``return_exceptions=True`` and inspects each item, so transient
+        # provider errors are converted per-item to the marker it re-runs on the fallback; a
+        # deterministic error stays itself and fails fast. A model whose ``batch`` raises as a
+        # whole is fanned across the inputs so the same per-item handling applies.
+        try:
+            outputs = self._runnable.batch(direct_inputs, config, return_exceptions=True, **kwargs)
+        except BaseException as exc:
+            outputs = [exc] * len(direct_inputs)
+        converted = [self._as_fallback_marker(output) for output in outputs]
+        if return_exceptions:
+            return converted
+        for output in converted:
+            if isinstance(output, BaseException):
+                raise output
+        return converted
+
+    def _as_fallback_marker(self, output: Any) -> Any:
+        if isinstance(output, BaseException) and not isinstance(output, _TransientProviderError) and is_transient_llm_error(output):
+            logger.warning(
+                "LLM provider fallback firing primary=%s fallback=%s reason=%s",
+                self._primary_label,
+                self._fallback_label,
+                _reason(output),
+            )
+            return _TransientProviderError(str(output))
+        return output
+
     def _raise_for_fallback(self, exc: BaseException) -> None:
         if not is_transient_llm_error(exc):
             raise exc
