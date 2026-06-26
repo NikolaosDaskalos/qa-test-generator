@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from app.agents.fallback import model_label, with_provider_fallback
 from app.agents.nodes.generation import INSUFFICIENT_DOCUMENTS_ANSWER, generate_grounded_answer, stream_and_cite
 from app.core import settings
-from app.prompts.prompts import DECOMPOSE_PROMPT, MULTI_QUERY_PROMPT, SUB_ANSWER_PROMPT, SYNTHESIS_PROMPT
+from app.prompts.prompts import DECOMPOSE_CHAINED_PROMPT, DECOMPOSE_PROMPT, MULTI_QUERY_PROMPT, SUB_ANSWER_CHAINED_PROMPT, SUB_ANSWER_PROMPT, SYNTHESIS_PROMPT
 from app.prompts.rendering import format_repository_documents
 from app.schemas import Stage
 from app.streaming import emit
@@ -48,6 +48,15 @@ class SubQuestions(BaseModel):
     sub_questions: list[str] = Field(
         description="Independent, self-contained sub-questions that together cover the compound question; each must stand alone "
         "as a hybrid code-retrieval query and not depend on the answer to another."
+    )
+
+
+class ChainedSubQuestions(BaseModel):
+    """Structured output of recursive decomposition: the ordered, dependent sub-questions a multi-hop question splits into."""
+
+    sub_questions: list[str] = Field(
+        description="Ordered, dependent sub-questions that solve a multi-hop question step by step, in the sequence they must be "
+        "answered; the first must stand alone as a hybrid code-retrieval query and each later one builds on the answers before it."
     )
 
 
@@ -156,18 +165,8 @@ def build_decompose_parallel_node(retriever, llm, fallback_llm):
     def decompose_parallel(state) -> dict:
         emit(Stage(stage="decomposing"))
         question = state["question"]
-        repository_id = state["repository_id"]
         sub_questions = _decompose(decompose_llm, question)
-        retrievals = [
-            retriever.retrieve_documents(
-                sub_question,
-                repository_id=repository_id,
-                k=settings.TOP_K,
-                alpha=settings.HYBRID_SEARCH_ALPHA,
-                parent_limit=settings.FINAL_PARENT_LIMIT,
-            )
-            for sub_question in sub_questions
-        ]
+        retrievals = _retrieve_each(retriever, sub_questions, state["repository_id"])
         merged = _merge_documents(retrievals)
         if not merged:
             # Every sub-question retrieved nothing: report the limitation, never the model.
@@ -185,15 +184,66 @@ def build_decompose_parallel_node(retriever, llm, fallback_llm):
     return decompose_parallel
 
 
-def _decompose(decompose_llm, question: str) -> list[str]:
-    """Split a compound question into independent sub-questions, capped at the configured maximum.
+def build_decompose_recursive_node(retriever, llm, fallback_llm):
+    """Build the ``decompose_recursive`` strategy for ``chained`` questions.
 
-    The structured schema does not bound the list, so a verbose or prompt-influenced
-    response is de-duplicated and trimmed to ``MAX_SUB_QUESTIONS`` here — otherwise each
-    extra sub-question would cost another retrieval. Falls back to the original question
-    when the model yields nothing usable.
+    Splits a multi-hop message into ordered, dependent sub-questions (capped), retrieves for
+    each with the existing single-query hybrid+rerank retrieval, then answers them sequentially
+    (IRCoT-style): each sub-question is answered with the accumulated prior question/answer pairs
+    fed forward as context, so later steps build on earlier ones. A single synthesized final
+    answer then streams. Sub-questions and sub-answers stay node-local; only the synthesized
+    answer streams as tokens, and its citations are the de-duplicated union of parent sources
+    across every sub-question retrieval. Differs from ``decompose_parallel`` only in the recursive
+    control flow — sequential, cumulative context instead of one batched call.
     """
-    messages = [SystemMessage(content=DECOMPOSE_PROMPT.format(count=settings.MAX_SUB_QUESTIONS)), HumanMessage(content=question)]
+    decompose_llm = with_provider_fallback(
+        llm,
+        fallback_llm,
+        lambda model: model.with_structured_output(ChainedSubQuestions),
+        primary_label=model_label(llm),
+        fallback_label=model_label(fallback_llm),
+    )
+    answer_llm = with_provider_fallback(
+        llm,
+        fallback_llm,
+        lambda model: model,
+        primary_label=model_label(llm),
+        fallback_label=model_label(fallback_llm),
+    )
+
+    def decompose_recursive(state) -> dict:
+        emit(Stage(stage="decomposing"))
+        question = state["question"]
+        sub_questions = _decompose(decompose_llm, question, prompt=DECOMPOSE_CHAINED_PROMPT)
+        retrievals = _retrieve_each(retriever, sub_questions, state["repository_id"])
+        merged = _merge_documents(retrievals)
+        if not merged:
+            # Every sub-question retrieved nothing: report the limitation, never the model.
+            return {"documents": [], "trace": ["decompose_recursive"], "answer": INSUFFICIENT_DOCUMENTS_ANSWER, "citations": []}
+
+        sub_answers = _answer_sub_questions_sequentially(answer_llm, sub_questions, retrievals)
+        emit(Stage(stage="synthesizing"))
+        messages = [
+            SystemMessage(content=SYNTHESIS_PROMPT.format(qa_pairs=_format_qa_pairs(sub_questions, sub_answers))),
+            HumanMessage(content=question),
+        ]
+        answer = stream_and_cite(answer_llm, messages=messages, documents=merged)
+        return {"documents": merged, "trace": ["decompose_recursive"], **answer}
+
+    return decompose_recursive
+
+
+def _decompose(decompose_llm, question: str, *, prompt: str = DECOMPOSE_PROMPT) -> list[str]:
+    """Split a compound question into sub-questions, capped at the configured maximum.
+
+    The ``prompt`` selects the split: ``DECOMPOSE_PROMPT`` yields independent sub-questions,
+    ``DECOMPOSE_CHAINED_PROMPT`` ordered dependent ones. The structured schema does not bound
+    the list, so a verbose or prompt-influenced response is de-duplicated and trimmed to
+    ``MAX_SUB_QUESTIONS`` here — otherwise each extra sub-question would cost another retrieval.
+    De-duplication preserves first-seen order, so a chained split keeps its step ordering.
+    Falls back to the original question when the model yields nothing usable.
+    """
+    messages = [SystemMessage(content=prompt.format(count=settings.MAX_SUB_QUESTIONS)), HumanMessage(content=question)]
     result = decompose_llm.invoke(messages)
     seen: set[str] = set()
     sub_questions: list[str] = []
@@ -203,6 +253,25 @@ def _decompose(decompose_llm, question: str) -> list[str]:
             seen.add(cleaned)
             sub_questions.append(cleaned)
     return sub_questions[: settings.MAX_SUB_QUESTIONS] or [question]
+
+
+def _retrieve_each(retriever, sub_questions: list[str], repository_id) -> list[list]:
+    """Retrieve each sub-question once with the existing single-query hybrid+rerank retrieval, in order.
+
+    Shared by both decomposition strategies: one hybrid retrieval per sub-question under the
+    session Repository, preserving sub-question order so the parallel union and the recursive
+    sequential answering each see their retrievals aligned to their sub-questions.
+    """
+    return [
+        retriever.retrieve_documents(
+            sub_question,
+            repository_id=repository_id,
+            k=settings.TOP_K,
+            alpha=settings.HYBRID_SEARCH_ALPHA,
+            parent_limit=settings.FINAL_PARENT_LIMIT,
+        )
+        for sub_question in sub_questions
+    ]
 
 
 def _merge_documents(retrievals: list[list]) -> list:
@@ -228,6 +297,26 @@ def _answer_sub_questions(answer_llm, sub_questions: list[str], retrievals: list
     ]
     results = answer_llm.batch(batched_messages)
     return [getattr(result, "content", "") or "" for result in results]
+
+
+def _answer_sub_questions_sequentially(answer_llm, sub_questions: list[str], retrievals: list[list]) -> list[str]:
+    """Answer each sub-question in order, feeding the accumulated prior question/answer pairs forward (never streamed).
+
+    The IRCoT-style cumulative step: each sub-question is answered from its own retrieved context
+    plus every earlier step's question/answer pair, so a later hop can build on what the earlier
+    hops established. One model call per sub-question, in sequence — not the batched call the
+    independent (``decompose_parallel``) branch uses.
+    """
+    sub_answers: list[str] = []
+    for sub_question, documents in zip(sub_questions, retrievals, strict=True):
+        prior = _format_qa_pairs(sub_questions[: len(sub_answers)], sub_answers) if sub_answers else "(none yet — this is the first step)"
+        messages = [
+            SystemMessage(content=SUB_ANSWER_CHAINED_PROMPT.format(prior=prior, context=format_repository_documents(documents))),
+            HumanMessage(content=sub_question),
+        ]
+        result = answer_llm.invoke(messages)
+        sub_answers.append(getattr(result, "content", "") or "")
+    return sub_answers
 
 
 def _format_qa_pairs(sub_questions: list[str], sub_answers: list[str]) -> str:

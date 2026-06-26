@@ -42,7 +42,7 @@ def emit(event: AgentStreamEvent) -> None:
 # ``Token`` events. Each Question Shape strategy owns its own final-answer streaming, so
 # tokens are attributed by strategy-node name (the analyzing/variant structured calls do
 # not stream and so never reach here).
-_ANSWER_GENERATION_NODES = frozenset({"simple_rag", "decompose_parallel"})
+_ANSWER_GENERATION_NODES = frozenset({"simple_rag", "decompose_parallel", "decompose_recursive"})
 
 
 def map_graph_stream(stream_items: Iterable[tuple[str, object]]) -> Iterator[AgentStreamEvent]:

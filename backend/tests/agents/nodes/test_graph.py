@@ -19,7 +19,7 @@ from app.agents import Classification, build_graph
 from app.agents.nodes.code_generation import NO_CHANGES_MESSAGE, build_review_patch_node
 from app.agents.nodes.generation import INSUFFICIENT_DOCUMENTS_ANSWER
 from app.agents.nodes.planner import PlannerOutput
-from app.agents.nodes.repository_question import QueryVariants, ShapeClassification, SubQuestions
+from app.agents.nodes.repository_question import ChainedSubQuestions, QueryVariants, ShapeClassification, SubQuestions
 from app.services.coding_runs.review_policy import ReviewPolicy
 from app.core.errors.git_errors import GitError
 from app.core.errors.github_errors import GitHubError
@@ -190,6 +190,49 @@ class _FixedSubQuestions:
     def invoke(self, messages, config=None):
         self._parent.decompose_calls.append(messages)
         return SubQuestions(sub_questions=list(self._parent._sub_questions))
+
+
+class FakeRecursiveLLM:
+    """An LLM for ``decompose_recursive``: fixed sub-questions, sequential sub-answers, streamed synthesis.
+
+    ``with_structured_output`` yields the fixed (ordered, dependent) sub-questions; ``invoke``
+    answers one sub-question per call in order (never batched, never streamed), recording the
+    messages so cumulative prior-context can be asserted; ``stream`` streams the fixed synthesis
+    tokens (the only tokens a client should see).
+    """
+
+    def __init__(self, *, sub_questions=("first", "second"), sub_answers=None, tokens=("synth",)) -> None:
+        self._sub_questions = list(sub_questions)
+        self._sub_answers = list(sub_answers) if sub_answers is not None else [f"answer to {question}" for question in sub_questions]
+        self._tokens = tokens
+        self.decompose_calls = []
+        self.invoke_calls = []
+        self.stream_calls = []
+
+    def with_structured_output(self, _schema):
+        return _FixedChainedSubQuestions(self)
+
+    def invoke(self, messages, config=None):
+        # One sub-answer per call, in order, mirroring sequential (non-batched) answering.
+        index = len(self.invoke_calls)
+        self.invoke_calls.append(messages)
+        return _Chunk(self._sub_answers[index] if index < len(self._sub_answers) else "")
+
+    def stream(self, messages, config=None):
+        self.stream_calls.append(messages)
+        for token in self._tokens:
+            yield _Chunk(token)
+
+
+class _FixedChainedSubQuestions:
+    """Structured runnable returning the parent fake's fixed ordered, dependent sub-questions."""
+
+    def __init__(self, parent: "FakeRecursiveLLM") -> None:
+        self._parent = parent
+
+    def invoke(self, messages, config=None):
+        self._parent.decompose_calls.append(messages)
+        return ChainedSubQuestions(sub_questions=list(self._parent._sub_questions))
 
 
 class QueryRetriever:
@@ -549,7 +592,7 @@ def test_build_graph_requires_every_runtime_adapter() -> None:
 
 def test_structured_output_models_describe_all_llm_fields() -> None:
     """Structured LLM schemas carry field descriptions for better model guidance."""
-    structured_output_models = [Classification, ShapeClassification, QueryVariants, SubQuestions, PlannerOutput, RetrievalRequest]
+    structured_output_models = [Classification, ShapeClassification, QueryVariants, SubQuestions, ChainedSubQuestions, PlannerOutput, RetrievalRequest]
 
     for model in structured_output_models:
         properties = model.model_json_schema()["properties"]
@@ -661,18 +704,226 @@ def test_simple_rag_caps_and_dedupes_query_variants_to_the_configured_count() ->
     assert variants == ["alpha", "beta", "gamma"]
 
 
-def test_chained_shape_routes_to_simple_rag_for_now() -> None:
-    """``chained`` is recognized but routes to ``simple_rag`` until its own slice lands."""
+def test_chained_question_decomposes_answers_sequentially_and_synthesizes_one_answer() -> None:
+    """A ``chained`` question routes to ``decompose_recursive`` and streams one synthesized answer with citations."""
     repository_id = uuid.uuid4()
     retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
-    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=FakeSimpleRagLLM(tokens=("a",)))
+    llm = FakeRecursiveLLM(sub_questions=("what calls x", "what does that callee do"), tokens=("the ", "answer"))
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=llm)
 
-    final = graph.invoke({"question": "two things and then a third", "repository_id": repository_id}, config=_config())
+    final = graph.invoke({"question": "trace x then explain its callee", "repository_id": repository_id}, config=_config())
 
     assert final["question_shape"] == "chained"
-    assert final["trace"][-1] == "simple_rag"
-    assert retriever.fusion_calls  # routed through the multi-query fusion strategy
-    assert final["answer"] == "a"
+    assert final["trace"][-1] == "decompose_recursive"
+    assert final["answer"] == "the answer"
+    assert final["citations"] == [Citation(source="app/a.py")]
+
+
+def test_decompose_recursive_answers_each_step_with_accumulated_prior_context() -> None:
+    """Each sub-question is answered in order, with every earlier step's question/answer pair fed forward as context."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    llm = FakeRecursiveLLM(sub_questions=("who calls login", "what does that caller validate"), sub_answers=("AuthService calls it", "it validates the token"), tokens=("ok",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=llm)
+
+    graph.invoke({"question": "trace login then explain validation", "repository_id": repository_id}, config=_config())
+
+    # One sequential model call per sub-question, in order.
+    assert len(llm.invoke_calls) == 2
+    first_context = llm.invoke_calls[0][0].content
+    second_context = llm.invoke_calls[1][0].content
+    # The first step has no prior answers to build on; the second step carries the first step's Q and A forward.
+    assert "AuthService calls it" not in first_context
+    assert "who calls login" in second_context
+    assert "AuthService calls it" in second_context
+
+
+def test_decompose_recursive_retrieves_each_sub_question_with_single_query_retrieval() -> None:
+    """Each sub-question runs the existing single-query hybrid+rerank retrieval once, in order, under the session Repository."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever(
+        {
+            "who calls login": [_source(repository_id, "app/auth.py", "auth")],
+            "what does that caller do": [_source(repository_id, "app/service.py", "service")],
+        }
+    )
+    llm = FakeRecursiveLLM(sub_questions=("who calls login", "what does that caller do"), tokens=("ok",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=llm)
+
+    graph.invoke({"question": "trace the login caller", "repository_id": repository_id}, config=_config())
+
+    assert [query for query, _ in retriever.calls] == ["who calls login", "what does that caller do"]
+    assert all(kwargs["repository_id"] == repository_id for _, kwargs in retriever.calls)
+    # Single-query retrieval (not the multi-query fusion path) is used per sub-question.
+    assert all("original_query" not in kwargs for _, kwargs in retriever.calls)
+
+
+def test_decompose_recursive_citations_are_the_deduplicated_union_across_sub_questions() -> None:
+    """The final citations are the de-duplicated union of parent sources across every sub-question retrieval."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever(
+        {
+            "q1": [_source(repository_id, "app/auth.py", "a"), _source(repository_id, "app/shared.py", "s")],
+            "q2": [_source(repository_id, "app/session.py", "x"), _source(repository_id, "app/shared.py", "s2")],
+        }
+    )
+    llm = FakeRecursiveLLM(sub_questions=("q1", "q2"), tokens=("ok",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=llm)
+
+    final = graph.invoke({"question": "multi-hop", "repository_id": repository_id}, config=_config())
+
+    # app/shared.py surfaced under both sub-questions but is cited once, in first-seen order.
+    assert final["citations"] == [Citation(source="app/auth.py"), Citation(source="app/shared.py"), Citation(source="app/session.py")]
+
+
+def test_decompose_recursive_streams_only_the_synthesis_not_the_sub_answers() -> None:
+    """Sub-answers come from sequential (per-step) calls (never streamed); only the synthesized answer is streamed."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever({"q1": [_source(repository_id, "app/a.py", "a")], "q2": [_source(repository_id, "app/b.py", "b")]})
+    llm = FakeRecursiveLLM(sub_questions=("q1", "q2"), sub_answers=("sub-ans-1", "sub-ans-2"), tokens=("final ", "synthesis"))
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=llm)
+
+    final = graph.invoke({"question": "multi-hop", "repository_id": repository_id}, config=_config())
+
+    # One sequential sub-answer call per sub-question; the model is never batched here.
+    assert len(llm.invoke_calls) == 2
+    # Only the synthesized answer is streamed (one stream call), and the sub-answers never leak into it.
+    assert len(llm.stream_calls) == 1
+    assert final["answer"] == "final synthesis"
+    assert "sub-ans-1" not in final["answer"] and "sub-ans-2" not in final["answer"]
+
+
+def test_decompose_recursive_caps_and_dedupes_sub_questions_to_the_configured_maximum() -> None:
+    """A sprawling or duplicated decomposition is de-duplicated and trimmed to MAX_SUB_QUESTIONS, preserving step order."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever({f"sq{index}": [_source(repository_id, f"app/{index}.py", "c")] for index in range(1, 6)})
+    # MAX_SUB_QUESTIONS defaults to 3; the model returns five with a duplicate.
+    llm = FakeRecursiveLLM(sub_questions=("sq1", "sq1", "sq2", "sq3", "sq4"), tokens=("a",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=llm)
+
+    graph.invoke({"question": "many dependent hops", "repository_id": repository_id}, config=_config())
+
+    assert [query for query, _ in retriever.calls] == ["sq1", "sq2", "sq3"]
+    assert len(llm.invoke_calls) == 3
+
+
+def test_decompose_recursive_reports_insufficient_documents_when_every_sub_question_is_empty() -> None:
+    """When no sub-question retrieves anything, the deterministic insufficient answer is returned without any model answer/synthesis call."""
+    repository_id = uuid.uuid4()
+    llm = FakeRecursiveLLM(sub_questions=("q1", "q2"), tokens=("unused",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=FakeRetriever([]), llm=llm)
+
+    final = graph.invoke({"question": "x then y", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == INSUFFICIENT_DOCUMENTS_ANSWER
+    assert final["citations"] == []
+    assert llm.invoke_calls == []
+    assert llm.stream_calls == []
+
+
+def test_decompose_recursive_synthesizes_from_partial_retrieval_and_keeps_only_found_citations() -> None:
+    """When only some sub-questions retrieve documents, synthesis answers from what was found; citations span only found sources."""
+    repository_id = uuid.uuid4()
+    retriever = QueryRetriever({"q1": [_source(repository_id, "app/a.py", "a")]})  # q2 retrieves nothing
+    llm = FakeRecursiveLLM(sub_questions=("q1", "q2"), sub_answers=("found it", "context did not cover this"), tokens=("partial ", "answer"))
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=llm)
+
+    final = graph.invoke({"question": "multi-hop", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == "partial answer"
+    assert final["citations"] == [Citation(source="app/a.py")]
+    # Both steps are still answered sequentially; the empty one states its gap.
+    assert len(llm.invoke_calls) == 2
+
+
+def test_decompose_recursive_stream_emits_ordered_stage_markers() -> None:
+    """Chained-question progress is classifying → analyzing → decomposing → synthesizing."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "x")])
+    llm = FakeRecursiveLLM(sub_questions=("q1", "q2"), tokens=("a",))
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), retriever=retriever, llm=llm)
+
+    events = _custom_events(graph, {"question": "multi-hop?", "repository_id": repository_id})
+
+    assert [event.stage for event in events if isinstance(event, Stage)] == ["classifying", "analyzing", "decomposing", "synthesizing"]
+
+
+def test_decompose_recursive_decomposition_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
+    """A transient decomposition failure re-runs the split on the default-tier fallback provider; later calls stay on the primary."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    primary = DirectStructuredLLM(
+        output=_Chunk("sub"), outputs={ChainedSubQuestions: _anthropic_status_error(429)}, stream_tokens=("synth",), model_name="gpt-4o-mini"
+    )
+    fallback = DirectStructuredLLM(outputs={ChainedSubQuestions: ChainedSubQuestions(sub_questions=["a", "b"])}, model_name="claude-haiku-4-5")
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    final = graph.invoke({"question": "a then b", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == "synth"
+    # Only the decomposition fell over; the sequential sub-answers and synthesis stayed on the primary.
+    assert fallback.invoke_calls == 1
+    assert primary.stream_calls == 1
+
+
+def test_decompose_recursive_sub_answers_fall_over_to_the_default_fallback_on_a_transient_error() -> None:
+    """A transient failure of a sequential sub-answer call re-runs that step on the default-tier fallback provider, per step."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    primary = DirectStructuredLLM(
+        output=_anthropic_status_error(429),  # every sequential sub-answer invoke fails transiently
+        outputs={ChainedSubQuestions: ChainedSubQuestions(sub_questions=["a", "b"])},
+        stream_tokens=("synth",),
+        model_name="gpt-4o-mini",
+    )
+    fallback = DirectStructuredLLM(output=_Chunk("sub"), model_name="claude-haiku-4-5")
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    final = graph.invoke({"question": "a then b", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == "synth"
+    # Both sequential steps fell over independently to the fallback provider; synthesis stayed on the primary.
+    assert fallback.invoke_calls == 2
+    assert primary.stream_calls == 1
+
+
+def test_decompose_recursive_synthesis_falls_over_to_the_default_fallback_on_a_transient_error() -> None:
+    """A transient synthesis-stream failure resumes the streamed answer on the default-tier fallback provider."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    primary = DirectStructuredLLM(
+        output=_Chunk("sub"),
+        outputs={ChainedSubQuestions: ChainedSubQuestions(sub_questions=["a", "b"])},
+        stream_error=_anthropic_status_error(429),
+        model_name="gpt-4o-mini",
+    )
+    fallback = DirectStructuredLLM(stream_tokens=("fallback ", "answer"), model_name="claude-haiku-4-5")
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    final = graph.invoke({"question": "a then b", "repository_id": repository_id}, config=_config())
+
+    assert final["answer"] == "fallback answer"
+    assert final["citations"] == [Citation(source="app/a.py")]
+    assert fallback.stream_calls == 1
+
+
+def test_decompose_recursive_synthesis_fails_fast_on_a_deterministic_error() -> None:
+    """A deterministic synthesis-stream failure does not burn a fallback provider call."""
+    repository_id = uuid.uuid4()
+    retriever = FakeRetriever([_source(repository_id, "app/a.py", "code")])
+    primary = DirectStructuredLLM(
+        output=_Chunk("sub"),
+        outputs={ChainedSubQuestions: ChainedSubQuestions(sub_questions=["a", "b"])},
+        stream_error=_anthropic_status_error(400),
+        model_name="gpt-4o-mini",
+    )
+    fallback = DirectStructuredLLM(stream_tokens=("unused",), model_name="claude-haiku-4-5")
+    graph = _build(FakeClassifierLLM("repository_question", shape="chained"), default_fallback_llm=fallback, retriever=retriever, llm=primary)
+
+    with pytest.raises(anthropic.APIStatusError):
+        graph.invoke({"question": "a then b", "repository_id": repository_id}, config=_config())
+
+    assert fallback.stream_calls == 0
 
 
 def test_independent_question_decomposes_retrieves_and_synthesizes_one_answer() -> None:

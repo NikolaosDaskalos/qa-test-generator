@@ -33,7 +33,13 @@ from app.agents.nodes.code_generation import (
     build_review_router,
 )
 from app.agents.nodes.planner import build_plan_node
-from app.agents.nodes.repository_question import QuestionShape, build_analyzing_node, build_decompose_parallel_node, build_simple_rag_node
+from app.agents.nodes.repository_question import (
+    QuestionShape,
+    build_analyzing_node,
+    build_decompose_parallel_node,
+    build_decompose_recursive_node,
+    build_simple_rag_node,
+)
 from app.schemas import Citation, PatchResult, RetrievalRequest, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
 from app.streaming import emit
 
@@ -144,8 +150,7 @@ def _route_question_shape(state: GraphState) -> QuestionShape:
     """Route each Question Shape to its strategy node, defaulting to the read-only ``simple`` shape.
 
     ``simple`` (and the uncertain fallback) takes ``simple_rag``; ``independent`` takes
-    ``decompose_parallel``. ``chained`` is recognized but routes to ``simple_rag`` as a
-    placeholder until its own strategy node lands.
+    ``decompose_parallel``; ``chained`` takes ``decompose_recursive``.
     """
     return state.get("question_shape", "simple")
 
@@ -235,11 +240,12 @@ def build_graph(
     graph.add_node("analyzing", build_analyzing_node(classifier_llm, default_fallback_llm))
     graph.add_node("simple_rag", build_simple_rag_node(retriever, llm, default_fallback_llm))
     graph.add_node("decompose_parallel", build_decompose_parallel_node(retriever, llm, default_fallback_llm))
+    graph.add_node("decompose_recursive", build_decompose_recursive_node(retriever, llm, default_fallback_llm))
 
     graph.add_edge(START, "classify")
     graph.add_conditional_edges("classify", _route_intent, {"code_generation": "plan", "repository_question": "analyzing"})
     graph.add_conditional_edges(
-        "analyzing", _route_question_shape, {"simple": "simple_rag", "independent": "decompose_parallel", "chained": "simple_rag"}
+        "analyzing", _route_question_shape, {"simple": "simple_rag", "independent": "decompose_parallel", "chained": "decompose_recursive"}
     )
     graph.add_conditional_edges("plan", _route_after_plan, {"failed": "fail_run", "planned": "gather_documents"})
     graph.add_conditional_edges("gather_documents", build_gather_documents_router(), {"gathered": "generate_code", "failed": "fail_run"})
@@ -256,5 +262,6 @@ def build_graph(
     graph.add_edge("fail_run", END)
     graph.add_edge("simple_rag", END)
     graph.add_edge("decompose_parallel", END)
+    graph.add_edge("decompose_recursive", END)
 
     return graph.compile(checkpointer=checkpointer)

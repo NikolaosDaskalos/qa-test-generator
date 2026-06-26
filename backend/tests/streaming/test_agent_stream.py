@@ -77,6 +77,25 @@ def test_decompose_parallel_synthesis_chunks_become_tokens() -> None:
     assert events == [Stage(stage="decomposing"), Stage(stage="synthesizing"), Token(content="final "), Token(content="answer")]
 
 
+def test_decompose_recursive_synthesis_chunks_become_tokens() -> None:
+    """The decompose_recursive node's synthesized answer streams as Tokens for chained questions."""
+    items = [
+        ("custom", Stage(stage="decomposing")),
+        ("custom", Stage(stage="synthesizing")),
+        ("messages", (_Message("recursive "), {"langgraph_node": "decompose_recursive"})),
+        ("messages", (_Message("answer"), {"langgraph_node": "decompose_recursive"})),
+    ]
+
+    events = list(map_graph_stream(items))
+
+    assert events == [
+        Stage(stage="decomposing"),
+        Stage(stage="synthesizing"),
+        Token(content="recursive "),
+        Token(content="answer"),
+    ]
+
+
 def test_to_sse_frames_serializes_typed_events_as_server_sent_frames() -> None:
     run_id = uuid.uuid4()
     events = [Stage(stage="planning"), RunStarted(coding_run_id=run_id)]
