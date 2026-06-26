@@ -10,6 +10,7 @@ from app.core.errors.session_errors import CodingRunNotFound, RepositorySessionA
 from app.db.models import CodingRun, Repository, RepositorySession, SessionHistory, User
 from app.enums import CodingRunStatus
 from app.schemas import Citation, HumanDecisionRequest, Result, ReviewFinding, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
+from app.streaming import FINAL_ANSWER_TAG
 from app.services import RepositorySessionService
 
 
@@ -103,7 +104,7 @@ def test_stream_session_passes_through_events_and_persists_repository_answer():
         ("custom", Stage(stage="analyzing")),
         ("custom", Stage(stage="retrieving")),
         ("custom", Stage(stage="generating")),
-        ("messages", (_Msg("hello"), {"langgraph_node": "simple_rag"})),
+        ("messages", (_Msg("hello"), {"langgraph_node": "simple_rag", "tags": [FINAL_ANSWER_TAG]})),
     ]
     final = {"intent": "repository_question", "answer": "hello", "citations": [Citation(source="app/a.py")]}
     graph = FakeGraph(items, final)

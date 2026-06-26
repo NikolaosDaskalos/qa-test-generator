@@ -4,12 +4,36 @@ import typing
 import uuid
 
 from app.schemas import AgentStreamEvent, PatchResult, RunStarted, Stage, Token
-from app.streaming import map_graph_stream, to_sse_frames
+from app.streaming import FINAL_ANSWER_TAG, map_graph_stream, to_sse_frames
 
 
 class _Message:
     def __init__(self, content: str) -> None:
         self.content = content
+
+
+def _final_answer(node: str) -> dict:
+    """Messages-mode metadata for the tagged final-answer stream of a strategy node."""
+    return {"langgraph_node": node, "tags": [FINAL_ANSWER_TAG]}
+
+
+def test_only_chunks_tagged_as_the_final_answer_become_tokens() -> None:
+    """A strategy node's node-local sub-answer calls (untagged) never leak as Tokens; only the tagged final answer streams.
+
+    The decompose nodes run their sub-answer model calls (``batch``/``invoke``) and their
+    synthesized final answer (``stream``) under one ``langgraph_node`` name, so attribution
+    by node alone would forward the throwaway sub-answers to the client. Only the final-answer
+    stream carries ``FINAL_ANSWER_TAG``, so only it becomes Tokens.
+    """
+    items = [
+        ("messages", (_Message("sub-answer leak"), {"langgraph_node": "decompose_parallel"})),
+        ("messages", (_Message("final "), _final_answer("decompose_parallel"))),
+        ("messages", (_Message("answer"), _final_answer("decompose_parallel"))),
+    ]
+
+    events = list(map_graph_stream(items))
+
+    assert events == [Token(content="final "), Token(content="answer")]
 
 
 def test_patch_result_is_not_a_member_of_the_agent_stream_union() -> None:
@@ -31,9 +55,9 @@ def test_custom_events_pass_through_and_messages_become_tokens_in_order() -> Non
         ("custom", Stage(stage="analyzing")),
         ("custom", Stage(stage="retrieving")),
         ("custom", Stage(stage="generating")),
-        ("messages", (_Message("the "), {"langgraph_node": "simple_rag"})),
-        ("messages", (_Message(""), {"langgraph_node": "simple_rag"})),
-        ("messages", (_Message("answer"), {"langgraph_node": "simple_rag"})),
+        ("messages", (_Message("the "), _final_answer("simple_rag"))),
+        ("messages", (_Message(""), _final_answer("simple_rag"))),
+        ("messages", (_Message("answer"), _final_answer("simple_rag"))),
     ]
 
     events = list(map_graph_stream(items))
@@ -50,10 +74,11 @@ def test_custom_events_pass_through_and_messages_become_tokens_in_order() -> Non
     ]
 
 
-def test_message_chunks_from_non_answer_nodes_are_not_streamed_as_tokens() -> None:
+def test_message_chunks_without_the_final_answer_tag_are_not_streamed_as_tokens() -> None:
     items = [
         ("messages", (_Message('{"intent":'), {"langgraph_node": "classify"})),
-        ("messages", (_Message("visible answer"), {"langgraph_node": "simple_rag"})),
+        ("messages", (_Message("variant json"), {"langgraph_node": "simple_rag"})),
+        ("messages", (_Message("visible answer"), _final_answer("simple_rag"))),
         ("messages", (_Message('{"plan":'), {"langgraph_node": "plan"})),
         ("messages", (_Message("metadata missing"), {})),
     ]
@@ -68,8 +93,8 @@ def test_decompose_parallel_synthesis_chunks_become_tokens() -> None:
     items = [
         ("custom", Stage(stage="decomposing")),
         ("custom", Stage(stage="synthesizing")),
-        ("messages", (_Message("final "), {"langgraph_node": "decompose_parallel"})),
-        ("messages", (_Message("answer"), {"langgraph_node": "decompose_parallel"})),
+        ("messages", (_Message("final "), _final_answer("decompose_parallel"))),
+        ("messages", (_Message("answer"), _final_answer("decompose_parallel"))),
     ]
 
     events = list(map_graph_stream(items))
@@ -82,8 +107,8 @@ def test_decompose_recursive_synthesis_chunks_become_tokens() -> None:
     items = [
         ("custom", Stage(stage="decomposing")),
         ("custom", Stage(stage="synthesizing")),
-        ("messages", (_Message("recursive "), {"langgraph_node": "decompose_recursive"})),
-        ("messages", (_Message("answer"), {"langgraph_node": "decompose_recursive"})),
+        ("messages", (_Message("recursive "), _final_answer("decompose_recursive"))),
+        ("messages", (_Message("answer"), _final_answer("decompose_recursive"))),
     ]
 
     events = list(map_graph_stream(items))

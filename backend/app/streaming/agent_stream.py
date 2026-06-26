@@ -38,26 +38,30 @@ def emit(event: AgentStreamEvent) -> None:
         writer(event)
 
 
-# The repository-question strategy nodes whose grounded-answer token stream becomes
-# ``Token`` events. Each Question Shape strategy owns its own final-answer streaming, so
-# tokens are attributed by strategy-node name (the analyzing/variant structured calls do
-# not stream and so never reach here).
-_ANSWER_GENERATION_NODES = frozenset({"simple_rag", "decompose_parallel", "decompose_recursive"})
+# The tag every strategy node attaches to its single grounded final-answer stream, so its
+# token chunks — and only those — become ``Token`` events. A strategy node also makes
+# node-local model calls that must never reach the client (multi-query variant generation,
+# decomposition, and the sub-answers the decompose nodes batch/invoke): those run under the
+# same ``langgraph_node`` name, so attribution by node alone would leak them. Tagging the
+# final-answer stream and filtering on the tag attributes tokens to the answer, not the node.
+FINAL_ANSWER_TAG = "final_answer"
 
 
 def map_graph_stream(stream_items: Iterable[tuple[str, object]]) -> Iterator[AgentStreamEvent]:
     """Fold ``(mode, chunk)`` items onto typed events, preserving order.
 
     ``custom`` chunks are already typed markers and pass straight through;
-    answer-generation ``messages`` chunks are ``(message, metadata)`` pairs
-    whose non-empty content becomes a ``Token``.
+    ``messages`` chunks are ``(message, metadata)`` pairs, and only those carrying
+    ``FINAL_ANSWER_TAG`` (the strategy node's final-answer stream) turn their non-empty
+    content into a ``Token`` — node-local variant/decomposition/sub-answer calls are untagged
+    and so never leak.
     """
     for mode, chunk in stream_items:
         if mode == "custom":
             yield chunk  # type: ignore[misc]
         elif mode == "messages":
             message, metadata = chunk  # type: ignore[misc]
-            if not isinstance(metadata, dict) or metadata.get("langgraph_node") not in _ANSWER_GENERATION_NODES:
+            if not isinstance(metadata, dict) or FINAL_ANSWER_TAG not in (metadata.get("tags") or []):
                 continue
             content = getattr(message, "content", "") or ""
             if content:

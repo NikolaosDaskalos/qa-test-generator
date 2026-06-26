@@ -13,7 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.prompts.prompts import QA_SYSTEM_PROMPT
 from app.prompts.rendering import format_repository_documents
 from app.schemas import Citation, Stage
-from app.streaming import emit
+from app.streaming import FINAL_ANSWER_TAG, emit
 
 # Returned verbatim when retrieval yields no Repository Documents, so the answer
 # states the limitation instead of letting the model fill gaps from its own knowledge.
@@ -46,9 +46,13 @@ def stream_and_cite(answer_llm, *, messages, documents) -> dict:
     citations are projected from the de-duplicated parent sources of ``documents``. The
     caller owns the Stage marker (``generating`` for a single grounded answer,
     ``synthesizing`` for a decomposed one) and the message construction.
+
+    The stream is tagged ``FINAL_ANSWER_TAG`` so ``map_graph_stream`` forwards only these
+    chunks as ``Token``s: a strategy node's node-local variant/decomposition/sub-answer
+    model calls run under the same ``langgraph_node`` name and must never reach the client.
     """
     collected = ""
-    for chunk in answer_llm.stream(messages):
+    for chunk in answer_llm.stream(messages, config={"tags": [FINAL_ANSWER_TAG]}):
         token = getattr(chunk, "content", "") or ""
         if token:
             collected += token
