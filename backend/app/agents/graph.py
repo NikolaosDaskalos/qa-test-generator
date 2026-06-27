@@ -13,7 +13,7 @@ import operator
 import uuid
 from typing import Annotated, Literal, TypedDict
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
@@ -33,6 +33,7 @@ from app.agents.nodes.code_generation import (
     build_review_router,
 )
 from app.agents.nodes.planner import build_plan_node
+from app.prompts.prompts import CLASSIFIER_SYSTEM_PROMPT
 from app.agents.nodes.repository_question import (
     QuestionShape,
     build_analyzing_node,
@@ -132,8 +133,11 @@ def _classify_node(classifier_llm, fallback_llm):
 
     def classify(state: GraphState) -> dict:
         emit(Stage(stage="classifying"))
-        # Read recent Session History when present; fall back to the bare question.
-        messages = state.get("messages") or [HumanMessage(content=state["question"])]
+        # Read recent Session History when present; fall back to the bare question. The
+        # system prompt pins the question-vs-code-generation definitions so ordinary
+        # questions are not misrouted into the test-writing pipeline.
+        history = state.get("messages") or [HumanMessage(content=state["question"])]
+        messages = [SystemMessage(content=CLASSIFIER_SYSTEM_PROMPT), *history]
         result = structured.invoke(messages)
         intent: Intent = result.intent if result else "repository_question"
         return {"intent": intent, "trace": ["classify"]}
