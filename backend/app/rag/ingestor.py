@@ -4,6 +4,7 @@ import logging
 import os
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,38 @@ _LOCK_FILE_SUFFIX = ".lock"
 _VENDOR_DIRECTORIES = frozenset({"vendor", "third_party", "node_modules"})
 
 
+@dataclass(frozen=True)
+class _FileType:
+    """A file's resolved chunking language and derived content category.
+
+    `language` is ``None`` for files that have no language-aware splitter and fall back to the
+    generic recursive splitter. `category` is one of ``code``/``config``/``docs``/``other``.
+    """
+
+    language: Language | None
+    category: str
+
+
+# A single extension/filename table drives both per-language chunking and the derived category
+# stamped onto each Repository Document and Code Chunk (ADR 0012). New file types are added as rows;
+# anything unmapped falls back to the generic splitter and the ``other`` category.
+_DEFAULT_FILE_TYPE = _FileType(language=None, category="other")
+_EXTENSION_FILE_TYPES: dict[str, _FileType] = {
+    ".py": _FileType(language=Language.PYTHON, category="code"),
+    ".md": _FileType(language=Language.MARKDOWN, category="docs"),
+    ".toml": _FileType(language=None, category="config"),
+}
+_FILENAME_FILE_TYPES: dict[str, _FileType] = {}
+
+
+def _file_type_for(source: str) -> _FileType:
+    """Resolve a file's chunking language and category from its name, defaulting to generic/other."""
+    path = Path(source)
+    if path.name in _FILENAME_FILE_TYPES:
+        return _FILENAME_FILE_TYPES[path.name]
+    return _EXTENSION_FILE_TYPES.get(path.suffix.lower(), _DEFAULT_FILE_TYPE)
+
+
 class DocumentIngestor:
     """Loads an existing local Git clone and stores committed text-file chunks in Weaviate."""
 
@@ -37,30 +70,29 @@ class DocumentIngestor:
         """Create an ingestor backed by shared Weaviate resources."""
         self.resources = resources
         self.repository_document_store = repository_document_store
+        self._splitters: dict[Language | None, RecursiveCharacterTextSplitter] = {}
 
     @cached_property
     def _tokenizer(self) -> Any:
         """The cached embedding-model tokenizer that sizes every splitter's chunks."""
         return AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL_TOKENIZER)
 
-    @cached_property
-    def python_splitter(self) -> RecursiveCharacterTextSplitter:
-        """The cached Python-aware splitter, sized by the embedding model's tokenizer."""
-        return RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-            tokenizer=self._tokenizer,
-            separators=RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON),
-            chunk_size=settings.CHUNK_SIZE,
-            chunk_overlap=settings.CHUNK_OVERLAP,
-        )
+    def _splitter_for(self, language: Language | None) -> RecursiveCharacterTextSplitter:
+        """Return the cached splitter for a language, building it once on first use.
 
-    @cached_property
-    def generic_splitter(self) -> RecursiveCharacterTextSplitter:
-        """The cached generic recursive splitter for non-Python text files."""
-        return RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-            tokenizer=self._tokenizer,
-            chunk_size=settings.CHUNK_SIZE,
-            chunk_overlap=settings.CHUNK_OVERLAP,
-        )
+        A ``Language`` uses that language's recursive separators; ``None`` falls back to the plain
+        generic recursive splitter. Every splitter shares the same chunk size, overlap, and
+        embedding-model tokenizer sizing.
+        """
+        if language not in self._splitters:
+            separators = RecursiveCharacterTextSplitter.get_separators_for_language(language) if language is not None else None
+            self._splitters[language] = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+                tokenizer=self._tokenizer,
+                separators=separators,
+                chunk_size=settings.CHUNK_SIZE,
+                chunk_overlap=settings.CHUNK_OVERLAP,
+            )
+        return self._splitters[language]
 
     def ingest(self, repo_path: Path, repository_id: uuid.UUID, branch: str, commit_sha: str, user_id: uuid.UUID) -> int:
         """Replace a Git repository's persisted documents and indexed chunks.
@@ -159,6 +191,10 @@ class DocumentIngestor:
         """Load every committed UTF-8 text file with non-empty content from the checked-out branch."""
         loader = GitLoader(repo_path=str(repo_path), branch=branch, file_filter=self._file_filter)
         raw_docs: list[Document] = [doc for doc in loader.load() if doc.page_content]
+        for doc in raw_docs:
+            file_type = _file_type_for(str(doc.metadata.get("source", "")))
+            doc.metadata["category"] = file_type.category
+            doc.metadata["language"] = file_type.language.value if file_type.language is not None else "text"
         logger.info("Loaded repository documents branch=%s document_count=%s", branch, len(raw_docs))
         return raw_docs
 
@@ -186,10 +222,19 @@ class DocumentIngestor:
         return str(doc.metadata.get("source", "")).endswith(".py")
 
     def _split(self, raw_docs: list[Document]) -> list[Document]:
-        """Split each document into embedding-sized chunks: Python-aware for `.py`, generic otherwise."""
-        chunked_docs: list[Document] = []
+        """Split documents into embedding-sized chunks, grouping by resolved chunking language.
+
+        Each document routes to its language's splitter (``.py`` keeps Python separators, recognized
+        markup uses its own, everything else falls back to the generic splitter). Documents are
+        grouped so each language's splitter is invoked once, in first-appearance order.
+        """
+        grouped: dict[Language | None, list[Document]] = {}
         for doc in raw_docs:
-            splitter = self.python_splitter if self._is_python(doc) else self.generic_splitter
-            chunked_docs.extend(splitter.split_documents([doc]))
+            language = _file_type_for(str(doc.metadata.get("source", ""))).language
+            grouped.setdefault(language, []).append(doc)
+
+        chunked_docs: list[Document] = []
+        for language, docs in grouped.items():
+            chunked_docs.extend(self._splitter_for(language).split_documents(docs))
         logger.info("Split repository documents document_count=%s chunk_count=%s", len(raw_docs), len(chunked_docs))
         return chunked_docs

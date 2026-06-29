@@ -7,11 +7,13 @@ from types import SimpleNamespace
 import pytest
 from git import Repo
 from langchain_core.documents import Document
+from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 
 from app.core import settings
 from app.core.errors.rag_errors import IngestorError
 from app.integrations.weaviate import WeaviateResources
 from app.rag import DocumentIngestor
+from app.rag.ingestor import _file_type_for
 
 
 def _make_git_repo(root: Path, tracked: dict[str, bytes | str], *, ignored: dict[str, bytes | str] | None = None) -> tuple[Path, str]:
@@ -267,34 +269,60 @@ def test_ingestion_uses_shared_resources_when_write_fails() -> None:
     assert ingestor.repository_document_store.delete_calls == [repository_id]
 
 
-class FakeSplitter:
-    """Record the documents handed to a splitter and echo them back as chunks."""
+def test_split_groups_documents_by_resolved_language() -> None:
+    """Group documents by resolved language, splitting Markdown with Markdown separators and `.py` with Python."""
+    ingestor = _loader_ingestor()
+    routed: list[Language | None] = []
+    used: dict[Language | None, RecursiveCharacterTextSplitter] = {}
+    real_splitter_for = ingestor._splitter_for
 
-    def __init__(self) -> None:
-        self.seen: list[Document] = []
+    def recording_splitter_for(language):
+        routed.append(language)
+        splitter = real_splitter_for(language)
+        used[language] = splitter
+        return splitter
 
-    def split_documents(self, documents):
-        self.seen.extend(documents)
-        return list(documents)
-
-
-def test_split_routes_python_and_non_python_files_to_distinct_splitters() -> None:
-    """Chunk Python files with the Python splitter and other text files with the generic splitter."""
-    ingestor = DocumentIngestor(_resources(), FakeRepositoryDocumentStore())
-    python_splitter = FakeSplitter()
-    generic_splitter = FakeSplitter()
-    ingestor.python_splitter = python_splitter
-    ingestor.generic_splitter = generic_splitter
+    ingestor._splitter_for = recording_splitter_for
     documents = [
-        Document(page_content="x = 1", metadata={"source": "app.py"}),
-        Document(page_content="# Demo", metadata={"source": "README.md"}),
+        Document(page_content="def f():\n    return 1", metadata={"source": "app.py"}),
+        Document(page_content="# Title\n\nbody", metadata={"source": "README.md"}),
+        Document(page_content="x = 1", metadata={"source": "other.py"}),
     ]
 
     chunks = ingestor._split(documents)
 
-    assert [doc.metadata["source"] for doc in python_splitter.seen] == ["app.py"]
-    assert [doc.metadata["source"] for doc in generic_splitter.seen] == ["README.md"]
-    assert {chunk.metadata["source"] for chunk in chunks} == {"app.py", "README.md"}
+    assert routed.count(Language.PYTHON) == 1  # two `.py` files share one grouped split call
+    assert sorted(routed, key=str) == sorted([Language.PYTHON, Language.MARKDOWN], key=str)
+    assert used[Language.MARKDOWN]._separators == RecursiveCharacterTextSplitter.get_separators_for_language(Language.MARKDOWN)
+    assert used[Language.PYTHON]._separators == RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON)
+    assert {chunk.metadata["source"] for chunk in chunks} == {"app.py", "README.md", "other.py"}
+
+
+def test_file_type_resolution_maps_extensions_and_falls_back() -> None:
+    """Resolve each file to a chunking language and category, defaulting unmapped files to generic/other."""
+    python = _file_type_for("app.py")
+    markdown = _file_type_for("docs/README.md")
+    config = _file_type_for("pyproject.toml")
+    other = _file_type_for("data.bin")
+
+    assert (python.language, python.category) == (Language.PYTHON, "code")
+    assert (markdown.language, markdown.category) == (Language.MARKDOWN, "docs")
+    assert (config.language, config.category) == (None, "config")
+    assert (other.language, other.category) == (None, "other")
+
+
+def test_splitter_cache_builds_one_splitter_per_language() -> None:
+    """Construct each language's splitter once and reuse it, with language-specific separators."""
+    ingestor = _loader_ingestor()
+
+    python_first = ingestor._splitter_for(Language.PYTHON)
+    python_second = ingestor._splitter_for(Language.PYTHON)
+    generic = ingestor._splitter_for(None)
+
+    assert python_first is python_second
+    assert generic is not python_first
+    assert python_first._separators == RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON)
+    assert generic._separators == ["\n\n", "\n", " ", ""]
 
 
 def test_load_ingests_every_committed_text_file(tmp_path: Path) -> None:
@@ -313,6 +341,39 @@ def test_load_ingests_every_committed_text_file(tmp_path: Path) -> None:
     sources = {doc.metadata["source"] for doc in ingestor._load(repo_path, branch)}
 
     assert sources == {"app.py", "pyproject.toml", "Dockerfile", "docs/README.md"}
+
+
+def test_load_stamps_category_and_language_on_each_document(tmp_path: Path) -> None:
+    """Stamp a derived category and chunking language onto each loaded document's metadata."""
+    repo_path, branch = _make_git_repo(
+        tmp_path,
+        {
+            "app.py": "x = 1",
+            "pyproject.toml": "[project]",
+            "docs/guide.md": "# Guide",
+            "data.csv": "a,b\n1,2",
+        },
+    )
+    ingestor = _loader_ingestor()
+
+    metadata_by_source = {doc.metadata["source"]: doc.metadata for doc in ingestor._load(repo_path, branch)}
+
+    assert (metadata_by_source["app.py"]["category"], metadata_by_source["app.py"]["language"]) == ("code", "python")
+    assert (metadata_by_source["pyproject.toml"]["category"], metadata_by_source["pyproject.toml"]["language"]) == ("config", "text")
+    assert (metadata_by_source["docs/guide.md"]["category"], metadata_by_source["docs/guide.md"]["language"]) == ("docs", "markdown")
+    assert (metadata_by_source["data.csv"]["category"], metadata_by_source["data.csv"]["language"]) == ("other", "text")
+
+
+def test_chunk_metadata_carries_category_and_language(tmp_path: Path) -> None:
+    """Stamped category and language ride from a loaded document onto each of its chunks."""
+    repo_path, branch = _make_git_repo(tmp_path, {"app.py": "x = 1", "docs/guide.md": "# Guide\n\nbody"})
+    ingestor = _loader_ingestor()
+
+    chunks = ingestor._split(ingestor._load(repo_path, branch))
+
+    by_source = {chunk.metadata["source"]: chunk.metadata for chunk in chunks}
+    assert (by_source["app.py"]["category"], by_source["app.py"]["language"]) == ("code", "python")
+    assert (by_source["docs/guide.md"]["category"], by_source["docs/guide.md"]["language"]) == ("docs", "markdown")
 
 
 def test_load_skips_files_over_the_byte_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

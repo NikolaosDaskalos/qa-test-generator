@@ -19,6 +19,8 @@ class RepositoryDocumentMetadata(TypedDict):
     file_path: str
     file_name: str
     file_type: str
+    category: str
+    language: str
     commit_sha: str
     branch: str
 
