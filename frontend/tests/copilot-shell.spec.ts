@@ -1331,15 +1331,657 @@ test("Reloading restores the Pull Request link from the durable Coding Run", asy
 
   await page.goto("/?repository=repo-ready&session=session-ready")
 
-  // The coding card is reconstructed from the durable run on reload, with no live decision event.
-  await page.getByRole("button", { name: "View run details" }).click()
+  // The coding card is reconstructed inline from the durable run on reload,
+  // with no live decision event and without expanding "View run details".
+  await expect(page.getByText("Approved and pushed")).toBeVisible()
+  const inlinePullRequestLink = page
+    .getByRole("link", { name: "View Pull Request" })
+    .first()
+  await expect(inlinePullRequestLink).toBeVisible()
+  await expect(inlinePullRequestLink).toHaveAttribute(
+    "href",
+    "https://github.com/acme/ready-api/pull/7",
+  )
 
+  // The expandable run details panel still loads the persisted run.
+  await page.getByRole("button", { name: "View run details" }).click()
+  await expect(page.getByText("approved", { exact: true })).toBeVisible()
+})
+
+test("Reloading rehydrates a failed Coding Run's inline failure summary", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-ready",
+            title: "Login coding run",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-user",
+              session_id: "session-ready",
+              role: "user",
+              content: "Add tests outside the test root",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+            {
+              id: "message-coding",
+              session_id: "session-ready",
+              role: "assistant",
+              content: "",
+              citations: [],
+              position: 2,
+              coding_run_id: "run-failed",
+              created_at: "2026-06-17T09:00:02Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-failed",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          id: "run-failed",
+          status: "failed",
+          failed_stage: "generating",
+          failure_reason:
+            "The requested target is outside the allowed test file boundary.",
+          review_findings: [],
+          diff: null,
+          pull_request_url: null,
+          disclaimer:
+            "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-ready")
+
+  // The failure summary is reconstructed from the durable run on reload,
+  // without expanding "View run details".
+  await expect(page.getByText("Run failed during generating.")).toBeVisible()
+  await expect(
+    page.getByText(
+      "The requested target is outside the allowed test file boundary.",
+    ),
+  ).toBeVisible()
+})
+
+test("Reloading rehydrates a no-changes Coding Run's inline summary", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-ready",
+            title: "Login coding run",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-user",
+              session_id: "session-ready",
+              role: "user",
+              content: "Add tests that already exist",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+            {
+              id: "message-coding",
+              session_id: "session-ready",
+              role: "assistant",
+              content: "",
+              citations: [],
+              position: 2,
+              coding_run_id: "run-nochanges",
+              created_at: "2026-06-17T09:00:02Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-nochanges",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          id: "run-nochanges",
+          status: "succeeded",
+          failed_stage: null,
+          failure_reason: null,
+          review_findings: [],
+          diff: null,
+          pull_request_url: null,
+          disclaimer:
+            "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-ready")
+
+  // The no-changes summary is reconstructed from the durable run on reload.
+  await expect(page.getByText("No new tests were generated.")).toBeVisible()
+})
+
+test("Reloading rehydrates an approved Coding Run's inline decision summary", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-ready",
+            title: "Login coding run",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-user",
+              session_id: "session-ready",
+              role: "user",
+              content: "Add tests for login",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+            {
+              id: "message-coding",
+              session_id: "session-ready",
+              role: "assistant",
+              content: "",
+              citations: [],
+              position: 2,
+              coding_run_id: "run-approved",
+              created_at: "2026-06-17T09:00:02Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-approved",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          id: "run-approved",
+          status: "approved",
+          failed_stage: null,
+          failure_reason: null,
+          review_findings: [
+            {
+              category: "coverage",
+              detail: "Covers the successful login path.",
+            },
+          ],
+          diff: "diff --git a/tests/test_login.py b/tests/test_login.py\n+def test_login_success():\n+    assert True\n",
+          pull_request_url: "https://github.com/acme/ready-api/pull/7",
+          disclaimer:
+            "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-ready")
+
+  // The approved decision summary is reconstructed from the durable run on
+  // reload, without expanding "View run details".
+  await expect(page.getByText("Approved and pushed")).toBeVisible()
   const pullRequestLink = page.getByRole("link", { name: "View Pull Request" })
   await expect(pullRequestLink).toBeVisible()
   await expect(pullRequestLink).toHaveAttribute(
     "href",
     "https://github.com/acme/ready-api/pull/7",
   )
+})
+
+test("Reloading rehydrates a rejected Coding Run's inline decision summary", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-ready",
+            title: "Login coding run",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-user",
+              session_id: "session-ready",
+              role: "user",
+              content: "Add tests for login",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+            {
+              id: "message-coding",
+              session_id: "session-ready",
+              role: "assistant",
+              content: "",
+              citations: [],
+              position: 2,
+              coding_run_id: "run-rejected",
+              created_at: "2026-06-17T09:00:02Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-rejected",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          id: "run-rejected",
+          status: "rejected",
+          failed_stage: null,
+          failure_reason: null,
+          review_findings: [
+            {
+              category: "scope",
+              detail: "Touches files outside the requested module.",
+            },
+          ],
+          diff: "diff --git a/tests/test_login.py b/tests/test_login.py\n+def test_login_success():\n+    assert True\n",
+          pull_request_url: null,
+          disclaimer:
+            "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-ready")
+
+  // The rejected decision summary is reconstructed from the durable run on reload.
+  await expect(page.getByText("Rejected and discarded")).toBeVisible()
+  await expect(
+    page.getByText("Touches files outside the requested module."),
+  ).toBeVisible()
+})
+
+test("Reloading rehydrates an escalated Coding Run's inline review findings", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-ready",
+            title: "Login coding run",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-user",
+              session_id: "session-ready",
+              role: "user",
+              content: "Add tests for login",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+            {
+              id: "message-coding",
+              session_id: "session-ready",
+              role: "assistant",
+              content: "",
+              citations: [],
+              position: 2,
+              coding_run_id: "run-escalated",
+              created_at: "2026-06-17T09:00:02Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-escalated",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          id: "run-escalated",
+          status: "changes_requested",
+          failed_stage: null,
+          failure_reason: null,
+          review_findings: [
+            {
+              category: "readability",
+              detail: "Assertions are difficult to follow.",
+            },
+          ],
+          diff: "diff --git a/tests/test_login.py b/tests/test_login.py\n+def test_login_success():\n+    assert True\n",
+          pull_request_url: null,
+          disclaimer:
+            "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-ready")
+
+  // The escalated review findings are reconstructed from the durable run on reload.
+  await expect(page.getByText("Changes requested")).toBeVisible()
+  await expect(
+    page.getByText("Assertions are difficult to follow."),
+  ).toBeVisible()
+})
+
+test("Reloading leaves a Coding Run awaiting a decision without an inline summary", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-ready",
+            title: "Login coding run",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-user",
+              session_id: "session-ready",
+              role: "user",
+              content: "Add tests for login",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+            {
+              id: "message-coding",
+              session_id: "session-ready",
+              role: "assistant",
+              content: "",
+              citations: [],
+              position: 2,
+              coding_run_id: "run-awaiting",
+              created_at: "2026-06-17T09:00:02Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-awaiting",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          id: "run-awaiting",
+          status: "awaiting_approval",
+          failed_stage: null,
+          failure_reason: null,
+          review_findings: [
+            {
+              category: "coverage",
+              detail: "Covers the successful login path.",
+            },
+          ],
+          diff: "diff --git a/tests/test_login.py b/tests/test_login.py\n+def test_login_success():\n+    assert True\n",
+          pull_request_url: null,
+          disclaimer:
+            "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-ready")
+
+  // The run link is reconstructed, but no terminal outcome summary is shown
+  // for a run still awaiting the owner's decision.
+  await expect(
+    page.getByRole("button", { name: "View run details" }),
+  ).toBeVisible()
+  await expect(page.getByText("Run failed during")).toHaveCount(0)
+  await expect(page.getByText("No new tests were generated.")).toHaveCount(0)
+  await expect(page.getByText("Approved and pushed")).toHaveCount(0)
+  await expect(page.getByText("Rejected and discarded")).toHaveCount(0)
+  await expect(page.getByText("Changes requested")).toHaveCount(0)
 })
 
 test("User can reject a reviewed Test Patch with optional feedback", async ({

@@ -67,8 +67,8 @@ type RunFailureView = {
 type RunDecisionView =
   | {
       status: "approved"
-      branch: string
-      message: string
+      branch?: string
+      message?: string
       pullRequestUrl: string
       diff: string
       disclaimer: string
@@ -505,6 +505,17 @@ function CopilotShell() {
                     ) : null}
                     {message.noChanges ? (
                       <RunNoChangesSummary noChanges={message.noChanges} />
+                    ) : null}
+                    {message.codingRunId &&
+                    activeSessionId &&
+                    !message.review &&
+                    !message.failure &&
+                    !message.noChanges &&
+                    !message.decision ? (
+                      <RunOutcomeSummary
+                        repositorySessionId={activeSessionId}
+                        codingRunId={message.codingRunId}
+                      />
                     ) : null}
                     {message.citations.length > 0 ? (
                       <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
@@ -977,9 +988,11 @@ function RunDecisionSummary({ decision }: { decision: RunDecisionView }) {
           {decision.message ? (
             <p className="text-sm text-muted-foreground">{decision.message}</p>
           ) : null}
-          <p className="text-sm text-muted-foreground">
-            Branch {decision.branch}
-          </p>
+          {decision.branch ? (
+            <p className="text-sm text-muted-foreground">
+              Branch {decision.branch}
+            </p>
+          ) : null}
           {decision.pullRequestUrl ? (
             <a
               className="text-sm text-primary underline"
@@ -1035,6 +1048,108 @@ function RunNoChangesSummary({ noChanges }: { noChanges: RunNoChangesView }) {
     <div className="mt-3 grid gap-1 text-sm">
       <p className="font-medium">No new tests were generated.</p>
       <p>{noChanges.message}</p>
+    </div>
+  )
+}
+
+// Rehydrates a Coding Run's terminal outcome summary from its persisted record
+// when a reloaded message carries only the run link (no live-stream outcome).
+function RunOutcomeSummary({
+  repositorySessionId,
+  codingRunId,
+}: {
+  repositorySessionId: string
+  codingRunId: string
+}) {
+  const runQuery = useQuery({
+    queryKey: ["coding-run", repositorySessionId, codingRunId],
+    queryFn: () =>
+      SessionsService.readCodingRun({ repositorySessionId, codingRunId }),
+  })
+
+  const run = runQuery.data
+  if (!run) {
+    return null
+  }
+
+  if (run.status === "failed") {
+    return (
+      <RunFailureSummary
+        failure={{
+          failedStage: run.failed_stage ?? "",
+          reason: run.failure_reason ?? "",
+        }}
+      />
+    )
+  }
+
+  if (run.status === "succeeded") {
+    return <RunNoChangesSummary noChanges={{ message: "" }} />
+  }
+
+  if (run.status === "approved") {
+    return (
+      <RunDecisionSummary
+        decision={{
+          status: "approved",
+          pullRequestUrl: run.pull_request_url ?? "",
+          diff: run.diff ?? "",
+          disclaimer: run.disclaimer ?? "",
+        }}
+      />
+    )
+  }
+
+  if (run.status === "rejected") {
+    return (
+      <RunDecisionSummary
+        decision={{
+          status: "rejected",
+          findings: run.review_findings ?? [],
+          diff: run.diff ?? "",
+          disclaimer: run.disclaimer ?? "",
+        }}
+      />
+    )
+  }
+
+  if (run.status === "changes_requested") {
+    return (
+      <RunEscalatedSummary
+        findings={run.review_findings ?? []}
+        diff={run.diff ?? ""}
+        disclaimer={run.disclaimer ?? ""}
+      />
+    )
+  }
+
+  return null
+}
+
+function RunEscalatedSummary({
+  findings,
+  diff,
+  disclaimer,
+}: {
+  findings: ReviewFinding[]
+  diff: string
+  disclaimer: string
+}) {
+  return (
+    <div className="mt-3 grid gap-3">
+      <p className="text-sm font-medium">Changes requested</p>
+      {findings.length > 0 ? (
+        <ul className="space-y-1 text-sm">
+          {findings.map((finding) => (
+            <li key={`${finding.category}:${finding.detail}`}>
+              <span className="font-medium">{finding.category}: </span>
+              {finding.detail}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {diff ? <DiffView diff={diff} /> : null}
+      <p className="text-xs text-muted-foreground">{disclaimer}</p>
     </div>
   )
 }
