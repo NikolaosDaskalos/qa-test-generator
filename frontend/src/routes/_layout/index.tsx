@@ -517,7 +517,10 @@ function CopilotShell() {
                 ))
               )}
               {stageStatus.length > 0 ? (
-                <ol className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <ol
+                  data-testid="stage-progress"
+                  className="flex flex-wrap gap-2 text-xs text-muted-foreground"
+                >
                   {stageStatus.map((stage) => (
                     <li key={stage}>{stage}</li>
                   ))}
@@ -1346,6 +1349,7 @@ async function submitQuestion({
       }
 
       if (event.type === "result") {
+        setStageStatus([])
         setChatMessages((messages) =>
           messages.map((message) =>
             message.id === assistantMessageId
@@ -1370,6 +1374,7 @@ async function submitQuestion({
       }
 
       if (event.type === "review_result" && isReviewResultEvent(event)) {
+        setStageStatus([])
         setChatMessages((messages) =>
           messages.map((message) =>
             message.id === assistantMessageId
@@ -1391,6 +1396,7 @@ async function submitQuestion({
       }
 
       if (event.type === "run_failure" && isRunFailureEvent(event)) {
+        setStageStatus([])
         setChatMessages((messages) =>
           messages.map((message) =>
             message.id === assistantMessageId
@@ -1408,6 +1414,7 @@ async function submitQuestion({
       }
 
       if (event.type === "run_no_changes") {
+        setStageStatus([])
         setChatMessages((messages) =>
           messages.map((message) =>
             message.id === assistantMessageId
@@ -1468,6 +1475,7 @@ async function submitDecision({
       }
 
       if (event.type === "run_approved" && isRunApprovedEvent(event)) {
+        setStageStatus([])
         setChatMessages((messages) =>
           messages.map((message) =>
             message.codingRunId === event.coding_run_id
@@ -1488,6 +1496,7 @@ async function submitDecision({
       }
 
       if (event.type === "run_rejected" && isRunRejectedEvent(event)) {
+        setStageStatus([])
         setChatMessages((messages) =>
           messages.map((message) =>
             message.codingRunId === event.coding_run_id

@@ -549,9 +549,9 @@ test("User can ask a ready Repository question and see streamed answer citations
     .fill("Where is the login route tested?")
   await page.getByRole("button", { name: "Ask" }).click()
 
-  await expect(page.getByText("retrieving")).toBeVisible()
   await expect(page.getByText("Login is tested.")).toBeVisible()
   await expect(page.getByText("frontend/tests/login.spec.ts")).toBeVisible()
+  await expect(page.getByTestId("stage-progress")).toHaveCount(0)
 })
 
 test("First Repository Session request refreshes the sidebar title", async ({
@@ -991,12 +991,8 @@ test("User can request code generation and see the reviewed Test Patch", async (
     .fill("Add tests for login")
   await page.getByRole("button", { name: "Ask" }).click()
 
-  await expect(page.getByText("planning")).toBeVisible()
-  await expect(page.getByText("retrieving")).toBeVisible()
-  await expect(page.getByText("researching")).toBeVisible()
-  await expect(page.getByText("generating")).toBeVisible()
-  await expect(page.getByText("reviewing")).toBeVisible()
   await expect(page.getByText("Coding Run run-123")).toBeVisible()
+  await expect(page.getByTestId("stage-progress")).toHaveCount(0)
   await expect(page.getByText("Accepted")).toBeVisible()
   await expect(page.getByText("Score 8/10; threshold 7")).toBeVisible()
   await expect(
@@ -1107,8 +1103,8 @@ test("User can approve a reviewed Test Patch and see the pushed branch", async (
   await expect(page.getByRole("button", { name: "Approve" })).toBeVisible()
   await page.getByRole("button", { name: "Approve" }).click()
 
-  await expect(page.getByText("git_push")).toBeVisible()
   await expect(page.getByText("Approved and pushed")).toBeVisible()
+  await expect(page.getByTestId("stage-progress")).toHaveCount(0)
   await expect(page.getByText("Branch qa-tests/run-approve")).toBeVisible()
   const pullRequestLink = page.getByRole("link", {
     name: "View Pull Request",
@@ -1421,6 +1417,7 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
       await route.fulfill({
         contentType: "text/event-stream",
         body: [
+          'data: {"type":"stage","stage":"reviewing"}\n\n',
           'data: {"type":"run_rejected","coding_run_id":"run-reject","findings":[{"category":"coverage","detail":"Missing locked account coverage."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
         ].join(""),
       })
@@ -1441,6 +1438,7 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
   await page.getByRole("button", { name: "Reject" }).click()
 
   await expect(page.getByText("Rejected and discarded")).toBeVisible()
+  await expect(page.getByTestId("stage-progress")).toHaveCount(0)
   await expect(page.getByText("Missing locked account coverage.")).toBeVisible()
   await expect(page.getByText("tests/test_login.py").last()).toBeVisible()
   await expect(
@@ -1534,6 +1532,84 @@ test("Failed code generation renders the failed stage and sanitized reason", asy
   await expect(
     page.getByText("Question stream failed", { exact: false }),
   ).not.toBeVisible()
+  await expect(page.getByTestId("stage-progress")).toHaveCount(0)
+})
+
+test("No-changes code generation clears the stage progress strip", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"stage","stage":"planning"}\n\n',
+          'data: {"type":"run_started","coding_run_id":"run-nochanges"}\n\n',
+          'data: {"type":"stage","stage":"generating"}\n\n',
+          'data: {"type":"run_no_changes","coding_run_id":"run-nochanges","message":"The requested coverage already exists."}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests that already exist")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(page.getByText("No new tests were generated.")).toBeVisible()
+  await expect(
+    page.getByText("The requested coverage already exists."),
+  ).toBeVisible()
+  await expect(page.getByTestId("stage-progress")).toHaveCount(0)
 })
 
 test("Repository questions and code generation coexist in one chat history", async ({
