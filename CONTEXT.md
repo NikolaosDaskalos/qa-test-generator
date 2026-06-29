@@ -5,8 +5,8 @@ An AI course capstone that demonstrates repository-grounded question answering a
 ## Language
 
 **Repository**:
-A public or private GitHub-hosted Python codebase connected to the copilot for indexing, questions, and code generation. GitLab, Bitbucket, and non-Python repositories are outside the demo scope.
-_Avoid_: Project, codebase connection
+A public or private GitHub-hosted Python codebase connected to the copilot for indexing, questions, and code generation. It must contain at least one Python file to be usable; its non-Python text files (build, configuration, and documentation files) are indexed as supporting context, but the code-generation feature targets Python. GitLab, Bitbucket, and repositories with no Python file are outside the demo scope.
+_Avoid_: Project, codebase connection, Python-only index
 
 **Repository Credential**:
 A mandatory GitHub token used for clone, fetch, approved non-default branch pushes, and opening the Pull Request that proposes an approved branch. Public repositories use the same credential flow as private repositories. The same credential authenticates both the Git protocol operations and the GitHub API operations; opening a Pull Request additionally requires the token to carry pull-request write permission.
@@ -21,12 +21,12 @@ The complete persisted exchanges within a Repository Session, available for chro
 _Avoid_: Session memory blob, full-history prompt, citations rendered into message text
 
 **Repository Document**:
-The indexed representation of a file from the Repository bound to the current Repository Session. Answers, plans, generated tests, reviews, and citations must not use Repository Documents or their Code Chunks from another Repository.
-_Avoid_: Repository Evidence, Repository File, user-wide retrieval, cross-repository context
+The indexed representation of a file from the Repository bound to the current Repository Session. Any committed, UTF-8 text file is indexed — source code, configuration, build, and documentation files alike — not only Python; binary, git-ignored, oversized (over the configured byte cap), and lock/vendor files are excluded. Each Repository Document records a category (code, config, docs, other) and a language. Answers, plans, generated tests, reviews, and citations must not use Repository Documents or their Code Chunks from another Repository.
+_Avoid_: Repository Evidence, Repository File, Python-only document, user-wide retrieval, cross-repository context
 
 **Code Chunk**:
-A Python-aware text segment identified by Repository, commit SHA, and file path. Symbol extraction and line-level citations are outside the demo scope.
-_Avoid_: AST symbol unit, line-level source unit
+A language-aware text segment identified by Repository, commit SHA, and file path. Python and other recognized source or markup files are split with language-appropriate separators; remaining text files fall back to a generic splitter. Symbol extraction and line-level citations are outside the demo scope.
+_Avoid_: AST symbol unit, line-level source unit, Python-only chunking
 
 **Repository Synchronization**:
 The file-level update that aligns Repository Documents with the latest commit of the Repository's default branch. Added files are indexed, modified and renamed files are replaced, and deleted files are removed; the indexed commit advances only after all changes succeed.
