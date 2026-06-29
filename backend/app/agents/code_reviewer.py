@@ -14,6 +14,7 @@ bounded by single-tool binding and a per-run tool-call limit.
 import logging
 
 from langchain.agents import create_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import HumanMessage
 
 from app.agents.fallback import with_agent_fallback
@@ -56,9 +57,22 @@ class CodeReviewer:
 
 
 def _build_agent(llm):
-    """Build a bounded ReAct review agent over ``web_search`` for the given chat model."""
+    """Build a bounded ReAct review agent over ``web_search`` for the given chat model.
+
+    Structured output is requested through a ``ToolStrategy`` rather than the raw schema
+    (issue #46): a raw ``PatchReview`` resolves to native provider structured output on
+    Anthropic, whose post-``web_search`` final turn is parsed with ``json.loads`` and fails
+    intermittently when it isn't bare JSON. ``ToolStrategy`` keeps the schema a distinct
+    structured-output tool call that ``create_agent`` orchestrates apart from ``web_search``,
+    and its default ``handle_errors`` feeds a bad extraction back to the model for a retry —
+    bounded, like the loop itself, by the per-run tool-call limit.
+    """
     return create_agent(
-        llm, tools=[web_search], system_prompt=CODE_REVIEWER_SYSTEM_PROMPT, response_format=PatchReview, middleware=[build_tool_call_limit_middleware()]
+        llm,
+        tools=[web_search],
+        system_prompt=CODE_REVIEWER_SYSTEM_PROMPT,
+        response_format=ToolStrategy(PatchReview),
+        middleware=[build_tool_call_limit_middleware()],
     )
 
 
