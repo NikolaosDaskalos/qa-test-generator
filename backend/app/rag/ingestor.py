@@ -1,6 +1,7 @@
 """Load, split, and persist Git repository documents in Weaviate."""
 
 import logging
+import os
 import uuid
 from collections.abc import Sequence
 from functools import cached_property
@@ -22,9 +23,15 @@ from app.integrations.weaviate import WeaviateResources
 
 logger = logging.getLogger(__name__)
 
+# Committed-but-unwanted files GitLoader cannot filter on its own: dependency lock files and
+# vendored source trees that bloat the index without aiding retrieval or test generation.
+_LOCK_FILE_NAMES = frozenset({"poetry.lock", "package-lock.json", "yarn.lock", "Cargo.lock"})
+_LOCK_FILE_SUFFIX = ".lock"
+_VENDOR_DIRECTORIES = frozenset({"vendor", "third_party", "node_modules"})
+
 
 class DocumentIngestor:
-    """Loads an existing local Git clone and stores Python chunks in Weaviate."""
+    """Loads an existing local Git clone and stores committed text-file chunks in Weaviate."""
 
     def __init__(self, resources: WeaviateResources, repository_document_store: RepositoryDocumentStore) -> None:
         """Create an ingestor backed by shared Weaviate resources."""
@@ -32,11 +39,25 @@ class DocumentIngestor:
         self.repository_document_store = repository_document_store
 
     @cached_property
-    def splitter(self) -> RecursiveCharacterTextSplitter:
+    def _tokenizer(self) -> Any:
+        """The cached embedding-model tokenizer that sizes every splitter's chunks."""
+        return AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL_TOKENIZER)
+
+    @cached_property
+    def python_splitter(self) -> RecursiveCharacterTextSplitter:
         """The cached Python-aware splitter, sized by the embedding model's tokenizer."""
         return RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-            tokenizer=AutoTokenizer.from_pretrained(settings.EMBEDDING_MODEL_TOKENIZER),
+            tokenizer=self._tokenizer,
             separators=RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON),
+            chunk_size=settings.CHUNK_SIZE,
+            chunk_overlap=settings.CHUNK_OVERLAP,
+        )
+
+    @cached_property
+    def generic_splitter(self) -> RecursiveCharacterTextSplitter:
+        """The cached generic recursive splitter for non-Python text files."""
+        return RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+            tokenizer=self._tokenizer,
             chunk_size=settings.CHUNK_SIZE,
             chunk_overlap=settings.CHUNK_OVERLAP,
         )
@@ -53,7 +74,7 @@ class DocumentIngestor:
         tenant = str(user_id).strip()
 
         raw_docs = self._load(repo_path, branch)
-        if not raw_docs:
+        if not any(self._is_python(doc) for doc in raw_docs):
             logger.error("Repository ingestion found no Python documents for repository_id=%s user_id=%s", repository_id, user_id)
             raise IngestorError("Repository has no Python files")
 
@@ -135,14 +156,40 @@ class DocumentIngestor:
         return self.resources.client.collections.get(settings.WEAVIATE_COLLECTION)
 
     def _load(self, repo_path: Path, branch: str) -> list[Document]:
-        """Load Python files with non-empty content from the checked-out default branch."""
-        loader = GitLoader(repo_path=str(repo_path), branch=branch, file_filter=lambda file_path: str(file_path).endswith(".py"))
+        """Load every committed UTF-8 text file with non-empty content from the checked-out branch."""
+        loader = GitLoader(repo_path=str(repo_path), branch=branch, file_filter=self._file_filter)
         raw_docs: list[Document] = [doc for doc in loader.load() if doc.page_content]
-        logger.info("Loaded repository Python documents branch=%s document_count=%s", branch, len(raw_docs))
+        logger.info("Loaded repository documents branch=%s document_count=%s", branch, len(raw_docs))
         return raw_docs
 
+    def _file_filter(self, file_path: str) -> bool:
+        """Accept committed text files within the size cap and outside the lock/vendor denylist.
+
+        GitLoader already excludes binaries (UTF-8 decode) and git-ignored paths; this adds the
+        two guards it lacks: a byte cap checked before reading, and a small lock/vendor denylist.
+        """
+        path = Path(file_path)
+        if path.name in _LOCK_FILE_NAMES or path.suffix == _LOCK_FILE_SUFFIX:
+            logger.debug("Skipping lock file path=%s", file_path)
+            return False
+        if _VENDOR_DIRECTORIES.intersection(path.parts):
+            logger.debug("Skipping vendored file path=%s", file_path)
+            return False
+        if os.path.getsize(file_path) > settings.MAX_INGEST_FILE_BYTES:
+            logger.debug("Skipping oversized file path=%s", file_path)
+            return False
+        return True
+
+    @staticmethod
+    def _is_python(doc: Document) -> bool:
+        """Return whether a loaded document is a Python source file."""
+        return str(doc.metadata.get("source", "")).endswith(".py")
+
     def _split(self, raw_docs: list[Document]) -> list[Document]:
-        """Split loaded documents into embedding-sized Python chunks."""
-        chunked_docs = self.splitter.split_documents(raw_docs)
+        """Split each document into embedding-sized chunks: Python-aware for `.py`, generic otherwise."""
+        chunked_docs: list[Document] = []
+        for doc in raw_docs:
+            splitter = self.python_splitter if self._is_python(doc) else self.generic_splitter
+            chunked_docs.extend(splitter.split_documents([doc]))
         logger.info("Split repository documents document_count=%s chunk_count=%s", len(raw_docs), len(chunked_docs))
         return chunked_docs

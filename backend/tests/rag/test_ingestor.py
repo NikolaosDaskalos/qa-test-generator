@@ -5,12 +5,40 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from git import Repo
 from langchain_core.documents import Document
 
 from app.core import settings
 from app.core.errors.rag_errors import IngestorError
 from app.integrations.weaviate import WeaviateResources
 from app.rag import DocumentIngestor
+
+
+def _make_git_repo(root: Path, tracked: dict[str, bytes | str], *, ignored: dict[str, bytes | str] | None = None) -> tuple[Path, str]:
+    """Create a committed Git repository and return its path and active branch name."""
+    repo = Repo.init(root)
+    with repo.config_writer() as config:
+        config.set_value("user", "name", "Test")
+        config.set_value("user", "email", "test@example.com")
+
+    for relative_path, content in tracked.items():
+        file_path = root / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
+        repo.index.add([str(file_path)])
+    repo.index.commit("initial commit")
+
+    for relative_path, content in (ignored or {}).items():
+        file_path = root / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
+
+    return root, repo.active_branch.name
+
+
+def _loader_ingestor() -> DocumentIngestor:
+    """Build an ingestor for exercising the real load path without persistence."""
+    return DocumentIngestor(_resources(), FakeRepositoryDocumentStore())
 
 
 class FakeTenants:
@@ -183,6 +211,22 @@ def test_empty_ingestion_is_rejected_without_writes() -> None:
     assert ingestor.repository_document_store.replace_calls == []
 
 
+def test_ingestion_requires_at_least_one_python_file() -> None:
+    """Reject a repository whose only loaded documents are non-Python text files."""
+    resources = _resources()
+    documents = [
+        Document(page_content="[project]", metadata={"source": "pyproject.toml"}),
+        Document(page_content="# Demo", metadata={"source": "README.md"}),
+    ]
+    ingestor = _bare_ingestor(documents, resources)
+
+    with pytest.raises(IngestorError, match="no Python files"):
+        ingestor.ingest(Path("/repo"), uuid.uuid4(), "main", "a" * 40, uuid.uuid4())
+
+    assert resources.vector_store.add_calls == []
+    assert ingestor.repository_document_store.replace_calls == []
+
+
 def test_repository_deletion_is_idempotent_when_tenant_is_missing() -> None:
     """Do not create a tenant solely to delete absent repository chunks."""
     resources = _resources()
@@ -221,3 +265,108 @@ def test_ingestion_uses_shared_resources_when_write_fails() -> None:
 
     assert ingestor.resources is resources
     assert ingestor.repository_document_store.delete_calls == [repository_id]
+
+
+class FakeSplitter:
+    """Record the documents handed to a splitter and echo them back as chunks."""
+
+    def __init__(self) -> None:
+        self.seen: list[Document] = []
+
+    def split_documents(self, documents):
+        self.seen.extend(documents)
+        return list(documents)
+
+
+def test_split_routes_python_and_non_python_files_to_distinct_splitters() -> None:
+    """Chunk Python files with the Python splitter and other text files with the generic splitter."""
+    ingestor = DocumentIngestor(_resources(), FakeRepositoryDocumentStore())
+    python_splitter = FakeSplitter()
+    generic_splitter = FakeSplitter()
+    ingestor.python_splitter = python_splitter
+    ingestor.generic_splitter = generic_splitter
+    documents = [
+        Document(page_content="x = 1", metadata={"source": "app.py"}),
+        Document(page_content="# Demo", metadata={"source": "README.md"}),
+    ]
+
+    chunks = ingestor._split(documents)
+
+    assert [doc.metadata["source"] for doc in python_splitter.seen] == ["app.py"]
+    assert [doc.metadata["source"] for doc in generic_splitter.seen] == ["README.md"]
+    assert {chunk.metadata["source"] for chunk in chunks} == {"app.py", "README.md"}
+
+
+def test_load_ingests_every_committed_text_file(tmp_path: Path) -> None:
+    """Load all committed UTF-8 text files, not only Python sources."""
+    repo_path, branch = _make_git_repo(
+        tmp_path,
+        {
+            "app.py": "print('hi')",
+            "pyproject.toml": "[project]\nname = 'demo'",
+            "Dockerfile": "FROM python:3.13",
+            "docs/README.md": "# Demo",
+        },
+    )
+    ingestor = _loader_ingestor()
+
+    sources = {doc.metadata["source"] for doc in ingestor._load(repo_path, branch)}
+
+    assert sources == {"app.py", "pyproject.toml", "Dockerfile", "docs/README.md"}
+
+
+def test_load_skips_files_over_the_byte_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip any committed file larger than MAX_INGEST_FILE_BYTES before reading it."""
+    monkeypatch.setattr(settings, "MAX_INGEST_FILE_BYTES", 64)
+    repo_path, branch = _make_git_repo(
+        tmp_path,
+        {
+            "small.py": "x = 1",
+            "huge.py": "# " + "y" * 200,
+        },
+    )
+    ingestor = _loader_ingestor()
+
+    sources = {doc.metadata["source"] for doc in ingestor._load(repo_path, branch)}
+
+    assert sources == {"small.py"}
+
+
+def test_load_skips_lock_files_and_vendor_directories(tmp_path: Path) -> None:
+    """Skip lock files and committed vendor directories via the denylist."""
+    repo_path, branch = _make_git_repo(
+        tmp_path,
+        {
+            "app.py": "keep = True",
+            "poetry.lock": "[[package]]",
+            "package-lock.json": "{}",
+            "Cargo.lock": "[[package]]",
+            "assets.min.lock": "blob",
+            "vendor/lib.py": "vendored = 1",
+            "third_party/helper.py": "vendored = 2",
+            "node_modules/pkg/index.js": "module.exports = {}",
+        },
+    )
+    ingestor = _loader_ingestor()
+
+    sources = {doc.metadata["source"] for doc in ingestor._load(repo_path, branch)}
+
+    assert sources == {"app.py"}
+
+
+def test_load_skips_binary_and_git_ignored_files(tmp_path: Path) -> None:
+    """Never index binary files or git-ignored paths, leaning on GitLoader's guards."""
+    repo_path, branch = _make_git_repo(
+        tmp_path,
+        {
+            "app.py": "keep = True",
+            "logo.png": b"\x89PNG\r\n\x1a\n\x00\xff\xfe",
+            ".gitignore": "secret.py\n",
+        },
+        ignored={"secret.py": "password = 'x'"},
+    )
+    ingestor = _loader_ingestor()
+
+    sources = {doc.metadata["source"] for doc in ingestor._load(repo_path, branch)}
+
+    assert sources == {"app.py", ".gitignore"}

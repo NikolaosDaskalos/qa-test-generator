@@ -193,6 +193,7 @@ class Settings(BaseSettings):
 
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 10
+    MAX_INGEST_FILE_BYTES: int = Field(default=1_000_000, ge=1)
     TOP_K: int = Field(default=10, ge=1)
     FINAL_PARENT_LIMIT: int = Field(default=5, ge=1)
     # Multi-query + RAG-fusion on the simple repository-question strategy: how many query
