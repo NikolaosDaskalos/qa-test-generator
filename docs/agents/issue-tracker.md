@@ -1,22 +1,36 @@
-# Issue tracker: Local Markdown
+# Issue tracker: GitHub Issues
 
-Issues and PRDs for this repo live as markdown files under `docs/`.
+Implementation issues for this repo live as GitHub issues. Use the `gh` CLI to
+read, create, and update them. PRDs still live as markdown under `docs/`.
 
 ## Conventions
 
-- Implementation issues are flat files: `docs/issues/<NN>-<slug>.md`, numbered from `01`.
+- Issues live on GitHub: `gh issue list`, `gh issue view <number>`.
 - The PRD lives at `docs/prd/PRD.md`.
-- Each issue file opens with a short metadata header near the top:
-  - `Status:` — the triage state (see `triage-labels.md` for the role strings)
-  - `Type:` — e.g. `AFK` for agent-ready work
-  - `User stories:` — the PRD user stories this slice covers
-- The body uses `## What to build`, `## Acceptance criteria` (checkboxes), and any further sections the work needs.
-- Comments and conversation history append to the bottom of the file under a `## Comments` heading.
+- Triage state is carried by GitHub labels (see `triage-labels.md`).
+- Each issue body should cover the same ground the old templates did:
+  - the PRD user stories the slice covers,
+  - `## What to build`,
+  - `## Acceptance criteria` (checkboxes),
+  - and any further sections the work needs.
+- Conversation history lives in the issue's GitHub comments.
+
+## Common `gh` commands
+
+- List issues: `gh issue list --limit 50`
+- Filter by triage label: `gh issue list --label ready-for-agent`
+- View an issue: `gh issue view <number>`
+- Create an issue: `gh issue create --title "..." --body "..." --label <label>`
+- Comment: `gh issue comment <number> --body "..."`
+- Re-label: `gh issue edit <number> --add-label <label> --remove-label <label>`
+- Close: `gh issue close <number>`
 
 ## When a skill says "publish to the issue tracker"
 
-Create a new file at `docs/issues/<NN>-<slug>.md`, picking the next free `<NN>`. Publish PRDs to `docs/prd/PRD.md`.
+Create a new GitHub issue with `gh issue create`, applying the appropriate
+triage label. Publish PRDs to `docs/prd/PRD.md`.
 
 ## When a skill says "fetch the relevant ticket"
 
-Read the file under `docs/issues/`. The user will normally pass the path or the issue number directly.
+Read the GitHub issue with `gh issue view <number>`. The user will normally pass
+the issue number directly.
