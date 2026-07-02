@@ -57,5 +57,10 @@ class CodingRun(SQLModel, table=True):
 
     @property
     def awaiting_decision(self) -> bool:
-        """Whether the run is paused for an owner's approval decision and so resumable."""
-        return self.status == CodingRunStatus.awaiting_approval
+        """Whether the run is paused for an owner's approval decision and so resumable.
+
+        Both an accepted escalation (``awaiting_approval``) and a below-threshold
+        escalation (``changes_requested``) pause at ``await_decision`` for the owner;
+        the independent checkpoint check keeps stale, not-actually-paused runs out.
+        """
+        return self.status in (CodingRunStatus.awaiting_approval, CodingRunStatus.changes_requested)

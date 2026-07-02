@@ -153,10 +153,11 @@ class RepositorySessionService:
     ) -> Generator[AgentStreamEvent, None, None]:
         """Validate ownership and state, then resume the suspended run with the decision.
 
-        Ownership flows through the session and the run; only a run actually paused
-        for a decision (``awaiting_approval``) is resumable, so a repeated decision
-        or one for any other state is rejected before the graph — and the shared
-        checkout — is ever touched.
+        Ownership flows through the session and the run; a run awaiting an owner
+        decision — whether an accepted escalation (``awaiting_approval``) or a
+        below-threshold one (``changes_requested``) — is resumable, so a repeated
+        decision or one for any other state is rejected before the graph — and the
+        shared checkout — is ever touched.
         """
         run = self.get_owned_run(repository_session_id=repository_session_id, coding_run_id=decision.coding_run_id, user=user)
         if not run.awaiting_decision:

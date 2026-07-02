@@ -291,6 +291,32 @@ def test_stream_session_emits_run_approved_terminal_for_an_approved_decision():
     assert session_store.appended == []
 
 
+def test_stream_session_resumes_a_below_threshold_escalation_paused_at_await_decision():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    # A Test Patch that escalated below the review threshold persists as changes_requested,
+    # yet its LangGraph thread is genuinely paused at await_decision awaiting the owner.
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t-escalated", status=CodingRunStatus.changes_requested)
+    service.coding_run_store = FakeCodingRunStore(run)
+    approval = RunApproved(coding_run_id=run.id, branch="qa-tests/abc123", diff="diff --git a/tests/test_x.py b/tests/test_x.py")
+    review = ReviewResult(coding_run_id=run.id, accepted=False, score=5, threshold=7, findings=[], diff=approval.diff)
+    graph = FakeGraph([("custom", approval)], {"intent": "code_generation", "review_result": review}, next_nodes=("await_decision",))
+    decision = HumanDecisionRequest(coding_run_id=run.id, approved=True)
+
+    events = list(
+        service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision)
+    )
+
+    terminal = events[-1]
+    assert isinstance(terminal, RunApproved)
+    assert terminal.coding_run_id == run.id
+    # The graph was resumed on the run's own thread with the owner's decision payload.
+    resume_input, config, _modes = graph.streamed[0]
+    assert isinstance(resume_input, Command)
+    assert config["configurable"]["thread_id"] == "t-escalated"
+    assert session_store.appended == []
+
+
 def test_stream_session_rejects_a_decision_when_the_checkpoint_is_not_paused_at_await_decision():
     user = _user()
     service, _store, repository_session = _wiring(user)
@@ -312,10 +338,26 @@ def test_stream_session_rejects_a_decision_when_the_checkpoint_is_not_paused_at_
     assert graph.streamed == []
 
 
+def test_stream_session_rejects_a_below_threshold_escalation_not_paused_at_await_decision():
+    user = _user()
+    service, _store, repository_session = _wiring(user)
+    # changes_requested now passes the state gate, so a run that is not genuinely
+    # paused is caught only by the independent checkpoint check.
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t-stale", status=CodingRunStatus.changes_requested)
+    service.coding_run_store = FakeCodingRunStore(run)
+    graph = FakeGraph([], {"intent": "code_generation"}, next_nodes=())
+    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+
+    with pytest.raises(RunNotAwaitingDecision):
+        list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision))
+    # A run not paused at await_decision never drives the graph, so the checkout is never touched.
+    assert graph.streamed == []
+
+
 def test_stream_session_rejects_a_decision_for_a_run_not_awaiting_a_decision():
     user = _user()
     service, _store, repository_session = _wiring(user)
-    for state in (CodingRunStatus.rejected, CodingRunStatus.changes_requested, CodingRunStatus.generating):
+    for state in (CodingRunStatus.rejected, CodingRunStatus.generating):
         run = CodingRun(repository_session_id=repository_session.id, thread_id="t", status=state)
         service.coding_run_store = FakeCodingRunStore(run)
         graph = FakeGraph([], {})

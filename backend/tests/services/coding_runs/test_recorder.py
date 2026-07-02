@@ -163,7 +163,7 @@ def test_recorder_approves_a_reviewed_run_through_the_store() -> None:
         assert approved.review_findings == [{"category": "conventions", "detail": "matches existing tests"}]
 
 
-def test_run_awaits_a_decision_only_while_awaiting_approval() -> None:
+def test_run_awaits_a_decision_while_paused_for_an_owner_escalation() -> None:
     engine = _engine()
     with Session(engine) as db:
         session_id = _seed(db)
@@ -178,6 +178,22 @@ def test_run_awaits_a_decision_only_while_awaiting_approval() -> None:
 
         recorder.approve(run_id, pull_request_url="https://github.com/o/r/pull/7")
         assert store.get_by_id(run_id).awaiting_decision is False
+
+
+def test_below_threshold_escalation_awaits_a_decision() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        session_id = _seed(db)
+        store = CodingRunStore(db)
+        recorder = CodingRunRecorder(store)
+        run_id = recorder.start(thread_id="t-escalate", repository_session_id=session_id)
+
+        # A review below the threshold persists as changes_requested but still pauses for the owner.
+        recorder.record_review(run_id, accepted=False, findings=[])
+
+        run = store.get_by_id(run_id)
+        assert run.status == CodingRunStatus.changes_requested
+        assert run.awaiting_decision is True
 
 
 def test_recorder_records_a_rejected_review_as_changes_requested() -> None:
