@@ -2,6 +2,7 @@
 
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlmodel import Session, col, func, select
@@ -12,6 +13,19 @@ from app.enums import SessionMessageRole
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _PLACEHOLDER_TITLES = {NEW_SESSION_TITLE, LEGACY_NEW_SESSION_TITLE}
+
+
+@dataclass(frozen=True)
+class SessionHistoryPage:
+    """One page of the complete Session History read model, newest-first-fetched but ordered chronologically.
+
+    ``next_before`` is the position cursor to pass as ``before`` to request the next older page; it is
+    ``None`` once the beginning of the persisted history has been reached.
+    """
+
+    messages: list[SessionHistory]
+    has_more: bool
+    next_before: int | None
 
 
 class RepositorySessionStore:
@@ -103,6 +117,25 @@ class RepositorySessionStore:
         if repository_id is not None:
             statement = statement.where(RepositorySession.repository_id == repository_id)
         return statement
+
+    def get_history_page(self, repository_session_id: uuid.UUID, *, before: int | None = None, limit: int) -> SessionHistoryPage:
+        """Return a page of the complete persisted history, newest first, ordered chronologically.
+
+        Without ``before`` this yields the newest ``limit`` messages; with ``before`` it yields the
+        newest ``limit`` messages strictly older than that position, so a client scrolling upward
+        walks the whole history without gaps or duplicates. Position is unique and monotonic, so the
+        cursor is deterministic and stable against concurrent appends. One extra row is fetched to
+        detect whether older messages remain without a second query.
+        """
+        statement = select(SessionHistory).where(SessionHistory.session_id == repository_session_id)
+        if before is not None:
+            statement = statement.where(SessionHistory.position < before)
+        statement = statement.order_by(col(SessionHistory.position).desc()).limit(limit + 1)
+        newest_first = list(self.session.exec(statement).all())
+        has_more = len(newest_first) > limit
+        messages = list(reversed(newest_first[:limit]))
+        next_before = messages[0].position if has_more and messages else None
+        return SessionHistoryPage(messages=messages, has_more=has_more, next_before=next_before)
 
     def get_recent_history(self, repository_session_id: uuid.UUID) -> list[SessionHistory]:
         """Return the last ``SESSION_HISTORY_LIMIT`` messages in chronological order."""

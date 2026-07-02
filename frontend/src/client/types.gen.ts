@@ -240,10 +240,15 @@ export type RunPatchPublic = {
 };
 
 /**
- * A session's full message history.
+ * One page of a session's complete history, ordered chronologically, with upward-pagination info.
+ *
+ * ``next_before`` is the position cursor the client passes back as ``before`` to fetch the next older
+ * page; it is ``None`` once ``has_more`` is false and the beginning of history has been reached.
  */
 export type SessionHistoriesPublic = {
     data: Array<SessionHistoryPublic>;
+    has_more?: boolean;
+    next_before?: (number | null);
 };
 
 /**
@@ -436,6 +441,8 @@ export type SessionsAskRepositoryQuestionData = {
 export type SessionsAskRepositoryQuestionResponse = (unknown);
 
 export type SessionsReadRepositorySessionHistoryData = {
+    before?: (number | null);
+    limit?: number;
     repositorySessionId: string;
 };
 

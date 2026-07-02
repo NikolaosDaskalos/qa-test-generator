@@ -221,7 +221,13 @@ class Settings(BaseSettings):
     # Max connections in the shared PostgresSaver pool backing the session graph checkpointer.
     CHECKPOINTER_POOL_MAX_SIZE: int = Field(default=10, ge=1)
 
+    # The AI-context window: at most this many most-recent Session History messages are supplied to
+    # question reformulation and task planning, regardless of how much history the UI has loaded for display.
     SESSION_HISTORY_LIMIT: int = 10
+    # The display page size: the chat fetches the newest page this large, then pages upward through the
+    # complete persisted Session History. Kept distinct from SESSION_HISTORY_LIMIT so viewing older
+    # messages never enlarges the AI prompt.
+    SESSION_HISTORY_PAGE_SIZE: int = 50
     RECURSION_LIMIT: int = 7
 
     # The Patch Review pass bar: a patch is accepted when its reviewer score (0–10)

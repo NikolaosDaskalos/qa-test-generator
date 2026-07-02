@@ -9,8 +9,10 @@ from fastapi.testclient import TestClient
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.routes.sessions import router
+from app.core import settings
 from app.core.errors.session_errors import RepositorySessionNotFound
 from app.db.models import CodingRun, RepositorySession, SessionHistory
+from app.db.persistence import SessionHistoryPage
 from app.dependencies import get_current_user, get_repository_session_service, get_session_graph
 from app.enums import CodingRunStage, CodingRunStatus, SessionMessageRole
 from app.schemas import Citation, RepositorySessionPublic, RepositorySessionsPublic, Result, RunApproved, RunRejected, Stage, Token
@@ -25,6 +27,8 @@ class FakeRepositorySessionService:
         listing: RepositorySessionsPublic | None = None,
         list_raises: HTTPException | None = None,
         history_raises: Exception | None = None,
+        has_more: bool = False,
+        next_before: int | None = None,
     ) -> None:
         self.repository_session = repository_session
         self.history = history or []
@@ -32,6 +36,8 @@ class FakeRepositorySessionService:
         self.listing = listing
         self.list_raises = list_raises
         self.history_raises = history_raises
+        self.has_more = has_more
+        self.next_before = next_before
         self.create_calls = []
         self.history_calls = []
         self.run_calls = []
@@ -47,11 +53,11 @@ class FakeRepositorySessionService:
             raise self.list_raises
         return self.listing
 
-    def get_recent_history(self, **kwargs) -> list[SessionHistory]:
+    def get_history_page(self, **kwargs) -> SessionHistoryPage:
         self.history_calls.append(kwargs)
         if self.history_raises is not None:
             raise self.history_raises
-        return self.history
+        return SessionHistoryPage(messages=self.history, has_more=self.has_more, next_before=self.next_before)
 
     def get_owned_run(self, **kwargs) -> CodingRun:
         self.run_calls.append(kwargs)
@@ -220,7 +226,46 @@ def test_owner_can_read_session_history() -> None:
     assert messages[0]["coding_run_id"] is None
     assert messages[1]["coding_run_id"] is None
     assert messages[2]["coding_run_id"] == str(run_id)
-    assert service.history_calls == [{"repository_session_id": repository_session.id, "user": user}]
+    # The default first page uses the configured display page size and starts with no cursor.
+    assert service.history_calls == [
+        {"repository_session_id": repository_session.id, "user": user, "before": None, "limit": settings.SESSION_HISTORY_PAGE_SIZE}
+    ]
+
+
+def test_history_first_page_reports_pagination_information() -> None:
+    user_id = uuid.uuid4()
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
+    history = [SessionHistory(session_id=repository_session.id, role=SessionMessageRole.user, content="q", position=51)]
+    service = FakeRepositorySessionService(repository_session, history, has_more=True, next_before=51)
+    user = SimpleNamespace(id=user_id, is_superuser=False)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{repository_session.id}/history")
+
+    body = response.json()
+    assert body["has_more"] is True
+    assert body["next_before"] == 51
+
+
+def test_history_forwards_before_cursor_and_limit_to_request_older_pages() -> None:
+    user_id = uuid.uuid4()
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
+    service = FakeRepositorySessionService(repository_session)
+    user = SimpleNamespace(id=user_id, is_superuser=False)
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{repository_session.id}/history", params={"before": 51, "limit": 20})
+
+    assert response.status_code == 200
+    assert service.history_calls == [{"repository_session_id": repository_session.id, "user": user, "before": 51, "limit": 20}]
 
 
 class FakeAnsweringService:

@@ -667,12 +667,31 @@ export const SessionHistoriesPublicSchema = {
             },
             type: 'array',
             title: 'Data'
+        },
+        has_more: {
+            type: 'boolean',
+            title: 'Has More',
+            default: false
+        },
+        next_before: {
+            anyOf: [
+                {
+                    type: 'integer'
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Next Before'
         }
     },
     type: 'object',
     required: ['data'],
     title: 'SessionHistoriesPublic',
-    description: "A session's full message history."
+    description: `One page of a session's complete history, ordered chronologically, with upward-pagination info.
+
+\`\`next_before\`\` is the position cursor the client passes back as \`\`before\`\` to fetch the next older
+page; it is \`\`None\`\` once \`\`has_more\`\` is false and the beginning of history has been reached.`
 } as const;
 
 export const SessionHistoryPublicSchema = {

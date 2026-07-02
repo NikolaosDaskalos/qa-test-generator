@@ -313,9 +313,15 @@ export class SessionsService {
     
     /**
      * Read Repository Session History
-     * Return the recent message history of an owned session.
+     * Return one page of an owned session's complete Session History, newest first, for display.
+     *
+     * Opening a session omits ``before`` to fetch the newest page; scrolling upward passes the previous
+     * page's ``next_before`` cursor to fetch older messages, walking the whole persisted conversation.
+     * This display read model is separate from the bounded ten-message window supplied to the AI.
      * @param data The data for the request.
      * @param data.repositorySessionId
+     * @param data.before
+     * @param data.limit
      * @returns SessionHistoriesPublic Successful Response
      * @throws ApiError
      */
@@ -325,6 +331,10 @@ export class SessionsService {
             url: '/api/v1/sessions/{repository_session_id}/history',
             path: {
                 repository_session_id: data.repositorySessionId
+            },
+            query: {
+                before: data.before,
+                limit: data.limit
             },
             errors: {
                 422: 'Validation Error'

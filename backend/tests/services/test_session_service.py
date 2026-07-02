@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from app.core.errors.repository_errors import RepositoryAccessForbidden, RepositoryNotFound
-from app.core.errors.session_errors import RepositoryNotReady, RepositorySessionAccessForbidden
+from app.core.errors.session_errors import RepositoryNotReady, RepositorySessionAccessForbidden, RepositorySessionNotFound
 from app.db.models import Repository, RepositorySession, User
 from app.enums import RepositoryStatus
 from app.schemas import RepositorySessionCreate
@@ -41,6 +41,8 @@ class FakeRepositorySessionStore:
         self.total = total
         self.page_calls = []
         self.count_calls = []
+        self.history_page_calls = []
+        self.history_page = object()
 
     def get_page(self, *, skip, limit, user_id=None, repository_id=None):
         self.page_calls.append({"skip": skip, "limit": limit, "user_id": user_id, "repository_id": repository_id})
@@ -62,6 +64,10 @@ class FakeRepositorySessionStore:
 
     def get_recent_history(self, repository_session_id):
         raise AssertionError("history must not be loaded before ownership is checked")
+
+    def get_history_page(self, repository_session_id, *, before=None, limit):
+        self.history_page_calls.append({"repository_session_id": repository_session_id, "before": before, "limit": limit})
+        return self.history_page
 
     def append_exchange(self, repository_session_id, **kwargs):
         self.append_calls.append((repository_session_id, kwargs))
@@ -198,6 +204,36 @@ def test_user_cannot_read_another_users_session_history() -> None:
 
     with pytest.raises(RepositorySessionAccessForbidden):
         service.get_recent_history(repository_session_id=repository_session.id, user=_user(uuid.uuid4()))
+
+
+def test_history_page_delegates_to_the_store_for_an_owned_session() -> None:
+    user_id = uuid.uuid4()
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
+    session_store = FakeRepositorySessionStore(repository_session)
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None), FakeCodingRunStore())
+
+    page = service.get_history_page(repository_session_id=repository_session.id, user=_user(user_id), before=41, limit=50)
+
+    assert page is session_store.history_page
+    assert session_store.history_page_calls == [{"repository_session_id": repository_session.id, "before": 41, "limit": 50}]
+
+
+def test_history_page_returns_404_when_the_session_is_missing() -> None:
+    service = RepositorySessionService(FakeRepositorySessionStore(), FakeRepositoryStore(None), FakeCodingRunStore())
+
+    with pytest.raises(RepositorySessionNotFound):
+        service.get_history_page(repository_session_id=uuid.uuid4(), user=_user(uuid.uuid4()), before=None, limit=50)
+
+
+def test_user_cannot_page_another_users_session_history() -> None:
+    repository_session = RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4())
+    session_store = FakeRepositorySessionStore(repository_session)
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None), FakeCodingRunStore())
+
+    with pytest.raises(RepositorySessionAccessForbidden):
+        service.get_history_page(repository_session_id=repository_session.id, user=_user(uuid.uuid4()), before=None, limit=50)
+
+    assert session_store.history_page_calls == []
 
 
 def test_owned_exchange_is_persisted_through_one_store_operation() -> None:

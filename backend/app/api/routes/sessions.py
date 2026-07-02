@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, status
 from fastapi.responses import StreamingResponse
 
+from app.core import settings
 from app.db.models import RepositorySession
 from app.dependencies import CurrentUser, RepositorySessionServiceDep, SessionGraphDep
 from app.schemas import (
@@ -73,11 +74,25 @@ def ask_repository_question(
 
 @router.get("/{repository_session_id}/history", response_model=SessionHistoriesPublic)
 def read_repository_session_history(
-    *, repository_session_service: RepositorySessionServiceDep, current_user: CurrentUser, repository_session_id: uuid.UUID
+    *,
+    repository_session_service: RepositorySessionServiceDep,
+    current_user: CurrentUser,
+    repository_session_id: uuid.UUID,
+    before: int | None = None,
+    limit: int = settings.SESSION_HISTORY_PAGE_SIZE,
 ) -> SessionHistoriesPublic:
-    """Return the recent message history of an owned session."""
-    history = repository_session_service.get_recent_history(repository_session_id=repository_session_id, user=current_user)
-    return SessionHistoriesPublic(data=[SessionHistoryPublic.model_validate(message) for message in history])
+    """Return one page of an owned session's complete Session History, newest first, for display.
+
+    Opening a session omits ``before`` to fetch the newest page; scrolling upward passes the previous
+    page's ``next_before`` cursor to fetch older messages, walking the whole persisted conversation.
+    This display read model is separate from the bounded ten-message window supplied to the AI.
+    """
+    page = repository_session_service.get_history_page(
+        repository_session_id=repository_session_id, user=current_user, before=before, limit=limit
+    )
+    return SessionHistoriesPublic(
+        data=[SessionHistoryPublic.model_validate(message) for message in page.messages], has_more=page.has_more, next_before=page.next_before
+    )
 
 
 @router.get("/{repository_session_id}/runs/{coding_run_id}", response_model=CodingRunPublic)

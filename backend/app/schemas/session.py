@@ -90,9 +90,15 @@ class SessionHistoryPublic(BaseModel):
 
 
 class SessionHistoriesPublic(BaseModel):
-    """A session's full message history."""
+    """One page of a session's complete history, ordered chronologically, with upward-pagination info.
+
+    ``next_before`` is the position cursor the client passes back as ``before`` to fetch the next older
+    page; it is ``None`` once ``has_more`` is false and the beginning of history has been reached.
+    """
 
     data: list[SessionHistoryPublic]
+    has_more: bool = False
+    next_before: int | None = None
 
 
 class CodingRunPublic(BaseModel):

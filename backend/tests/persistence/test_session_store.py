@@ -173,6 +173,102 @@ def test_recent_history_returns_latest_messages_in_chronological_order() -> None
     ]
 
 
+def _seed_session_with_exchanges(db: Session, count: int) -> uuid.UUID:
+    """Create an owner, repository, session, and ``count`` user/assistant exchanges."""
+    user_id = uuid.uuid4()
+    repository_id = uuid.uuid4()
+    repository_session_id = uuid.uuid4()
+    db.add(User(id=user_id, email="owner@example.com", hashed_password="not-used"))
+    db.add(Repository(id=repository_id, user_id=user_id, name="openai-python", repository_url="https://github.com/openai/openai-python.git", owner="openai"))
+    db.add(RepositorySession(id=repository_session_id, user_id=user_id, repository_id=repository_id))
+    db.commit()
+    store = RepositorySessionStore(db)
+    for number in range(1, count + 1):
+        store.append_exchange(repository_session_id, user_message=f"question {number}", assistant_message=f"answer {number}")
+    return repository_session_id
+
+
+def test_history_page_returns_newest_messages_chronologically() -> None:
+    engine = _engine()
+
+    with Session(engine) as db:
+        repository_session_id = _seed_session_with_exchanges(db, count=4)  # positions 1..8
+
+        page = RepositorySessionStore(db).get_history_page(repository_session_id, limit=4)
+
+    # The newest four messages (positions 5..8), in ascending chronological order.
+    assert [(message.role, message.content) for message in page.messages] == [
+        (SessionMessageRole.user, "question 3"),
+        (SessionMessageRole.assistant, "answer 3"),
+        (SessionMessageRole.user, "question 4"),
+        (SessionMessageRole.assistant, "answer 4"),
+    ]
+    # Older messages remain, and the cursor points at the oldest position in this page.
+    assert page.has_more is True
+    assert page.next_before == page.messages[0].position
+
+
+def test_history_page_before_cursor_returns_strictly_older_contiguous_page() -> None:
+    engine = _engine()
+
+    with Session(engine) as db:
+        repository_session_id = _seed_session_with_exchanges(db, count=4)  # positions 1..8
+        store = RepositorySessionStore(db)
+
+        newest = store.get_history_page(repository_session_id, limit=4)  # positions 5..8
+        older = store.get_history_page(repository_session_id, before=newest.next_before, limit=4)
+
+    # The older page is strictly before the cursor, contiguous with the newest page — no gaps, no duplicates.
+    assert [(message.role, message.content) for message in older.messages] == [
+        (SessionMessageRole.user, "question 1"),
+        (SessionMessageRole.assistant, "answer 1"),
+        (SessionMessageRole.user, "question 2"),
+        (SessionMessageRole.assistant, "answer 2"),
+    ]
+    assert max(message.position for message in older.messages) < newest.next_before
+
+
+def test_history_page_signals_the_beginning_of_history() -> None:
+    engine = _engine()
+
+    with Session(engine) as db:
+        repository_session_id = _seed_session_with_exchanges(db, count=2)  # positions 1..4
+
+        # A page large enough to reach the very first message: no older messages remain.
+        page = RepositorySessionStore(db).get_history_page(repository_session_id, limit=50)
+
+    assert [message.position for message in page.messages] == [1, 2, 3, 4]
+    assert page.has_more is False
+    assert page.next_before is None
+
+
+def test_history_page_of_empty_history_is_empty() -> None:
+    engine = _engine()
+
+    with Session(engine) as db:
+        repository_session_id = _seed_session_with_exchanges(db, count=0)
+
+        page = RepositorySessionStore(db).get_history_page(repository_session_id, limit=50)
+
+    assert page.messages == []
+    assert page.has_more is False
+    assert page.next_before is None
+
+
+def test_recent_history_caps_at_the_ai_context_window_regardless_of_total() -> None:
+    engine = _engine()
+
+    with Session(engine) as db:
+        # Far more history than the AI window: loading it all for display must never enlarge the prompt.
+        repository_session_id = _seed_session_with_exchanges(db, count=20)
+
+        messages = RepositorySessionStore(db).get_recent_history(repository_session_id)
+
+    assert len(messages) == settings.SESSION_HISTORY_LIMIT
+    # And it is the *most recent* window, ending at the newest message.
+    assert messages[-1].content == "answer 20"
+
+
 def test_append_exchange_retains_assistant_citations_structurally() -> None:
     engine = _engine()
     user_id = uuid.uuid4()

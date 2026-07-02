@@ -58,7 +58,8 @@ Advance `indexed_commit_sha` only after every vector operation succeeds. Expose 
 
 - A repository session requires `repository_id` and cannot switch repositories.
 - Persist each exchange as session history.
-- Use at most the six latest history messages for reformulation.
+- Use at most the ten latest history messages for question reformulation and task planning (`SESSION_HISTORY_LIMIT`).
+- Serve the complete persisted history to the UI through a separate, ownership-scoped paginated read model: fetch the newest page (`SESSION_HISTORY_PAGE_SIZE`, default 50) and page upward with a position cursor (`before`) until the whole conversation is loaded. Loading more for display never enlarges the ten-message AI window.
 - Remove the duplicate JSON memory field from the session model.
 - Answer codebase questions only from Repository Documents.
 - If the retrieved Repository Documents are insufficient, state that the Repository does not provide enough information.

@@ -15,7 +15,7 @@ from app.core.errors.session_errors import (
     RunNotAwaitingDecision,
 )
 from app.db.models import CodingRun, RepositorySession, SessionHistory, User
-from app.db.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore
+from app.db.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore, SessionHistoryPage
 from app.enums import RepositoryStatus
 from app.schemas import AgentStreamEvent, HumanDecisionRequest, RepositorySessionCreate, RepositorySessionsPublic, Result, RunApproved, RunRejected
 from app.services.repository_session_execution import RepositorySessionExecution
@@ -70,6 +70,16 @@ class RepositorySessionService:
         """Return an owned session's recent message history."""
         repository_session = self._get_accessible(repository_session_id, user)
         return self.session_store.get_recent_history(repository_session.id)
+
+    def get_history_page(self, *, repository_session_id: uuid.UUID, user: User, before: int | None, limit: int) -> SessionHistoryPage:
+        """Return a page of an owned session's complete Session History for chronological display.
+
+        This is the display read model, deliberately distinct from ``get_recent_history``: it can walk
+        the whole persisted conversation, while the AI context window supplied to reformulation and
+        planning stays capped at the ten most recent messages regardless of how much the UI has loaded.
+        """
+        repository_session = self._get_accessible(repository_session_id, user)
+        return self.session_store.get_history_page(repository_session.id, before=before, limit=limit)
 
     def get_owned_run(self, *, repository_session_id: uuid.UUID, coding_run_id: uuid.UUID, user: User) -> CodingRun:
         """Return a Coding Run the user owns through the named session, else 404.
