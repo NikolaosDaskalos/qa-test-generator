@@ -83,12 +83,16 @@ export type HTTPValidationError = {
  * The owner's human-in-the-loop decision on a reviewed Test Patch.
  *
  * Delivered through the same session stream that produced the patch: it resumes
- * the suspended Coding Run rather than starting a new one. ``approved`` is the
- * verdict; a rejection discards the patch.
+ * the suspended Coding Run rather than starting a new one. ``verdict`` is the
+ * three-way Owner Decision — a rejection discards the patch, an approval commits
+ * and opens a Pull Request, and an Edit returns the run to generation to revise
+ * the Test Files in place against ``feedback``. Feedback is required (non-empty)
+ * for an Edit — it is the only thing steering the revision — optional for a
+ * rejection, and ignored for an approval.
  */
 export type HumanDecisionRequest = {
     coding_run_id: string;
-    approved: boolean;
+    verdict: OwnerVerdict;
     feedback?: string;
 };
 
@@ -106,6 +110,16 @@ export type NewPassword = {
     token: string;
     new_password: string;
 };
+
+/**
+ * The owner's human-in-the-loop verdict on an escalated Test Patch.
+ *
+ * Exactly three verdicts resolve the same suspended decision point: ``approve``
+ * commits and opens a Pull Request, ``reject`` discards the patch, and ``edit``
+ * returns the run to generation to revise the already-generated Test Files in
+ * place against the owner's free-text feedback. It is never a binary accept/discard.
+ */
+export type OwnerVerdict = 'approve' | 'reject' | 'edit';
 
 /**
  * Payload for the local-only user creation endpoint.

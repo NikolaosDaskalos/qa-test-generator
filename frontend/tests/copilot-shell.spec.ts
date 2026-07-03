@@ -1078,7 +1078,7 @@ test("User can approve a reviewed Test Patch and see the pushed branch", async (
       expect(route.request().postDataJSON()).toEqual({
         decision: {
           coding_run_id: "run-approve",
-          approved: true,
+          verdict: "approve",
           feedback: "",
         },
       })
@@ -2052,7 +2052,7 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
       expect(route.request().postDataJSON()).toEqual({
         decision: {
           coding_run_id: "run-reject",
-          approved: false,
+          verdict: "reject",
           feedback: "Please cover the locked account path too.",
         },
       })
@@ -2092,6 +2092,260 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
   ).toBeVisible()
   await expect(page.getByRole("button", { name: "Approve" })).not.toBeVisible()
   await expect(page.getByRole("button", { name: "Reject" })).not.toBeVisible()
+})
+
+test("Edit reveals a required feedback field and submits the edit verdict", async ({
+  page,
+}) => {
+  let streamCount = 0
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      streamCount += 1
+
+      if (streamCount === 1) {
+        await route.fulfill({
+          contentType: "text/event-stream",
+          body: [
+            'data: {"type":"run_started","coding_run_id":"run-edit"}\n\n',
+            'data: {"type":"review_result","coding_run_id":"run-edit","accepted":true,"score":8,"threshold":7,"findings":[{"category":"coverage","detail":"Covers the successful login path."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+          ].join(""),
+        })
+        return
+      }
+
+      expect(route.request().postDataJSON()).toEqual({
+        decision: {
+          coding_run_id: "run-edit",
+          verdict: "edit",
+          feedback: "Also cover the locked account path.",
+        },
+      })
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"review_result","coding_run_id":"run-edit","accepted":true,"score":9,"threshold":7,"findings":[{"category":"coverage","detail":"Now covers the locked account path."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_locked():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests for login")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  // All three Owner Decision actions are offered on the escalated patch card.
+  await expect(page.getByRole("button", { name: "Approve" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Reject" })).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeVisible()
+
+  // Edit reveals its own feedback field; its submit is blocked while blank.
+  await expect(
+    page.getByRole("textbox", { name: "Edit feedback" }),
+  ).toHaveCount(0)
+  await page.getByRole("button", { name: "Edit", exact: true }).click()
+  const editFeedback = page.getByRole("textbox", { name: "Edit feedback" })
+  await expect(editFeedback).toBeVisible()
+  await expect(page.getByRole("button", { name: "Submit edit" })).toBeDisabled()
+
+  await editFeedback.fill("Also cover the locked account path.")
+  await expect(page.getByRole("button", { name: "Submit edit" })).toBeEnabled()
+  await page.getByRole("button", { name: "Submit edit" }).click()
+
+  // The edit resumes the run and re-surfaces a fresh escalation to decide again.
+  await expect(
+    page.getByText("Now covers the locked account path."),
+  ).toBeVisible()
+})
+
+test("Edit re-enters the streaming state and supports repeated edits on the same run", async ({
+  page,
+}) => {
+  let streamCount = 0
+
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      streamCount += 1
+
+      if (streamCount === 1) {
+        await route.fulfill({
+          contentType: "text/event-stream",
+          body: [
+            'data: {"type":"run_started","coding_run_id":"run-loop"}\n\n',
+            'data: {"type":"review_result","coding_run_id":"run-loop","accepted":true,"score":8,"threshold":7,"findings":[{"category":"coverage","detail":"Original coverage."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+          ].join(""),
+        })
+        return
+      }
+
+      if (streamCount === 2) {
+        expect(route.request().postDataJSON()).toEqual({
+          decision: {
+            coding_run_id: "run-loop",
+            verdict: "edit",
+            feedback: "First revision.",
+          },
+        })
+        await route.fulfill({
+          contentType: "text/event-stream",
+          body: [
+            'data: {"type":"stage","stage":"generating"}\n\n',
+            'data: {"type":"stage","stage":"reviewing"}\n\n',
+            'data: {"type":"review_result","coding_run_id":"run-loop","accepted":true,"score":9,"threshold":7,"findings":[{"category":"coverage","detail":"First revision applied."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_first():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+          ].join(""),
+        })
+        return
+      }
+
+      expect(route.request().postDataJSON()).toEqual({
+        decision: {
+          coding_run_id: "run-loop",
+          verdict: "edit",
+          feedback: "Second revision.",
+        },
+      })
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"stage","stage":"generating"}\n\n',
+          'data: {"type":"stage","stage":"reviewing"}\n\n',
+          'data: {"type":"review_result","coding_run_id":"run-loop","accepted":true,"score":10,"threshold":7,"findings":[{"category":"coverage","detail":"Second revision applied."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_second():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests for login")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(page.getByText("Original coverage.")).toBeVisible()
+
+  // First edit resumes the run and re-surfaces a fresh escalation.
+  await page.getByRole("button", { name: "Edit", exact: true }).click()
+  await page
+    .getByRole("textbox", { name: "Edit feedback" })
+    .fill("First revision.")
+  await page.getByRole("button", { name: "Submit edit" }).click()
+
+  await expect(page.getByText("First revision applied.")).toBeVisible()
+  await expect(page.getByTestId("stage-progress")).toHaveCount(0)
+  // The card is re-armed for a new decision.
+  await expect(page.getByRole("button", { name: "Approve" })).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeVisible()
+
+  // A second edit on the same run is accepted (the loop is unbounded).
+  await page.getByRole("button", { name: "Edit", exact: true }).click()
+  const secondEditFeedback = page.getByRole("textbox", {
+    name: "Edit feedback",
+  })
+  await expect(secondEditFeedback).toHaveValue("")
+  await secondEditFeedback.fill("Second revision.")
+  await page.getByRole("button", { name: "Submit edit" }).click()
+
+  await expect(page.getByText("Second revision applied.")).toBeVisible()
 })
 
 test("Failed code generation renders the failed stage and sanitized reason", async ({

@@ -899,6 +899,8 @@ function ReviewResultSummary({
   review: ReviewResultView
 }) {
   const [feedback, setFeedback] = useState("")
+  const [editing, setEditing] = useState(false)
+  const [editFeedback, setEditFeedback] = useState("")
   const canDecide =
     review.accepted &&
     !message.decision &&
@@ -937,7 +939,7 @@ function ReviewResultSummary({
               onClick={() =>
                 onDecision({
                   coding_run_id: message.codingRunId ?? "",
-                  approved: true,
+                  verdict: "approve",
                   feedback: "",
                 })
               }
@@ -952,14 +954,56 @@ function ReviewResultSummary({
               onClick={() =>
                 onDecision({
                   coding_run_id: message.codingRunId ?? "",
-                  approved: false,
+                  verdict: "reject",
                   feedback,
                 })
               }
             >
               Reject
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={isPending}
+              onClick={() => setEditing((open) => !open)}
+            >
+              Edit
+            </Button>
           </div>
+          {editing ? (
+            <div className="grid gap-2">
+              <Label htmlFor={`edit-feedback-${message.id}`}>
+                Edit feedback
+              </Label>
+              <textarea
+                id={`edit-feedback-${message.id}`}
+                aria-label="Edit feedback"
+                className="min-h-16 resize-none rounded-md border bg-background px-3 py-2 text-sm disabled:bg-muted/30 disabled:text-muted-foreground"
+                disabled={isPending}
+                value={editFeedback}
+                onChange={(event) => setEditFeedback(event.target.value)}
+              />
+              <div>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={isPending || editFeedback.trim() === ""}
+                  onClick={() => {
+                    onDecision({
+                      coding_run_id: message.codingRunId ?? "",
+                      verdict: "edit",
+                      feedback: editFeedback,
+                    })
+                    setEditing(false)
+                    setEditFeedback("")
+                  }}
+                >
+                  Submit edit
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <div className="grid gap-2">
             <Label htmlFor={`reject-feedback-${message.id}`}>
               Reject feedback
@@ -1586,6 +1630,27 @@ async function submitDecision({
       if (event.type === "stage") {
         setStageStatus((stages) =>
           stages.includes(event.stage) ? stages : [...stages, event.stage],
+        )
+      }
+
+      if (event.type === "review_result" && isReviewResultEvent(event)) {
+        setStageStatus([])
+        setChatMessages((messages) =>
+          messages.map((message) =>
+            message.codingRunId === event.coding_run_id
+              ? {
+                  ...message,
+                  review: {
+                    accepted: event.accepted,
+                    score: event.score,
+                    threshold: event.threshold,
+                    findings: event.findings,
+                    diff: event.diff,
+                    disclaimer: event.disclaimer,
+                  },
+                }
+              : message,
+          ),
         )
       }
 
