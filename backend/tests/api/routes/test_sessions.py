@@ -14,7 +14,7 @@ from app.core.errors.session_errors import RepositorySessionNotFound
 from app.db.models import CodingRun, RepositorySession, SessionHistory
 from app.db.persistence import SessionHistoryPage
 from app.dependencies import get_current_user, get_repository_session_service, get_session_graph
-from app.enums import CodingRunStage, CodingRunStatus, SessionMessageRole
+from app.enums import CodingRunStage, CodingRunStatus, OwnerVerdict, SessionMessageRole
 from app.schemas import Citation, RepositorySessionPublic, RepositorySessionsPublic, Result, RunApproved, RunRejected, Stage, Token
 
 
@@ -389,7 +389,7 @@ def test_decision_resumes_the_paused_run_through_the_same_stream() -> None:
     app = _question_app(service, user=user)
 
     with TestClient(app) as client:
-        response = client.post(f"/sessions/{session_id}/questions", json={"decision": {"coding_run_id": str(run_id), "approved": False}})
+        response = client.post(f"/sessions/{session_id}/questions", json={"decision": {"coding_run_id": str(run_id), "verdict": "reject"}})
 
     assert response.status_code == 200
     streamed = _parse_sse(response.text)
@@ -399,7 +399,7 @@ def test_decision_resumes_the_paused_run_through_the_same_stream() -> None:
     # The route forwards the decision (and no question) to the service to resume the paused run.
     call = service.answer_calls[0]
     assert call["decision"].coding_run_id == run_id
-    assert call["decision"].approved is False
+    assert call["decision"].verdict is OwnerVerdict.reject
     assert call["question"] is None
 
 
@@ -413,14 +413,14 @@ def test_approved_decision_streams_run_approved_terminal() -> None:
     app = _question_app(service, user=user)
 
     with TestClient(app) as client:
-        response = client.post(f"/sessions/{session_id}/questions", json={"decision": {"coding_run_id": str(run_id), "approved": True}})
+        response = client.post(f"/sessions/{session_id}/questions", json={"decision": {"coding_run_id": str(run_id), "verdict": "approve"}})
 
     assert response.status_code == 200
     streamed = _parse_sse(response.text)
     assert [event["type"] for event in streamed] == ["stage", "run_approved"]
     assert streamed[-1]["coding_run_id"] == str(run_id)
     assert streamed[-1]["branch"] == "qa-tests/abc123"
-    assert service.answer_calls[0]["decision"].approved is True
+    assert service.answer_calls[0]["decision"].verdict is OwnerVerdict.approve
 
 
 def test_decision_conflict_from_the_service_surfaces_as_409() -> None:
@@ -429,9 +429,24 @@ def test_decision_conflict_from_the_service_surfaces_as_409() -> None:
     app = _question_app(service, user=user)
 
     with TestClient(app) as client:
-        response = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"decision": {"coding_run_id": str(uuid.uuid4()), "approved": False}})
+        response = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"decision": {"coding_run_id": str(uuid.uuid4()), "verdict": "reject"}})
 
     assert response.status_code == 409
+
+
+def test_edit_decision_without_feedback_is_rejected_at_the_boundary() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    service = FakeAnsweringService([])
+    app = _question_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/sessions/{uuid.uuid4()}/questions", json={"decision": {"coding_run_id": str(uuid.uuid4()), "verdict": "edit", "feedback": "   "}}
+        )
+
+    # An Edit needs words to steer the revision; a blank note is refused before the run is ever resumed.
+    assert response.status_code == 422
+    assert service.answer_calls == []
 
 
 def test_request_must_carry_either_a_question_or_a_decision() -> None:
@@ -441,7 +456,7 @@ def test_request_must_carry_either_a_question_or_a_decision() -> None:
 
     with TestClient(app) as client:
         empty = client.post(f"/sessions/{uuid.uuid4()}/questions", json={})
-        both = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"question": "q", "decision": {"coding_run_id": str(uuid.uuid4()), "approved": True}})
+        both = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"question": "q", "decision": {"coding_run_id": str(uuid.uuid4()), "verdict": "approve"}})
 
     assert empty.status_code == 422
     assert both.status_code == 422

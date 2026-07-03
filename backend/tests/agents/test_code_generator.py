@@ -223,6 +223,34 @@ def test_code_generator_revises_a_prior_proposal_against_reviewer_findings(monke
     assert "def test_x(): ..." in prompt
 
 
+def test_code_generator_revision_frames_owner_feedback_as_authoritative_over_findings(monkeypatch) -> None:
+    """An Edit's feedback rides the revision prompt and is framed as taking priority over reviewer findings."""
+    final_state = {
+        "messages": [],
+        "structured_response": _GeneratorResponse(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+    }
+    generator, agent = _build_generator(monkeypatch, final_state)
+
+    generator.revise(
+        task="add tests for auth",
+        source_documents=[],
+        test_documents=[],
+        prior_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")],
+        diff="diff --git a/tests/test_auth.py b/tests/test_auth.py",
+        findings=[ReviewFinding(category="coverage", detail="missing unhappy-path test")],
+        feedback="rename the fixtures to match our house style",
+    )
+
+    prompt = agent.invocations[0][0]["messages"][0].content
+    # The owner's words appear verbatim and are framed as authoritative over the reviewer's findings.
+    assert "rename the fixtures to match our house style" in prompt
+    feedback_at = prompt.index("rename the fixtures to match our house style")
+    findings_at = prompt.index("missing unhappy-path test")
+    assert feedback_at < findings_at
+    lowered = prompt.lower()
+    assert "authoritative" in lowered or "take priority" in lowered or "takes priority" in lowered
+
+
 def test_code_generator_uses_the_primary_web_search_agent_for_both_generation_and_revision(monkeypatch) -> None:
     """The primary web_search-capable agent serves both generation and revision on the normal path."""
     created = []

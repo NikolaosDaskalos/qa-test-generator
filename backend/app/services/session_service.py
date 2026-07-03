@@ -168,7 +168,7 @@ class RepositorySessionService:
     def _resume_stream(self, run: CodingRun, decision: HumanDecisionRequest, graph: Any) -> Generator[AgentStreamEvent, None, None]:
         """Resume a paused Coding Run and relay node-emitted terminal events."""
         config = {"configurable": {"thread_id": run.thread_id}}
-        command = Command(resume={"approved": decision.approved, "feedback": decision.feedback})
+        command = Command(resume={"verdict": decision.verdict.value, "feedback": decision.feedback})
         for event in map_graph_stream(graph.stream(command, config=config, stream_mode=["custom", "messages"])):
             if isinstance(event, RunApproved | RunRejected):
                 self.session_store.record_activity(run.repository_session_id)

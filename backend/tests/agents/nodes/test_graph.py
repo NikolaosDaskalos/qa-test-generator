@@ -24,7 +24,7 @@ from app.services.coding_runs.review_policy import ReviewPolicy
 from app.core.errors.git_errors import GitError
 from app.core.errors.github_errors import GitHubError
 from app.db.models import RepositoryDocument
-from app.enums import CodingRunStage
+from app.enums import CodingRunStage, OwnerVerdict
 from app.schemas import (
     Citation,
     ExternalReference,
@@ -383,7 +383,7 @@ class FakeCodeGenerator:
         self.calls.append({"task": task, "source_documents": source_documents, "test_documents": test_documents})
         return self.proposal
 
-    def revise(self, *, task, source_documents, test_documents, prior_files, diff, findings):
+    def revise(self, *, task, source_documents, test_documents, prior_files, diff, findings, feedback=""):
         self.revise_calls.append(
             {
                 "task": task,
@@ -392,6 +392,7 @@ class FakeCodeGenerator:
                 "prior_files": prior_files,
                 "diff": diff,
                 "findings": findings,
+                "feedback": feedback,
             }
         )
         return self.revision if self.revision is not None else self.proposal
@@ -1720,7 +1721,7 @@ def test_rejecting_a_paused_run_discards_the_patch_and_records_the_rejection(tmp
         config=config,
     )
 
-    final = graph.invoke(Command(resume={"approved": False}), config=config)
+    final = graph.invoke(Command(resume={"verdict": "reject"}), config=config)
 
     # The discarded patch restores the checkout to the indexed commit and removes the temporary branch.
     assert workspace.discarded == ("abc", "qa-tests/fake")
@@ -1761,7 +1762,7 @@ def test_rejecting_a_paused_run_stream_emits_run_rejected(tmp_path) -> None:
         config=config,
     )
 
-    events = [chunk for _mode, chunk in graph.stream(Command(resume={"approved": False}), config=config, stream_mode=["custom"])]
+    events = [chunk for _mode, chunk in graph.stream(Command(resume={"verdict": "reject"}), config=config, stream_mode=["custom"])]
 
     rejections = [event for event in events if isinstance(event, RunRejected)]
     assert len(rejections) == 1
@@ -1790,7 +1791,7 @@ def test_approving_a_paused_run_commits_pushes_and_emits_run_approved(tmp_path) 
         config=config,
     )
 
-    final = graph.invoke(Command(resume={"approved": True}), config=config)
+    final = graph.invoke(Command(resume={"verdict": "approve"}), config=config)
 
     # The reviewed patch was committed, its branch pushed, and a PR opened from that branch.
     assert publisher.committed is not None
@@ -1828,12 +1829,189 @@ def test_approving_a_paused_run_stream_emits_run_approved(tmp_path) -> None:
         config=config,
     )
 
-    events = [chunk for _mode, chunk in graph.stream(Command(resume={"approved": True}), config=config, stream_mode=["custom"])]
+    events = [chunk for _mode, chunk in graph.stream(Command(resume={"verdict": "approve"}), config=config, stream_mode=["custom"])]
 
     approvals = [event for event in events if isinstance(event, RunApproved)]
     assert len(approvals) == 1
     assert approvals[0].coding_run_id == recorder.run_id
     assert approvals[0].branch == "qa-tests/fake"
+
+
+def test_editing_a_paused_run_revises_in_place_and_re_escalates(tmp_path) -> None:
+    """Resuming with an Edit revises the generated files on the same branch, re-reviews, and re-escalates a fresh decision."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeCodeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # edited")]),
+    )
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    result = graph.invoke(Command(resume={"verdict": "edit", "feedback": "also cover the timeout path"}), config=config)
+
+    # The Edit revised the already-generated files (one revise call) rather than re-generating from scratch.
+    assert len(generator.calls) == 1
+    assert len(generator.revise_calls) == 1
+    # The revision was built on the existing generation branch — the branch was never re-prepared, so no leak.
+    assert workspace.prepared_from == "abc"
+    assert result["generation_branch"] == "qa-tests/fake"
+    # The owner's feedback steered the revision, threaded in alongside the reviewer findings.
+    assert generator.revise_calls[0]["feedback"] == "also cover the timeout path"
+    # The run re-escalated: it paused again at the decision node with a fresh ReviewResult, never approving or rejecting.
+    assert "__interrupt__" in result
+    assert graph.get_state(config).next == ("await_decision",)
+    assert result.get("approval_result") is None
+    assert result.get("rejection_result") is None
+    assert result.get("failure") is None
+
+
+def test_editing_a_paused_run_resets_the_generation_retries_budget(tmp_path) -> None:
+    """An Edit resets the automatic Generation Retries counter to zero, and its feedback-driven revise spends the first of the fresh budget."""
+    (tmp_path / "tests").mkdir()
+    # The first patch is below threshold, so the round revises once (spending the only retry) before escalating.
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=3, findings=[]), PatchReview(score=3, findings=[]), PatchReview(score=10, findings=[])])
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeCodeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
+    )
+    graph = _generation_graph(code_generator=generator, workspace=workspace, code_reviewer=reviewer, max_generation_retries=1)
+    config = _config()
+    first = graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+    # The initial round exhausted its single retry (one revise) and escalated below threshold.
+    assert len(generator.revise_calls) == 1
+    assert first["generation_retries"] == 1
+
+    graph.invoke(Command(resume={"verdict": "edit", "feedback": "tighten the assertions"}), config=config)
+
+    # The Edit reset the budget, then its feedback-driven revise counts as the first spend of the fresh budget.
+    assert graph.get_state(config).values["generation_retries"] == 1
+    assert len(generator.revise_calls) == 2
+    assert generator.revise_calls[1]["feedback"] == "tighten the assertions"
+
+
+def test_the_reset_edit_budget_allows_one_below_threshold_retry_before_re_escalating(tmp_path) -> None:
+    """After the Edit's own revise, the fresh budget still allows the ordinary below-threshold retry before re-escalating."""
+    (tmp_path / "tests").mkdir()
+    # Initial escalation is accepted; the Edit's own revise is below threshold, then one automatic cleanup accepts.
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=10, findings=[]), PatchReview(score=3, findings=[]), PatchReview(score=10, findings=[])])
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeCodeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
+    )
+    # Default budget of two: the Edit's feedback revise spends the first, one automatic below-threshold cleanup the second.
+    graph = _generation_graph(code_generator=generator, workspace=workspace, code_reviewer=reviewer, max_generation_retries=2)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    result = graph.invoke(Command(resume={"verdict": "edit", "feedback": "cover more cases"}), config=config)
+
+    # The Edit's own revise (first spend) plus one automatic below-threshold revise (second spend) before re-escalating.
+    assert len(generator.revise_calls) == 2
+    assert "__interrupt__" in result
+    assert graph.get_state(config).next == ("await_decision",)
+
+
+def test_feedback_accumulates_across_successive_edits(tmp_path) -> None:
+    """Each Edit's feedback is appended to the prior notes, so the model sees every round's steer on top of the original task."""
+    (tmp_path / "tests").mkdir()
+    reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeCodeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # edited")]),
+    )
+    graph = _generation_graph(code_generator=generator, workspace=workspace, code_reviewer=reviewer)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    graph.invoke(Command(resume={"verdict": "edit", "feedback": "use fixtures"}), config=config)
+    graph.invoke(Command(resume={"verdict": "edit", "feedback": "and parametrize"}), config=config)
+
+    # The second Edit's revise sees both notes accumulated, the earlier one before the later one.
+    second_feedback = generator.revise_calls[1]["feedback"]
+    assert "use fixtures" in second_feedback
+    assert "and parametrize" in second_feedback
+    assert second_feedback.index("use fixtures") < second_feedback.index("and parametrize")
+
+
+def test_an_edit_that_lands_below_threshold_re_escalates_and_stays_actionable(tmp_path) -> None:
+    """An Edit whose revision is still below threshold re-escalates as changes_requested and remains resumable for another decision."""
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    findings = [ReviewFinding(category="coverage", detail="still thin")]
+    # Initial escalation is accepted; every post-Edit review stays below threshold.
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=10, findings=[]), PatchReview(score=3, findings=findings)])
+    workspace = FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py")
+    generator = FakeCodeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
+    )
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=workspace, code_reviewer=reviewer, max_generation_retries=0)
+    config = _config()
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=config,
+    )
+
+    result = graph.invoke(Command(resume={"verdict": "edit", "feedback": "add the missing case"}), config=config)
+
+    # The below-threshold revision escalated rather than failing, carrying its score/findings, and the run stays paused for another decision.
+    assert result.get("failure") is None
+    prompt = result["__interrupt__"][0].value
+    assert prompt["score"] == 3
+    assert prompt["accepted"] is False
+    assert graph.get_state(config).next == ("await_decision",)
+    # It remains resumable: a following rejection resolves the re-escalated run.
+    final = graph.invoke(Command(resume={"verdict": "reject"}), config=config)
+    assert isinstance(final["rejection_result"], RunRejected)
 
 
 def test_approval_records_the_run_and_restores_the_checkout_to_the_indexed_commit(tmp_path) -> None:
@@ -1857,7 +2035,7 @@ def test_approval_records_the_run_and_restores_the_checkout_to_the_indexed_commi
         config=config,
     )
 
-    final = graph.invoke(Command(resume={"approved": True}), config=config)
+    final = graph.invoke(Command(resume={"verdict": "approve"}), config=config)
 
     # The run is recorded approved with the opened Pull Request URL, after the accepted review was recorded.
     assert ("approve", recorder.run_id, FakePublisher.PULL_REQUEST_URL) in recorder.events
@@ -1888,7 +2066,7 @@ def test_approval_commit_failure_is_a_git_commit_stage_failure(tmp_path, caplog)
         config=config,
     )
 
-    final = graph.invoke(Command(resume={"approved": True}), config=config)
+    final = graph.invoke(Command(resume={"verdict": "approve"}), config=config)
 
     failure = final["failure"]
     assert failure.failed_stage == "git_commit"
@@ -1922,7 +2100,7 @@ def test_approval_push_failure_is_a_git_push_stage_failure(tmp_path, caplog) -> 
         config=config,
     )
 
-    final = graph.invoke(Command(resume={"approved": True}), config=config)
+    final = graph.invoke(Command(resume={"verdict": "approve"}), config=config)
 
     failure = final["failure"]
     assert failure.failed_stage == "git_push"
@@ -1956,7 +2134,7 @@ def test_approval_pull_request_failure_is_a_github_pull_request_stage_failure(tm
         config=config,
     )
 
-    final = graph.invoke(Command(resume={"approved": True}), config=config)
+    final = graph.invoke(Command(resume={"verdict": "approve"}), config=config)
 
     failure = final["failure"]
     # The branch is on the remote (push succeeded); only the Pull Request failed, on its own stage.
@@ -1996,7 +2174,7 @@ def test_approval_failure_stream_emits_one_stamped_run_failure(tmp_path) -> None
         config=config,
     )
 
-    events = [chunk for _mode, chunk in graph.stream(Command(resume={"approved": True}), config=config, stream_mode=["custom"])]
+    events = [chunk for _mode, chunk in graph.stream(Command(resume={"verdict": "approve"}), config=config, stream_mode=["custom"])]
 
     failures = [event for event in events if isinstance(event, RunFailure)]
     assert len(failures) == 1

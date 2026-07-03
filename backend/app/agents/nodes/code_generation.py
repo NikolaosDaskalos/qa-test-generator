@@ -14,7 +14,7 @@ from typing import Literal
 from langgraph.types import interrupt
 
 from app.agents.nodes.failures import fail_state
-from app.enums import CodingRunStage
+from app.enums import CodingRunStage, OwnerVerdict
 from app.schemas import ReviewFinding, ReviewResult, RunFailure, RunNoChanges, Stage
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 from app.services.coding_runs.generation_retries import can_retry_generation, is_generation_retry, spend_generation_retry
@@ -135,6 +135,7 @@ def build_generate_code_node(code_generator, workspace_factory, recorder):
                     prior_files=state.get("generated_files") or [],
                     diff=state.get("diff") or "",
                     findings=list(review.findings),
+                    feedback=state.get("human_feedback") or "",
                 )
             except Exception:
                 logger.exception("Test revision failed")
@@ -355,9 +356,12 @@ def build_await_decision_node():
     ``interrupt`` surfacing the Coding Run, the assessed canonical diff, the review
     ``score`` and ``threshold``, whether the backend accepted it, and the findings —
     enough for the owner to judge an escalated below-threshold patch. The graph is
-    resumed with the owner's decision payload (``{"approved": bool, "feedback": str}``),
-    which is folded onto state so the post-decision router can approve or reject. No
-    work touches the checkout here; discarding is the rejected branch's concern.
+    resumed with the owner's decision payload (``{"verdict": str, "feedback": str}``),
+    whose three-way Owner Decision (``approve``/``reject``/``edit``) and just-submitted
+    feedback are folded onto state so the post-decision router can approve, reject, or
+    apply an Edit. The verdict defaults closed to ``reject`` — an unrecognized or missing
+    verdict discards rather than commits or silently revises. No work touches the checkout
+    here; discarding, committing, and revising are the branches' concerns.
     """
 
     def await_decision(state) -> dict:
@@ -373,11 +377,39 @@ def build_await_decision_node():
                 "message": AWAITING_DECISION_MESSAGE,
             }
         )
-        approved = bool(decision.get("approved", False)) if isinstance(decision, dict) else bool(decision)
-        feedback = decision.get("feedback", "") if isinstance(decision, dict) else ""
-        return {"approved": approved, "human_feedback": feedback, "trace": ["await_decision"]}
+        raw_verdict = decision.get("verdict") if isinstance(decision, dict) else decision
+        feedback = (decision.get("feedback", "") if isinstance(decision, dict) else "") or ""
+        try:
+            verdict = OwnerVerdict(raw_verdict)
+        except ValueError:
+            verdict = OwnerVerdict.reject
+        # Carry the just-submitted note as ``pending_feedback``; only ``apply_edit`` folds it
+        # into the accumulated ``human_feedback`` so approve/reject never touch the accumulator.
+        return {"verdict": verdict, "pending_feedback": feedback, "trace": ["await_decision"]}
 
     return await_decision
+
+
+def build_apply_edit_node():
+    """Build the node that applies an owner's Edit, mirroring the approve/reject symmetry.
+
+    The post-decision router routes here on an ``edit`` verdict. The node appends the
+    owner's just-submitted ``pending_feedback`` to the accumulated ``human_feedback`` (so
+    successive Edits build up on top of the original Code Generation Task) and resets the
+    automatic Generation Retries counter to zero, giving the revised patch a fresh budget.
+    It keeps the review result, generated files, diff, and generation branch intact, so the
+    graph's unconditional edge back to ``generate_code`` revises the already-generated Test
+    Files in place — no re-plan, no re-retrieval, no fresh branch. The owner-steered revise
+    counts as the first spend of the fresh budget.
+    """
+
+    def apply_edit(state) -> dict:
+        accumulated = (state.get("human_feedback") or "").strip()
+        new_feedback = (state.get("pending_feedback") or "").strip()
+        combined = f"{accumulated}\n{new_feedback}".strip() if accumulated else new_feedback
+        return {"human_feedback": combined, "generation_retries": 0, "trace": ["apply_edit"]}
+
+    return apply_edit
 
 
 def build_discard_patch_node(workspace_factory, recorder):

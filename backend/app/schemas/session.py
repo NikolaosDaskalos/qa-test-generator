@@ -6,7 +6,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.db.models import NEW_SESSION_TITLE
-from app.enums import CodingRunStage, CodingRunStatus, SessionMessageRole
+from app.enums import CodingRunStage, CodingRunStatus, OwnerVerdict, SessionMessageRole
 from app.schemas.agent_stream import REVIEW_DISCLAIMER, Citation
 from app.schemas.generation import ExternalReference, GeneratedFile
 from app.schemas.review import ReviewFinding
@@ -23,13 +23,24 @@ class HumanDecisionRequest(BaseModel):
     """The owner's human-in-the-loop decision on a reviewed Test Patch.
 
     Delivered through the same session stream that produced the patch: it resumes
-    the suspended Coding Run rather than starting a new one. ``approved`` is the
-    verdict; a rejection discards the patch.
+    the suspended Coding Run rather than starting a new one. ``verdict`` is the
+    three-way Owner Decision — a rejection discards the patch, an approval commits
+    and opens a Pull Request, and an Edit returns the run to generation to revise
+    the Test Files in place against ``feedback``. Feedback is required (non-empty)
+    for an Edit — it is the only thing steering the revision — optional for a
+    rejection, and ignored for an approval.
     """
 
     coding_run_id: uuid.UUID
-    approved: bool
+    verdict: OwnerVerdict
     feedback: str = Field(default="", max_length=4000)
+
+    @model_validator(mode="after")
+    def _edit_requires_feedback(self) -> "HumanDecisionRequest":
+        """Reject an Edit with blank/missing feedback at the schema boundary."""
+        if self.verdict is OwnerVerdict.edit and not self.feedback.strip():
+            raise ValueError("feedback is required for an edit verdict")
+        return self
 
 
 class RepositoryQuestionRequest(BaseModel):

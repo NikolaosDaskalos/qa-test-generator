@@ -8,7 +8,7 @@ from langgraph.types import Command
 
 from app.core.errors.session_errors import CodingRunNotFound, RepositorySessionAccessForbidden, RunNotAwaitingDecision
 from app.db.models import CodingRun, Repository, RepositorySession, SessionHistory, User
-from app.enums import CodingRunStatus
+from app.enums import CodingRunStatus, OwnerVerdict
 from app.schemas import Citation, HumanDecisionRequest, Result, ReviewFinding, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
 from app.streaming import FINAL_ANSWER_TAG
 from app.services import RepositorySessionService
@@ -227,7 +227,7 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
     items = [("custom", Stage(stage="reviewing")), ("custom", rejection)]
     final = {"intent": "code_generation", "review_result": review, "rejection_result": rejection}
     graph = FakeGraph(items, final, next_nodes=("await_decision",))
-    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+    decision = HumanDecisionRequest(coding_run_id=run.id, verdict=OwnerVerdict.reject)
 
     events = list(
         service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision)
@@ -240,11 +240,30 @@ def test_stream_session_resumes_a_paused_run_with_the_owner_decision():
     # The graph was resumed on the run's own thread with the owner's decision payload — not a fresh run.
     resume_input, config, _modes = graph.streamed[0]
     assert isinstance(resume_input, Command)
-    assert resume_input.resume == {"approved": False, "feedback": ""}
+    assert resume_input.resume == {"verdict": "reject", "feedback": ""}
     assert config["configurable"]["thread_id"] == "t-paused"
     # Resuming a decision never persists a session answer exchange.
     assert session_store.appended == []
     assert session_store.activity == [(repository_session.id, None)]
+
+
+def test_stream_session_resumes_an_edit_with_the_verdict_and_feedback():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    run = CodingRun(repository_session_id=repository_session.id, thread_id="t-paused", status=CodingRunStatus.awaiting_approval)
+    service.coding_run_store = FakeCodingRunStore(run)
+    review = ReviewResult(coding_run_id=run.id, accepted=False, score=5, threshold=7, findings=[], diff="diff --git a/tests/test_x.py b/tests/test_x.py")
+    graph = FakeGraph([("custom", Stage(stage="revising"))], {"intent": "code_generation", "review_result": review}, next_nodes=("await_decision",))
+    decision = HumanDecisionRequest(coding_run_id=run.id, verdict=OwnerVerdict.edit, feedback="also cover the timeout path")
+
+    list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision))
+
+    # The Edit resumes the run's own thread carrying the verdict and its steering feedback.
+    resume_input, config, _modes = graph.streamed[0]
+    assert isinstance(resume_input, Command)
+    assert resume_input.resume == {"verdict": "edit", "feedback": "also cover the timeout path"}
+    assert config["configurable"]["thread_id"] == "t-paused"
+    assert session_store.appended == []
 
 
 def test_stream_session_relays_resume_terminal_without_scanning_stale_final_state():
@@ -260,7 +279,7 @@ def test_stream_session_relays_resume_terminal_without_scanning_stale_final_stat
     stale_review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=rejection.findings, diff=rejection.diff)
     items = [("custom", rejection)]
     graph = FakeGraph(items, {"intent": "code_generation", "review_result": stale_review}, next_nodes=("await_decision",))
-    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+    decision = HumanDecisionRequest(coding_run_id=run.id, verdict=OwnerVerdict.reject)
 
     events = list(
         service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision)
@@ -278,7 +297,7 @@ def test_stream_session_emits_run_approved_terminal_for_an_approved_decision():
     approval = RunApproved(coding_run_id=run.id, branch="qa-tests/abc123", diff="diff --git a/tests/test_x.py b/tests/test_x.py")
     review = ReviewResult(coding_run_id=run.id, accepted=True, score=8, threshold=7, findings=[], diff=approval.diff)
     graph = FakeGraph([("custom", approval)], {"intent": "code_generation", "review_result": review}, next_nodes=("await_decision",))
-    decision = HumanDecisionRequest(coding_run_id=run.id, approved=True)
+    decision = HumanDecisionRequest(coding_run_id=run.id, verdict=OwnerVerdict.approve)
 
     events = list(
         service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision)
@@ -301,7 +320,7 @@ def test_stream_session_resumes_a_below_threshold_escalation_paused_at_await_dec
     approval = RunApproved(coding_run_id=run.id, branch="qa-tests/abc123", diff="diff --git a/tests/test_x.py b/tests/test_x.py")
     review = ReviewResult(coding_run_id=run.id, accepted=False, score=5, threshold=7, findings=[], diff=approval.diff)
     graph = FakeGraph([("custom", approval)], {"intent": "code_generation", "review_result": review}, next_nodes=("await_decision",))
-    decision = HumanDecisionRequest(coding_run_id=run.id, approved=True)
+    decision = HumanDecisionRequest(coding_run_id=run.id, verdict=OwnerVerdict.approve)
 
     events = list(
         service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision)
@@ -331,7 +350,7 @@ def test_stream_session_rejects_a_decision_when_the_checkpoint_is_not_paused_at_
         diff="diff --git a/tests/test_x.py b/tests/test_x.py",
     )
     graph = FakeGraph([], {"intent": "code_generation", "review_result": stale_review}, next_nodes=())
-    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+    decision = HumanDecisionRequest(coding_run_id=run.id, verdict=OwnerVerdict.reject)
 
     with pytest.raises(RunNotAwaitingDecision):
         list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision))
@@ -346,7 +365,7 @@ def test_stream_session_rejects_a_below_threshold_escalation_not_paused_at_await
     run = CodingRun(repository_session_id=repository_session.id, thread_id="t-stale", status=CodingRunStatus.changes_requested)
     service.coding_run_store = FakeCodingRunStore(run)
     graph = FakeGraph([], {"intent": "code_generation"}, next_nodes=())
-    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+    decision = HumanDecisionRequest(coding_run_id=run.id, verdict=OwnerVerdict.reject)
 
     with pytest.raises(RunNotAwaitingDecision):
         list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="ignored", decision=decision))
@@ -361,7 +380,7 @@ def test_stream_session_rejects_a_decision_for_a_run_not_awaiting_a_decision():
         run = CodingRun(repository_session_id=repository_session.id, thread_id="t", status=state)
         service.coding_run_store = FakeCodingRunStore(run)
         graph = FakeGraph([], {})
-        decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+        decision = HumanDecisionRequest(coding_run_id=run.id, verdict=OwnerVerdict.reject)
 
         with pytest.raises(RunNotAwaitingDecision):
             list(service.stream_session(repository_session_id=repository_session.id, user=user, question=None, graph=graph, thread_id="t", decision=decision))
@@ -376,7 +395,7 @@ def test_stream_session_rejects_a_decision_from_a_non_owner():
     service.coding_run_store = FakeCodingRunStore(run)
     other = _user()
     graph = FakeGraph([], {})
-    decision = HumanDecisionRequest(coding_run_id=run.id, approved=False)
+    decision = HumanDecisionRequest(coding_run_id=run.id, verdict=OwnerVerdict.reject)
 
     with pytest.raises(RepositorySessionAccessForbidden):
         list(service.stream_session(repository_session_id=repository_session.id, user=other, question=None, graph=graph, thread_id="t", decision=decision))

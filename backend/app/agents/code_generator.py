@@ -56,15 +56,19 @@ class CodeGenerator:
         prompt = _build_prompt(task, source_documents, test_documents)
         return self._propose(prompt)
 
-    def revise(self, *, task: str, source_documents: list, test_documents: list, prior_files: list, diff: str, findings: list) -> GenerationProposal:
+    def revise(
+        self, *, task: str, source_documents: list, test_documents: list, prior_files: list, diff: str, findings: list, feedback: str = ""
+    ) -> GenerationProposal:
         """Replace a rejected proposal once, grounded in the reviewer's findings.
 
         The reviser sees the same task and Repository Documents as initial generation
         plus its own prior complete-file proposal, the canonical diff that was
         reviewed, and the categorized findings to address, and returns a full
-        replacement proposal — never a diff.
+        replacement proposal — never a diff. When the owner steers the revision with
+        an Edit, their accumulated ``feedback`` is threaded in as an authoritative
+        requirement taking priority over the reviewer's findings.
         """
-        prompt = _build_revision_prompt(task, source_documents, test_documents, prior_files, diff, findings)
+        prompt = _build_revision_prompt(task, source_documents, test_documents, prior_files, diff, findings, feedback)
         return self._propose(prompt)
 
     def _propose(self, prompt: str) -> GenerationProposal:
@@ -101,18 +105,25 @@ def _build_prompt(task: str, source_documents: list, test_documents: list) -> st
     return "\n\n".join(sections)
 
 
-def _build_revision_prompt(task: str, source_documents: list, test_documents: list, prior_files: list, diff: str, findings: list) -> str:
+def _build_revision_prompt(task: str, source_documents: list, test_documents: list, prior_files: list, diff: str, findings: list, feedback: str = "") -> str:
     """Assemble the revision prompt: the generation context plus the rejected proposal and findings.
 
     The reviewer's findings frame the revision as a directed fix, and the prior
     proposal and canonical diff show exactly what was rejected so the model replaces
-    it wholesale rather than guessing at the prior attempt.
+    it wholesale rather than guessing at the prior attempt. When the owner steered
+    the revision with an Edit, their accumulated ``feedback`` leads the prompt, framed
+    as authoritative over the reviewer's findings.
     """
     sections = [_build_prompt(task, source_documents, test_documents)]
     sections.append(
         "Your previous proposal was reviewed and rejected. Address every finding below and return the complete, "
         "corrected contents of each test file; never return a diff."
     )
+    if feedback.strip():
+        sections.append(
+            "The repository owner reviewed your proposal and gave the following authoritative feedback. It takes "
+            "priority over the reviewer findings below; where they conflict, follow the owner:\n" + feedback.strip()
+        )
     if findings:
         sections.append("Reviewer findings to address:\n" + _format_findings(findings))
     if prior_files:

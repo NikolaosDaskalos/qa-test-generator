@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.agents.fallback import model_label, with_provider_fallback
 from app.agents.nodes.code_generation import (
+    build_apply_edit_node,
     build_approval_router,
     build_approve_patch_node,
     build_await_decision_node,
@@ -41,6 +42,7 @@ from app.agents.nodes.repository_question import (
     build_decompose_recursive_node,
     build_simple_rag_node,
 )
+from app.enums import OwnerVerdict
 from app.schemas import Citation, PatchResult, RetrievalRequest, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
 from app.streaming import emit
 
@@ -83,7 +85,7 @@ class RepositoryQuestionState(TypedDict):
 
 
 class CodeGenerationState(TypedDict):
-    """The ``code_generation`` pipeline's private working set (plan → … → approve/discard)."""
+    """The ``code_generation`` pipeline's private working set (plan → … → approve/reject/edit)."""
 
     coding_run_id: uuid.UUID | None
     checkout_root: str | None
@@ -101,9 +103,12 @@ class CodeGenerationState(TypedDict):
     # Count of spent Generation Retries; ``None``/absent means none spent yet. The
     # spend/limit arithmetic lives in ``app.services.coding_runs.generation_retries``.
     generation_retries: int | None
-    # The owner's human-in-the-loop decision on an accepted patch, supplied by resuming
-    # the suspended graph, and the terminal outcome when that decision is a rejection.
-    approved: bool | None
+    # The owner's three-way human-in-the-loop verdict (approve/reject/edit) on an escalated
+    # patch, supplied by resuming the suspended graph, and the terminal outcome when that
+    # decision is a rejection. ``pending_feedback`` is the just-submitted note the
+    # ``apply_edit`` node folds into the accumulated, authoritative ``human_feedback``.
+    verdict: OwnerVerdict | None
+    pending_feedback: str | None
     human_feedback: str | None
     rejection_result: RunRejected | None
     approval_result: RunApproved | None
@@ -164,15 +169,20 @@ def _route_after_plan(state: GraphState) -> Literal["failed", "planned"]:
     return "failed" if state.get("failure") else "planned"
 
 
-def _route_after_decision(state: GraphState) -> Literal["approve", "reject"]:
-    """Route the owner's human-in-the-loop decision on an accepted Test Patch.
+def _route_after_decision(state: GraphState) -> Literal["approve", "reject", "edit"]:
+    """Route the owner's three-way human-in-the-loop Owner Decision on an escalated Test Patch.
 
-    Resuming the suspended graph supplies the decision; a rejection discards the patch
-    while an approval commits and pushes its branch. The decision defaults closed to
-    neither acting nor discarding silently: only an explicit ``approved`` truthy value
-    approves.
+    Resuming the suspended graph supplies the verdict: an approval commits and pushes its
+    branch, a rejection discards the patch, and an Edit returns the run to generation to
+    revise the Test Files in place. The decision defaults closed to ``reject`` — an
+    unrecognized or missing verdict discards rather than committing or silently revising.
     """
-    return "approve" if state.get("approved") else "reject"
+    verdict = state.get("verdict")
+    if verdict == OwnerVerdict.edit:
+        return "edit"
+    if verdict == OwnerVerdict.approve:
+        return "approve"
+    return "reject"
 
 
 def _fail_run_node(recorder):
@@ -239,6 +249,7 @@ def build_graph(
     graph.add_node("await_decision", build_await_decision_node())
     graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
+    graph.add_node("apply_edit", build_apply_edit_node())
     graph.add_node("report_no_changes", build_report_no_changes_node(recorder))
     graph.add_node("fail_run", _fail_run_node(recorder))
     graph.add_node("analyzing", build_analyzing_node(classifier_llm, default_fallback_llm))
@@ -259,7 +270,10 @@ def build_graph(
         build_review_router(review_policy),
         {"revise": "generate_code", "escalate": "await_decision", "already_covered": "report_no_changes", "failed": "fail_run"},
     )
-    graph.add_conditional_edges("await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch"})
+    graph.add_conditional_edges(
+        "await_decision", _route_after_decision, {"approve": "approve_patch", "reject": "discard_patch", "edit": "apply_edit"}
+    )
+    graph.add_edge("apply_edit", "generate_code")
     graph.add_conditional_edges("approve_patch", build_approval_router(), {"approved": END, "failed": "fail_run"})
     graph.add_edge("discard_patch", END)
     graph.add_edge("report_no_changes", END)
