@@ -4,6 +4,7 @@ from app.db.models.coding_run import CodingRun
 from app.db.models.repository import Repository
 from app.db.models.repository_document import RepositoryDocument
 from app.db.models.session import LEGACY_NEW_SESSION_TITLE, MAX_DERIVED_SESSION_TITLE_LENGTH, NEW_SESSION_TITLE, CitationData, RepositorySession, SessionHistory
+from app.db.models.usage_record import UsageRecord
 from app.db.models.user import User
 
 __all__ = [
@@ -16,5 +17,6 @@ __all__ = [
     "RepositoryDocument",
     "RepositorySession",
     "SessionHistory",
+    "UsageRecord",
     "User",
 ]

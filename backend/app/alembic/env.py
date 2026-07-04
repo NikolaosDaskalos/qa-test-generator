@@ -10,6 +10,7 @@ from sqlmodel import SQLModel
 import app.db.models.repository  # noqa: F401
 import app.db.models.session  # noqa: F401
 import app.db.models.repository_document  # noqa: F401
+import app.db.models.usage_record  # noqa: F401
 import app.db.models.user  # noqa: F401
 from app.core import settings
 
