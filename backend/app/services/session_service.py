@@ -6,6 +6,7 @@ from typing import Any
 
 from langgraph.types import Command
 
+from app.core import settings
 from app.core.errors.repository_errors import RepositoryAccessForbidden, RepositoryNotFound
 from app.core.errors.session_errors import (
     CodingRunNotFound,
@@ -15,20 +16,28 @@ from app.core.errors.session_errors import (
     RunNotAwaitingDecision,
 )
 from app.db.models import CodingRun, RepositorySession, SessionHistory, User
-from app.db.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore, SessionHistoryPage
+from app.db.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore, SessionHistoryPage, UsageRecordStore
 from app.enums import RepositoryStatus
 from app.schemas import AgentStreamEvent, HumanDecisionRequest, RepositorySessionCreate, RepositorySessionsPublic, Result, RunApproved, RunRejected
 from app.services.repository_session_execution import RepositorySessionExecution
+from app.services.usage.callback import UsageCapturingCallback
 from app.streaming import map_graph_stream
 
 
 class RepositorySessionService:
     """Own Repository Session authorization and lifecycle rules."""
 
-    def __init__(self, session_store: RepositorySessionStore, repository_store: RepositoryStore, coding_run_store: CodingRunStore) -> None:
+    def __init__(
+        self,
+        session_store: RepositorySessionStore,
+        repository_store: RepositoryStore,
+        coding_run_store: CodingRunStore,
+        usage_record_store: UsageRecordStore,
+    ) -> None:
         self.session_store = session_store
         self.repository_store = repository_store
         self.coding_run_store = coding_run_store
+        self.usage_record_store = usage_record_store
 
     def create_session(self, *, session_in: RepositorySessionCreate, user: User) -> RepositorySession:
         """Open a session, requiring the caller to own a ready repository (404/403/409 otherwise)."""
@@ -132,7 +141,10 @@ class RepositorySessionService:
     def _stream_session(self, context: RepositorySessionExecution, question: str, graph: Any, thread_id: str) -> Generator[AgentStreamEvent, None, None]:
         """Stream a fresh turn, persisting the exchange and emitting the terminal ``Result`` for answers."""
         repository_session = context.repository_session
-        config = {"configurable": {"thread_id": thread_id}}
+        config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+        usage_callback = UsageCapturingCallback() if settings.track_costs else None
+        if usage_callback is not None:
+            config["callbacks"] = [usage_callback]
         yield from map_graph_stream(graph.stream(context.graph_input(question), config=config, stream_mode=["custom", "messages"]))
 
         final = graph.get_state(config).values
@@ -142,11 +154,39 @@ class RepositorySessionService:
             _user_message, assistant_message = self.session_store.append_exchange(
                 repository_session.id, user_message=question, assistant_message=answer, assistant_citations=[citation.model_dump() for citation in citations]
             )
+            self._persist_usage(usage_callback, repository_session, session_history_id=assistant_message.id)
             yield Result(repository_session_id=repository_session.id, assistant_message_id=assistant_message.id, answer=answer, citations=citations)
         elif final.get("intent") == "code_generation" and final.get("coding_run_id") is not None:
             # Persist the coding turn linked to its durable Coding Run so the card — its review, failure,
             # approval, and Pull Request link — is reconstructed from that run on reload, not snapshotted here.
             self.session_store.append_exchange(repository_session.id, user_message=question, assistant_message="", coding_run_id=final.get("coding_run_id"))
+
+    def _persist_usage(
+        self, usage_callback: UsageCapturingCallback | None, repository_session: RepositorySession, *, session_history_id: uuid.UUID
+    ) -> None:
+        """Stamp each buffered AI Cost record with the turn's attribution and persist it (ADR-0013).
+
+        Called only once the answering turn is known, so every metered LLM call the turn
+        made — priced off the model its response reported — is anchored to the assistant
+        Session History message and the owning user, Repository, and Repository Session.
+        Disabled (no callback) or a turn with no captured calls persists nothing.
+        """
+        if usage_callback is None:
+            return
+        for record in usage_callback.records:
+            self.usage_record_store.create(
+                user_id=repository_session.user_id,
+                repository_id=repository_session.repository_id,
+                repository_session_id=repository_session.id,
+                model=record.model,
+                provider=record.provider,
+                node_name=record.node_name,
+                input_tokens=record.input_tokens,
+                output_tokens=record.output_tokens,
+                total_tokens=record.total_tokens,
+                cost=record.cost,
+                session_history_id=session_history_id,
+            )
 
     def _resume_decision(
         self, *, repository_session_id: uuid.UUID, user: User, decision: HumanDecisionRequest, graph: Any

@@ -230,6 +230,11 @@ class Settings(BaseSettings):
     SESSION_HISTORY_PAGE_SIZE: int = 50
     RECURSION_LIMIT: int = 7
 
+    # AI Cost capture (ADR-0013): when true, a usage-capturing callback is attached to each
+    # Repository question turn and one Usage Record is persisted per LLM call. When false, the
+    # callback is not attached and nothing is persisted; turns still run normally.
+    track_costs: bool = True
+
     # The Patch Review pass bar: a patch is accepted when its reviewer score (0–10)
     # meets this threshold. The backend owns this decision; the reviewer only scores.
     REVIEW_PASS_THRESHOLD: int = Field(default=7, ge=0, le=10)

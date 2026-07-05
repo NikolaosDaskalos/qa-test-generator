@@ -20,6 +20,9 @@ def create_chat_model(model: str, max_tokens: int, max_retries: int) -> ChatOpen
         temperature=settings.TEMPERATURE,
         max_tokens=max_tokens,
         streaming=True,
+        # Without this, streamed OpenAI calls report no usage and on_llm_end token
+        # counts come back empty; Anthropic reports usage natively (ADR-0013).
+        stream_usage=True,
         api_key=settings.OPENAI_API_KEY,
         max_retries=max_retries,
     )

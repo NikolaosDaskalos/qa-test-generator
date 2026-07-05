@@ -19,7 +19,7 @@ from app.agents.code_reviewer import CodeReviewer
 from app.core import security, settings
 from app.db import engine
 from app.db.models import User
-from app.db.persistence import CodingRunStore, RepositoryDocumentStore, RepositorySessionStore, RepositoryStore
+from app.db.persistence import CodingRunStore, RepositoryDocumentStore, RepositorySessionStore, RepositoryStore, UsageRecordStore
 from app.integrations.llm import create_anthropic_chat_model, create_chat_model, create_reranker
 from app.integrations.weaviate import WeaviateResources, get_weaviate_resources
 from app.rag import DocumentIngestor, DocumentRetriever
@@ -94,11 +94,22 @@ def get_coding_run_store(session: SessionDep) -> CodingRunStore:
 CodingRunStoreDep = Annotated[CodingRunStore, Depends(get_coding_run_store)]
 
 
+def get_usage_record_store(session: SessionDep) -> UsageRecordStore:
+    """Build the PostgreSQL store for the AI Cost usage-record ledger."""
+    return UsageRecordStore(session)
+
+
+UsageRecordStoreDep = Annotated[UsageRecordStore, Depends(get_usage_record_store)]
+
+
 def get_repository_session_service(
-    session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep, coding_run_store: CodingRunStoreDep
+    session_store: RepositorySessionStoreDep,
+    repository_store: RepositoryStoreDep,
+    coding_run_store: CodingRunStoreDep,
+    usage_record_store: UsageRecordStoreDep,
 ) -> RepositorySessionService:
     """Compose the repository session application service from its stores."""
-    return RepositorySessionService(session_store, repository_store, coding_run_store)
+    return RepositorySessionService(session_store, repository_store, coding_run_store, usage_record_store)
 
 
 RepositorySessionServiceDep = Annotated[RepositorySessionService, Depends(get_repository_session_service)]

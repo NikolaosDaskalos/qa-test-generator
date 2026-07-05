@@ -4,14 +4,18 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, LLMResult
 from langgraph.types import Command
 
+from app.core import settings
 from app.core.errors.session_errors import CodingRunNotFound, RepositorySessionAccessForbidden, RunNotAwaitingDecision
 from app.db.models import CodingRun, Repository, RepositorySession, SessionHistory, User
 from app.enums import CodingRunStatus, OwnerVerdict
 from app.schemas import Citation, HumanDecisionRequest, Result, ReviewFinding, ReviewResult, RunApproved, RunFailure, RunRejected, Stage, Token
-from app.streaming import FINAL_ANSWER_TAG
 from app.services import RepositorySessionService
+from app.services.usage.pricing import price_for
+from app.streaming import FINAL_ANSWER_TAG
 
 
 class FakeRepositoryStore:
@@ -39,6 +43,7 @@ class FakeSessionStore:
         assistant = SessionHistory(
             id=uuid.uuid4(), session_id=repository_session_id, role="assistant", content=assistant_message, position=2, coding_run_id=coding_run_id
         )
+        self.last_assistant = assistant
         return SimpleNamespace(), assistant
 
     def record_user_activity(self, repository_session_id, *, user_message):
@@ -49,14 +54,21 @@ class FakeSessionStore:
 
 
 class FakeGraph:
-    def __init__(self, stream_items, final_values, *, next_nodes=()) -> None:
+    def __init__(self, stream_items, final_values, *, next_nodes=(), llm_calls=()) -> None:
         self._items = stream_items
         self._final = final_values
         self._next = next_nodes
+        # (node_name, AIMessage) pairs the graph "issues" to any attached usage callback.
+        self._llm_calls = llm_calls
         self.streamed = []
 
     def stream(self, graph_input, config, stream_mode):
         self.streamed.append((graph_input, config, stream_mode))
+        for callback in (config or {}).get("callbacks", []):
+            for node, message in self._llm_calls:
+                run_id = uuid.uuid4()
+                callback.on_chat_model_start({}, [], run_id=run_id, metadata={"langgraph_node": node})
+                callback.on_llm_end(LLMResult(generations=[[ChatGeneration(message=message)]]), run_id=run_id)
         yield from self._items
 
     def get_state(self, config):
@@ -69,6 +81,15 @@ class FakeCodingRunStore:
 
     def get_by_id(self, coding_run_id):
         return self.run if self.run is not None and self.run.repository_session_id is not None else None
+
+
+class FakeUsageRecordStore:
+    def __init__(self) -> None:
+        self.created = []
+
+    def create(self, **kwargs):
+        self.created.append(kwargs)
+        return SimpleNamespace(**kwargs)
 
 
 def _user():
@@ -87,7 +108,7 @@ def _wiring(user, *, indexed_commit_sha=None):
     )
     repository_session = RepositorySession(id=uuid.uuid4(), user_id=user.id, repository_id=repository.id)
     session_store = FakeSessionStore(repository_session)
-    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore(None))
+    service = RepositorySessionService(session_store, FakeRepositoryStore(repository), FakeCodingRunStore(None), FakeUsageRecordStore())
     return service, session_store, repository_session
 
 
@@ -124,6 +145,59 @@ def test_stream_session_passes_through_events_and_persists_repository_answer():
     assert graph_input["checkout_root"] == "/checkout"
     assert config["configurable"]["thread_id"] == "t-1"
     assert session_store.appended[0][2] == "hello"
+
+
+def test_stream_session_persists_a_usage_record_per_llm_call_stamped_with_the_answer():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    classify_msg = AIMessage(
+        content="", usage_metadata={"input_tokens": 200, "output_tokens": 10, "total_tokens": 210}, response_metadata={"model_name": "gpt-4o-mini"}
+    )
+    answer_msg = AIMessage(
+        content="hello", usage_metadata={"input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500}, response_metadata={"model_name": "gpt-4o-mini"}
+    )
+    items = [("messages", (_Msg("hello"), {"langgraph_node": "simple_rag", "tags": [FINAL_ANSWER_TAG]}))]
+    final = {"intent": "repository_question", "answer": "hello", "citations": []}
+    graph = FakeGraph(items, final, llm_calls=[("classify", classify_msg), ("simple_rag", answer_msg)])
+
+    list(service.stream_session(repository_session_id=repository_session.id, user=user, question="q", graph=graph, thread_id="t"))
+
+    created = service.usage_record_store.created
+    # One durable row per LLM call the turn made.
+    assert len(created) == 2
+    assert {record["node_name"] for record in created} == {"classify", "simple_rag"}
+    # Every row carries the turn attribution and is stamped with the answering assistant message.
+    for record in created:
+        assert record["user_id"] == user.id
+        assert record["repository_id"] == repository_session.repository_id
+        assert record["repository_session_id"] == repository_session.id
+        assert record["session_history_id"] == session_store.last_assistant.id
+        assert record["model"] == "gpt-4o-mini"
+        assert record["provider"] == "openai"
+    answer_record = next(record for record in created if record["node_name"] == "simple_rag")
+    assert answer_record["input_tokens"] == 1000
+    assert answer_record["output_tokens"] == 500
+    assert answer_record["cost"] == pytest.approx(price_for("gpt-4o-mini", 1000, 500))
+
+
+def test_stream_session_writes_no_usage_records_when_cost_tracking_is_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "track_costs", False)
+    user = _user()
+    service, _session_store, repository_session = _wiring(user)
+    answer_msg = AIMessage(
+        content="hello", usage_metadata={"input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500}, response_metadata={"model_name": "gpt-4o-mini"}
+    )
+    items = [("messages", (_Msg("hello"), {"langgraph_node": "simple_rag", "tags": [FINAL_ANSWER_TAG]}))]
+    final = {"intent": "repository_question", "answer": "hello", "citations": []}
+    graph = FakeGraph(items, final, llm_calls=[("simple_rag", answer_msg)])
+
+    events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="q", graph=graph, thread_id="t"))
+
+    # No callback is attached and nothing is persisted, yet the turn still completes with its answer.
+    assert service.usage_record_store.created == []
+    _graph_input, config, _modes = graph.streamed[0]
+    assert "callbacks" not in config
+    assert isinstance(events[-1], Result)
 
 
 def test_stream_session_emits_run_failure_terminal_for_rejected_task():

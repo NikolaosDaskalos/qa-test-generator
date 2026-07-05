@@ -37,6 +37,17 @@ def test_chat_model_uses_streaming_and_requested_limits(monkeypatch) -> None:
     assert captured["streaming"] is True
 
 
+def test_openai_chat_model_reports_usage_on_streamed_calls(monkeypatch) -> None:
+    """stream_usage=True so on_llm_end token counts are non-empty on streamed OpenAI calls (ADR-0013)."""
+    captured = {}
+
+    monkeypatch.setattr(llm, "ChatOpenAI", lambda **kwargs: captured.update(kwargs))
+
+    llm.create_chat_model("gpt-test", 123, 3)
+
+    assert captured["stream_usage"] is True
+
+
 def test_openai_chat_model_applies_the_requested_retry_budget(monkeypatch) -> None:
     """The OpenAI model gets the SDK-level bounded retry budget the caller passes, before any fallback is attempted."""
     captured = {}
