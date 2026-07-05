@@ -35,6 +35,7 @@ from app.schemas.session import (
     RunPatchPublic,
     SessionHistoriesPublic,
     SessionHistoryPublic,
+    TurnCostPublic,
 )
 from app.schemas.user import UpdatePassword, UserBase, UserCreate, UserPublic, UserRegister, UsersPublic, UserUpdate, UserUpdateMe
 
@@ -76,6 +77,7 @@ __all__ = [
     "RunPatchPublic",
     "SessionHistoriesPublic",
     "SessionHistoryPublic",
+    "TurnCostPublic",
     "UpdatePassword",
     "UserBase",
     "UserCreate",

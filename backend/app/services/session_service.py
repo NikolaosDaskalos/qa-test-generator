@@ -18,7 +18,16 @@ from app.core.errors.session_errors import (
 from app.db.models import CodingRun, RepositorySession, SessionHistory, User
 from app.db.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore, SessionHistoryPage, UsageRecordStore
 from app.enums import RepositoryStatus
-from app.schemas import AgentStreamEvent, HumanDecisionRequest, RepositorySessionCreate, RepositorySessionsPublic, Result, RunApproved, RunRejected
+from app.schemas import (
+    AgentStreamEvent,
+    HumanDecisionRequest,
+    RepositorySessionCreate,
+    RepositorySessionsPublic,
+    Result,
+    RunApproved,
+    RunRejected,
+    TurnCostPublic,
+)
 from app.services.repository_session_execution import RepositorySessionExecution
 from app.services.usage.callback import UsageCapturingCallback
 from app.streaming import map_graph_stream
@@ -28,11 +37,7 @@ class RepositorySessionService:
     """Own Repository Session authorization and lifecycle rules."""
 
     def __init__(
-        self,
-        session_store: RepositorySessionStore,
-        repository_store: RepositoryStore,
-        coding_run_store: CodingRunStore,
-        usage_record_store: UsageRecordStore,
+        self, session_store: RepositorySessionStore, repository_store: RepositoryStore, coding_run_store: CodingRunStore, usage_record_store: UsageRecordStore
     ) -> None:
         self.session_store = session_store
         self.repository_store = repository_store
@@ -103,6 +108,25 @@ class RepositorySessionService:
             raise CodingRunNotFound()
         return run
 
+    def get_turn_cost(self, *, repository_session_id: uuid.UUID, session_history_id: uuid.UUID, user: User) -> TurnCostPublic:
+        """Return the summed AI Cost and token totals of one owned Repository-question turn (ADR-0014).
+
+        Ownership flows through the session: ``_get_accessible`` gates the read exactly like the
+        other owner-scoped routes, and the Usage Record query is scoped to that session so records
+        from another session — even the same ``session_history_id`` reused elsewhere — can never be
+        summed in. A turn with no recorded usage sums to a well-defined zero rather than erroring;
+        an unpriced call still contributes its tokens but no cost.
+        """
+        repository_session = self._get_accessible(repository_session_id, user)
+        records = self.usage_record_store.list(repository_session_id=repository_session.id, session_history_id=session_history_id)
+        return TurnCostPublic(
+            session_history_id=session_history_id,
+            cost=sum(record.cost for record in records if record.cost is not None),
+            input_tokens=sum(record.input_tokens for record in records),
+            output_tokens=sum(record.output_tokens for record in records),
+            total_tokens=sum(record.total_tokens for record in records),
+        )
+
     def record_exchange(
         self, *, repository_session_id: uuid.UUID, user: User, user_message: str, assistant_message: str
     ) -> tuple[SessionHistory, SessionHistory]:
@@ -161,9 +185,7 @@ class RepositorySessionService:
             # approval, and Pull Request link — is reconstructed from that run on reload, not snapshotted here.
             self.session_store.append_exchange(repository_session.id, user_message=question, assistant_message="", coding_run_id=final.get("coding_run_id"))
 
-    def _persist_usage(
-        self, usage_callback: UsageCapturingCallback | None, repository_session: RepositorySession, *, session_history_id: uuid.UUID
-    ) -> None:
+    def _persist_usage(self, usage_callback: UsageCapturingCallback | None, repository_session: RepositorySession, *, session_history_id: uuid.UUID) -> None:
         """Stamp each buffered AI Cost record with the turn's attribution and persist it (ADR-0013).
 
         Called only once the answering turn is known, so every metered LLM call the turn

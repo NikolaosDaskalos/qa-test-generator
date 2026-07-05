@@ -17,6 +17,7 @@ from app.schemas import (
     RunPatchPublic,
     SessionHistoriesPublic,
     SessionHistoryPublic,
+    TurnCostPublic,
 )
 from app.streaming import to_sse_frames
 
@@ -87,12 +88,24 @@ def read_repository_session_history(
     page's ``next_before`` cursor to fetch older messages, walking the whole persisted conversation.
     This display read model is separate from the bounded ten-message window supplied to the AI.
     """
-    page = repository_session_service.get_history_page(
-        repository_session_id=repository_session_id, user=current_user, before=before, limit=limit
-    )
+    page = repository_session_service.get_history_page(repository_session_id=repository_session_id, user=current_user, before=before, limit=limit)
     return SessionHistoriesPublic(
         data=[SessionHistoryPublic.model_validate(message) for message in page.messages], has_more=page.has_more, next_before=page.next_before
     )
+
+
+@router.get("/{repository_session_id}/history/{session_history_id}/cost", response_model=TurnCostPublic)
+def read_turn_cost(
+    *, repository_session_service: RepositorySessionServiceDep, current_user: CurrentUser, repository_session_id: uuid.UUID, session_history_id: uuid.UUID
+) -> TurnCostPublic:
+    """Read the AI Cost of one owned Repository-question turn, keyed by its assistant message (ADR-0014).
+
+    Serves the summed cost and token totals off the persisted Usage Records after the
+    Agent Stream has closed, so a client can show the turn's cost the moment it finishes
+    and again on reload — the cost never rides the closed stream. A turn with no recorded
+    usage reads back as a well-defined zero; ownership uses the shared owner-scoped checks.
+    """
+    return repository_session_service.get_turn_cost(repository_session_id=repository_session_id, session_history_id=session_history_id, user=current_user)
 
 
 @router.get("/{repository_session_id}/runs/{coding_run_id}", response_model=CodingRunPublic)

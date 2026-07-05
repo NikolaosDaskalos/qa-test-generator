@@ -15,7 +15,7 @@ from app.db.models import CodingRun, RepositorySession, SessionHistory
 from app.db.persistence import SessionHistoryPage
 from app.dependencies import get_current_user, get_repository_session_service, get_session_graph
 from app.enums import CodingRunStage, CodingRunStatus, OwnerVerdict, SessionMessageRole
-from app.schemas import Citation, RepositorySessionPublic, RepositorySessionsPublic, Result, RunApproved, RunRejected, Stage, Token
+from app.schemas import Citation, RepositorySessionPublic, RepositorySessionsPublic, Result, RunApproved, RunRejected, Stage, Token, TurnCostPublic
 
 
 class FakeRepositorySessionService:
@@ -29,6 +29,8 @@ class FakeRepositorySessionService:
         history_raises: Exception | None = None,
         has_more: bool = False,
         next_before: int | None = None,
+        turn_cost: "TurnCostPublic | None" = None,
+        cost_raises: Exception | None = None,
     ) -> None:
         self.repository_session = repository_session
         self.history = history or []
@@ -38,10 +40,13 @@ class FakeRepositorySessionService:
         self.history_raises = history_raises
         self.has_more = has_more
         self.next_before = next_before
+        self.turn_cost = turn_cost
+        self.cost_raises = cost_raises
         self.create_calls = []
         self.history_calls = []
         self.run_calls = []
         self.list_calls = []
+        self.cost_calls = []
 
     def create_session(self, **kwargs) -> RepositorySession:
         self.create_calls.append(kwargs)
@@ -64,6 +69,12 @@ class FakeRepositorySessionService:
         if self.run is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Coding Run not found")
         return self.run
+
+    def get_turn_cost(self, **kwargs) -> "TurnCostPublic":
+        self.cost_calls.append(kwargs)
+        if self.cost_raises is not None:
+            raise self.cost_raises
+        return self.turn_cost
 
 
 def test_owner_can_create_repository_session_for_ready_repository() -> None:
@@ -198,13 +209,7 @@ def test_owner_can_read_session_history() -> None:
             citations=[{"source": "app/auth.py"}, {"source": "app/login.py"}],
             position=2,
         ),
-        SessionHistory(
-            session_id=repository_session.id,
-            role=SessionMessageRole.assistant,
-            content="",
-            position=3,
-            coding_run_id=run_id,
-        ),
+        SessionHistory(session_id=repository_session.id, role=SessionMessageRole.assistant, content="", position=3, coding_run_id=run_id),
     ]
     service = FakeRepositorySessionService(repository_session, history)
     user = SimpleNamespace(id=user_id, is_superuser=False)
@@ -456,7 +461,9 @@ def test_request_must_carry_either_a_question_or_a_decision() -> None:
 
     with TestClient(app) as client:
         empty = client.post(f"/sessions/{uuid.uuid4()}/questions", json={})
-        both = client.post(f"/sessions/{uuid.uuid4()}/questions", json={"question": "q", "decision": {"coding_run_id": str(uuid.uuid4()), "verdict": "approve"}})
+        both = client.post(
+            f"/sessions/{uuid.uuid4()}/questions", json={"question": "q", "decision": {"coding_run_id": str(uuid.uuid4()), "verdict": "approve"}}
+        )
 
     assert empty.status_code == 422
     assert both.status_code == 422
@@ -613,3 +620,71 @@ def test_run_lookup_requires_authentication() -> None:
 
     assert response.status_code == 401
     assert service.run_calls == []
+
+
+def test_owner_can_read_a_turns_cost() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    session_history_id = uuid.uuid4()
+    turn_cost = TurnCostPublic(session_history_id=session_history_id, cost=0.03, input_tokens=300, output_tokens=70, total_tokens=370)
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, user_id=user.id, repository_id=uuid.uuid4()), turn_cost=turn_cost)
+    app = _lookup_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{session_id}/history/{session_history_id}/cost")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session_history_id"] == str(session_history_id)
+    assert body["cost"] == 0.03
+    assert body["input_tokens"] == 300
+    assert body["output_tokens"] == 70
+    assert body["total_tokens"] == 370
+    call = service.cost_calls[0]
+    assert call["repository_session_id"] == session_id
+    assert call["session_history_id"] == session_history_id
+    assert call["user"] is user
+
+
+def test_turn_with_no_usage_reads_back_as_zeros_not_an_error() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    session_history_id = uuid.uuid4()
+    turn_cost = TurnCostPublic(session_history_id=session_history_id)
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, user_id=user.id, repository_id=uuid.uuid4()), turn_cost=turn_cost)
+    app = _lookup_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{session_id}/history/{session_history_id}/cost")
+
+    assert response.status_code == 200
+    assert response.json() == {"session_history_id": str(session_history_id), "cost": 0.0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+
+def test_turn_cost_in_a_session_not_owned_gets_the_shared_owner_scoped_error() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    service = FakeRepositorySessionService(RepositorySession(user_id=user.id, repository_id=uuid.uuid4()), cost_raises=RepositorySessionNotFound())
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{uuid.uuid4()}/history/{uuid.uuid4()}/cost")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Repository Session not found"}
+
+
+def test_turn_cost_requires_authentication() -> None:
+    service = FakeRepositorySessionService(RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4()))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{uuid.uuid4()}/history/{uuid.uuid4()}/cost")
+
+    assert response.status_code == 401
+    assert service.cost_calls == []

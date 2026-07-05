@@ -6,7 +6,7 @@ import pytest
 
 from app.core.errors.repository_errors import RepositoryAccessForbidden, RepositoryNotFound
 from app.core.errors.session_errors import RepositoryNotReady, RepositorySessionAccessForbidden, RepositorySessionNotFound
-from app.db.models import Repository, RepositorySession, User
+from app.db.models import Repository, RepositorySession, UsageRecord, User
 from app.enums import RepositoryStatus
 from app.schemas import RepositorySessionCreate
 from app.services import RepositorySessionService
@@ -33,11 +33,17 @@ class FakeCodingRunStore:
 
 
 class FakeUsageRecordStore:
-    def __init__(self) -> None:
+    def __init__(self, records=None) -> None:
         self.created = []
+        self.records = records or []
+        self.list_calls = []
 
     def create(self, **kwargs):
         self.created.append(kwargs)
+
+    def list(self, **kwargs):
+        self.list_calls.append(kwargs)
+        return self.records
 
 
 class FakeRepositorySessionStore:
@@ -259,3 +265,98 @@ def test_owned_exchange_is_persisted_through_one_store_operation() -> None:
 def test_service_construction_requires_a_coding_run_store() -> None:
     with pytest.raises(TypeError):
         RepositorySessionService(FakeRepositorySessionStore(), FakeRepositoryStore(None))  # type: ignore[call-arg]
+
+
+def _usage_record(repository_session: RepositorySession, session_history_id: uuid.UUID, **overrides) -> UsageRecord:
+    defaults = {
+        "user_id": repository_session.user_id,
+        "repository_id": repository_session.repository_id,
+        "repository_session_id": repository_session.id,
+        "model": "gpt-4o",
+        "provider": "openai",
+        "node_name": "generating",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "total_tokens": 150,
+        "cost": 0.01,
+        "session_history_id": session_history_id,
+    }
+    defaults.update(overrides)
+    return UsageRecord(**defaults)
+
+
+def test_turn_cost_sums_cost_and_token_totals_for_an_owned_turn() -> None:
+    user_id = uuid.uuid4()
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
+    session_history_id = uuid.uuid4()
+    records = [
+        _usage_record(repository_session, session_history_id, input_tokens=100, output_tokens=50, total_tokens=150, cost=0.01),
+        _usage_record(repository_session, session_history_id, input_tokens=200, output_tokens=20, total_tokens=220, cost=0.02),
+    ]
+    session_store = FakeRepositorySessionStore(repository_session)
+    usage_store = FakeUsageRecordStore(records)
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None), FakeCodingRunStore(), usage_store)
+
+    cost = service.get_turn_cost(repository_session_id=repository_session.id, session_history_id=session_history_id, user=_user(user_id))
+
+    assert cost.session_history_id == session_history_id
+    assert cost.input_tokens == 300
+    assert cost.output_tokens == 70
+    assert cost.total_tokens == 370
+    assert cost.cost == 0.03
+    # The query is scoped to the owned session so records from other sessions can never be summed in.
+    assert usage_store.list_calls == [{"repository_session_id": repository_session.id, "session_history_id": session_history_id}]
+
+
+def test_turn_cost_is_a_well_defined_zero_when_the_turn_has_no_recorded_usage() -> None:
+    user_id = uuid.uuid4()
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
+    session_history_id = uuid.uuid4()
+    service = RepositorySessionService(
+        FakeRepositorySessionStore(repository_session), FakeRepositoryStore(None), FakeCodingRunStore(), FakeUsageRecordStore([])
+    )
+
+    cost = service.get_turn_cost(repository_session_id=repository_session.id, session_history_id=session_history_id, user=_user(user_id))
+
+    assert (cost.cost, cost.input_tokens, cost.output_tokens, cost.total_tokens) == (0.0, 0, 0, 0)
+
+
+def test_turn_cost_sums_tokens_of_an_unpriced_call_without_its_missing_cost() -> None:
+    user_id = uuid.uuid4()
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
+    session_history_id = uuid.uuid4()
+    records = [
+        _usage_record(repository_session, session_history_id, total_tokens=150, cost=0.01),
+        _usage_record(repository_session, session_history_id, total_tokens=90, cost=None),
+    ]
+    service = RepositorySessionService(
+        FakeRepositorySessionStore(repository_session), FakeRepositoryStore(None), FakeCodingRunStore(), FakeUsageRecordStore(records)
+    )
+
+    cost = service.get_turn_cost(repository_session_id=repository_session.id, session_history_id=session_history_id, user=_user(user_id))
+
+    # The unpriced call still contributes its tokens, but only priced calls sum into the cost figure.
+    assert cost.total_tokens == 240
+    assert cost.cost == 0.01
+
+
+def test_turn_cost_raises_not_found_for_a_missing_session() -> None:
+    usage_store = FakeUsageRecordStore([])
+    service = RepositorySessionService(FakeRepositorySessionStore(None), FakeRepositoryStore(None), FakeCodingRunStore(), usage_store)
+
+    with pytest.raises(RepositorySessionNotFound):
+        service.get_turn_cost(repository_session_id=uuid.uuid4(), session_history_id=uuid.uuid4(), user=_user(uuid.uuid4()))
+
+    # Ownership is gated before any Usage Record is read.
+    assert usage_store.list_calls == []
+
+
+def test_turn_cost_raises_forbidden_for_a_session_the_caller_does_not_own() -> None:
+    repository_session = RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4())
+    usage_store = FakeUsageRecordStore([])
+    service = RepositorySessionService(FakeRepositorySessionStore(repository_session), FakeRepositoryStore(None), FakeCodingRunStore(), usage_store)
+
+    with pytest.raises(RepositorySessionAccessForbidden):
+        service.get_turn_cost(repository_session_id=repository_session.id, session_history_id=uuid.uuid4(), user=_user(uuid.uuid4()))
+
+    assert usage_store.list_calls == []

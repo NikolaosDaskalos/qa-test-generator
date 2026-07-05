@@ -137,3 +137,19 @@ class RunPatchPublic(BaseModel):
     diff: str
     generated_files: list[GeneratedFile] = Field(default_factory=list)
     external_references: list[ExternalReference] = Field(default_factory=list)
+
+
+class TurnCostPublic(BaseModel):
+    """The AI Cost of a single Repository-question turn, summed from its Usage Records (ADR-0014).
+
+    Keyed by the assistant ``session_history_id`` the terminal ``Result`` hands the client,
+    so the cost can be shown the moment a turn finishes and again on reload — off the closed
+    Agent Stream. ``cost`` sums the priced calls (an unpriced model contributes tokens but no
+    cost); a turn with no recorded usage reads back as a well-defined zero, never an error.
+    """
+
+    session_history_id: uuid.UUID
+    cost: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
