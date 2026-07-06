@@ -39,6 +39,8 @@ type ChatMessage = {
   role: "user" | "assistant"
   content: string
   citations: Citation[]
+  // The persisted assistant Session History id — anchors the turn's AI Cost lookup.
+  sessionHistoryId?: string
   codingRunId?: string
   review?: ReviewResultView
   decision?: RunDecisionView
@@ -523,6 +525,14 @@ function CopilotShell() {
                           <li key={citation.source}>{citation.source}</li>
                         ))}
                       </ul>
+                    ) : null}
+                    {message.role === "assistant" &&
+                    message.sessionHistoryId &&
+                    activeSessionId ? (
+                      <TurnCostLabel
+                        repositorySessionId={activeSessionId}
+                        sessionHistoryId={message.sessionHistoryId}
+                      />
                     ) : null}
                   </article>
                 ))
@@ -1170,6 +1180,46 @@ function RunOutcomeSummary({
   return null
 }
 
+function formatEstimatedCost(cost: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(cost)
+}
+
+// Reads a completed Repository question turn's AI Cost off the persisted Usage Records
+// (never the closed Agent Stream), so the estimate shows the moment the turn finishes and
+// again on reload. A turn with no recorded usage (e.g. cost tracking disabled) renders nothing.
+function TurnCostLabel({
+  repositorySessionId,
+  sessionHistoryId,
+}: {
+  repositorySessionId: string
+  sessionHistoryId: string
+}) {
+  const costQuery = useQuery({
+    queryKey: ["turn-cost", repositorySessionId, sessionHistoryId],
+    queryFn: () =>
+      SessionsService.readTurnCost({ repositorySessionId, sessionHistoryId }),
+  })
+
+  const cost = costQuery.data
+  if (!cost || (cost.total_tokens ?? 0) === 0) {
+    return null
+  }
+
+  return (
+    <p
+      data-testid="turn-cost"
+      className="mt-2 text-xs text-muted-foreground"
+    >
+      Est. AI Cost: {formatEstimatedCost(cost.cost ?? 0)}
+    </p>
+  )
+}
+
 function RunEscalatedSummary({
   findings,
   diff,
@@ -1391,6 +1441,8 @@ function toChatMessages(history: SessionHistoryPublic[]): ChatMessage[] {
     role: message.role,
     content: message.content,
     citations: message.citations,
+    // Anchor the turn's AI Cost lookup so the estimate is re-fetched per card on reload.
+    sessionHistoryId: message.role === "assistant" ? message.id : undefined,
     // Restore the link to the durable Coding Run so its card is reconstructed from the run on reload.
     codingRunId: message.coding_run_id ?? undefined,
   }))
@@ -1516,6 +1568,7 @@ async function submitQuestion({
                   ...message,
                   content: event.answer,
                   citations: event.citations,
+                  sessionHistoryId: event.assistant_message_id,
                 }
               : message,
           ),

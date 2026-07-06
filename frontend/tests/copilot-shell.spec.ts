@@ -2609,3 +2609,265 @@ test("Repository questions and code generation coexist in one chat history", asy
   await expect(page.getByText("Coding Run run-mixed")).toBeVisible()
   await expect(page.getByText("Adds login route coverage.")).toBeVisible()
 })
+
+test("A completed question turn shows its estimated AI Cost on the card", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"token","content":"Login is tested."}\n\n',
+          'data: {"type":"result","repository_session_id":"session-ready","assistant_message_id":"assistant-msg-1","answer":"Login is tested.","citations":[]}\n\n',
+        ].join(""),
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/history/assistant-msg-1/cost",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          session_history_id: "assistant-msg-1",
+          coding_run_id: null,
+          cost: 0.0123,
+          input_tokens: 1000,
+          output_tokens: 200,
+          total_tokens: 1200,
+        },
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.evaluate(() => localStorage.setItem("access_token", "test-token"))
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Where is the login route tested?")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(page.getByText("Login is tested.")).toBeVisible()
+  await expect(page.getByText("Est. AI Cost: $0.0123")).toBeVisible()
+})
+
+test("Reloading a session re-fetches each turn's estimated AI Cost", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-stored",
+            title: "Login questions",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-stored/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-assistant",
+              session_id: "session-stored",
+              role: "assistant",
+              content: "Login routes are tested in the browser suite.",
+              citations: [{ source: "frontend/tests/login.spec.ts" }],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-stored/history/message-assistant/cost",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          session_history_id: "message-assistant",
+          coding_run_id: null,
+          cost: 0.0456,
+          input_tokens: 2000,
+          output_tokens: 400,
+          total_tokens: 2400,
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-stored")
+
+  await expect(
+    page.getByText("Login routes are tested in the browser suite."),
+  ).toBeVisible()
+  await expect(page.getByText("Est. AI Cost: $0.0456")).toBeVisible()
+})
+
+test("A turn with no recorded AI Cost renders no cost label", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-stored",
+            title: "Login questions",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-stored/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-assistant",
+              session_id: "session-stored",
+              role: "assistant",
+              content: "Login routes are tested in the browser suite.",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-stored/history/message-assistant/cost",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          session_history_id: "message-assistant",
+          coding_run_id: null,
+          cost: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-stored")
+
+  await expect(
+    page.getByText("Login routes are tested in the browser suite."),
+  ).toBeVisible()
+  await expect(page.getByTestId("turn-cost")).toHaveCount(0)
+})

@@ -4,7 +4,12 @@ import { OpenAPI } from "@/client"
 export type AgentStreamEvent =
   | { type: "stage"; stage: string }
   | { type: "token"; content: string }
-  | { type: "result"; answer: string; citations: Citation[] }
+  | {
+      type: "result"
+      answer: string
+      citations: Citation[]
+      assistant_message_id: string
+    }
   | { type: "run_started"; coding_run_id: string }
   | { type: "review_result"; [key: string]: unknown }
   | { type: "run_failure"; [key: string]: unknown }

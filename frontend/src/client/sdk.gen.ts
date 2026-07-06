@@ -3,7 +3,77 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { LoginLoginAccessTokenData, LoginLoginAccessTokenResponse, LoginTestTokenResponse, LoginRecoverPasswordData, LoginRecoverPasswordResponse, LoginResetPasswordData, LoginResetPasswordResponse, LoginRecoverPasswordHtmlContentData, LoginRecoverPasswordHtmlContentResponse, PrivateCreateUserData, PrivateCreateUserResponse, RepositoriesReadRepositoriesData, RepositoriesReadRepositoriesResponse, RepositoriesCreateRepositoryData, RepositoriesCreateRepositoryResponse, RepositoriesReadRepositoryData, RepositoriesReadRepositoryResponse, RepositoriesUpdateRepositoryData, RepositoriesUpdateRepositoryResponse, RepositoriesDeleteRepositoryData, RepositoriesDeleteRepositoryResponse, SessionsCreateRepositorySessionData, SessionsCreateRepositorySessionResponse, SessionsReadRepositorySessionsData, SessionsReadRepositorySessionsResponse, SessionsAskRepositoryQuestionData, SessionsAskRepositoryQuestionResponse, SessionsReadRepositorySessionHistoryData, SessionsReadRepositorySessionHistoryResponse, SessionsReadCodingRunData, SessionsReadCodingRunResponse, SessionsReadCodingRunPatchData, SessionsReadCodingRunPatchResponse, UsersReadUsersData, UsersReadUsersResponse, UsersCreateUserData, UsersCreateUserResponse, UsersReadUserMeResponse, UsersDeleteUserMeResponse, UsersUpdateUserMeData, UsersUpdateUserMeResponse, UsersUpdatePasswordMeData, UsersUpdatePasswordMeResponse, UsersRegisterUserData, UsersRegisterUserResponse, UsersReadUserByIdData, UsersReadUserByIdResponse, UsersUpdateUserData, UsersUpdateUserResponse, UsersDeleteUserData, UsersDeleteUserResponse, UtilsTestEmailData, UtilsTestEmailResponse, UtilsHealthCheckResponse } from './types.gen';
+import type { CostsReadSessionCostData, CostsReadSessionCostResponse, CostsReadRepositoryCostData, CostsReadRepositoryCostResponse, CostsReadMyCostResponse, CostsReadAllUsersCostResponse, LoginLoginAccessTokenData, LoginLoginAccessTokenResponse, LoginTestTokenResponse, LoginRecoverPasswordData, LoginRecoverPasswordResponse, LoginResetPasswordData, LoginResetPasswordResponse, LoginRecoverPasswordHtmlContentData, LoginRecoverPasswordHtmlContentResponse, PrivateCreateUserData, PrivateCreateUserResponse, RepositoriesReadRepositoriesData, RepositoriesReadRepositoriesResponse, RepositoriesCreateRepositoryData, RepositoriesCreateRepositoryResponse, RepositoriesReadRepositoryData, RepositoriesReadRepositoryResponse, RepositoriesUpdateRepositoryData, RepositoriesUpdateRepositoryResponse, RepositoriesDeleteRepositoryData, RepositoriesDeleteRepositoryResponse, SessionsCreateRepositorySessionData, SessionsCreateRepositorySessionResponse, SessionsReadRepositorySessionsData, SessionsReadRepositorySessionsResponse, SessionsAskRepositoryQuestionData, SessionsAskRepositoryQuestionResponse, SessionsReadRepositorySessionHistoryData, SessionsReadRepositorySessionHistoryResponse, SessionsReadTurnCostData, SessionsReadTurnCostResponse, SessionsReadCodingRunData, SessionsReadCodingRunResponse, SessionsReadRunCostData, SessionsReadRunCostResponse, SessionsReadCodingRunPatchData, SessionsReadCodingRunPatchResponse, UsersReadUsersData, UsersReadUsersResponse, UsersCreateUserData, UsersCreateUserResponse, UsersReadUserMeResponse, UsersDeleteUserMeResponse, UsersUpdateUserMeData, UsersUpdateUserMeResponse, UsersUpdatePasswordMeData, UsersUpdatePasswordMeResponse, UsersRegisterUserData, UsersRegisterUserResponse, UsersReadUserByIdData, UsersReadUserByIdResponse, UsersUpdateUserData, UsersUpdateUserResponse, UsersDeleteUserData, UsersDeleteUserResponse, UtilsTestEmailData, UtilsTestEmailResponse, UtilsHealthCheckResponse } from './types.gen';
+
+export class CostsService {
+    /**
+     * Read Session Cost
+     * Return a Repository Session's total AI Cost — the sum of its turns' costs — for its owner (ADR-0014).
+     * @param data The data for the request.
+     * @param data.repositorySessionId
+     * @returns AiCostRollupPublic Successful Response
+     * @throws ApiError
+     */
+    public static readSessionCost(data: CostsReadSessionCostData): CancelablePromise<CostsReadSessionCostResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/costs/session/{repository_session_id}',
+            path: {
+                repository_session_id: data.repositorySessionId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Read Repository Cost
+     * Return a Repository's total AI Cost across all its sessions, for its owner (ADR-0014).
+     * @param data The data for the request.
+     * @param data.repositoryId
+     * @returns AiCostRollupPublic Successful Response
+     * @throws ApiError
+     */
+    public static readRepositoryCost(data: CostsReadRepositoryCostData): CancelablePromise<CostsReadRepositoryCostResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/costs/repository/{repository_id}',
+            path: {
+                repository_id: data.repositoryId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Read My Cost
+     * Return the requesting user's total AI Cost across all their repositories (ADR-0014).
+     * @returns AiCostRollupPublic Successful Response
+     * @throws ApiError
+     */
+    public static readMyCost(): CancelablePromise<CostsReadMyCostResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/costs/me'
+        });
+    }
+    
+    /**
+     * Read All Users Cost
+     * Return the global AI Cost total across every user — superuser-only (ADR-0014).
+     * @returns AiCostRollupPublic Successful Response
+     * @throws ApiError
+     */
+    public static readAllUsersCost(): CancelablePromise<CostsReadAllUsersCostResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/costs/all'
+        });
+    }
+}
 
 export class LoginService {
     /**
@@ -343,6 +413,34 @@ export class SessionsService {
     }
     
     /**
+     * Read Turn Cost
+     * Read the AI Cost of one owned Repository-question turn, keyed by its assistant message (ADR-0014).
+     *
+     * Serves the summed cost and token totals off the persisted Usage Records after the
+     * Agent Stream has closed, so a client can show the turn's cost the moment it finishes
+     * and again on reload — the cost never rides the closed stream. A turn with no recorded
+     * usage reads back as a well-defined zero; ownership uses the shared owner-scoped checks.
+     * @param data The data for the request.
+     * @param data.repositorySessionId
+     * @param data.sessionHistoryId
+     * @returns TurnCostPublic Successful Response
+     * @throws ApiError
+     */
+    public static readTurnCost(data: SessionsReadTurnCostData): CancelablePromise<SessionsReadTurnCostResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/sessions/{repository_session_id}/history/{session_history_id}/cost',
+            path: {
+                repository_session_id: data.repositorySessionId,
+                session_history_id: data.sessionHistoryId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
      * Read Coding Run
      * Read an owned Coding Run's persisted state, review findings, and failure information.
      *
@@ -358,6 +456,35 @@ export class SessionsService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/v1/sessions/{repository_session_id}/runs/{coding_run_id}',
+            path: {
+                repository_session_id: data.repositorySessionId,
+                coding_run_id: data.codingRunId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Read Run Cost
+     * Read the AI Cost of one owned Code Generation Task turn, keyed by its Coding Run (ADR-0014).
+     *
+     * The code-generation counterpart to :func:`read_turn_cost`: it sums the persisted Usage Records
+     * stamped with this ``coding_run_id`` — the anchor the run's terminal events already carry — so a
+     * client can show the card's cost the moment the turn finishes and again on reload, off the closed
+     * Agent Stream. Includes the spend of a turn that later failed; a run with no recorded usage reads
+     * back as a well-defined zero. Ownership uses the shared owner-scoped checks.
+     * @param data The data for the request.
+     * @param data.repositorySessionId
+     * @param data.codingRunId
+     * @returns TurnCostPublic Successful Response
+     * @throws ApiError
+     */
+    public static readRunCost(data: SessionsReadRunCostData): CancelablePromise<SessionsReadRunCostResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/sessions/{repository_session_id}/runs/{coding_run_id}/cost',
             path: {
                 repository_session_id: data.repositorySessionId,
                 coding_run_id: data.codingRunId
