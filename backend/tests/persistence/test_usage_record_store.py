@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, create_engine
 
 from app.db.models import CodingRun, Repository, RepositorySession, SessionHistory, UsageRecord, User
-from app.db.persistence import UsageRecordStore
+from app.db.persistence import CostTotals, UsageRecordStore
 from app.enums import SessionMessageRole
 
 
@@ -143,3 +143,65 @@ def test_list_filters_records_by_each_attribution() -> None:
         assert [r.id for r in store.list(session_history_id=history.id)] == [on_question.id]
         assert [r.id for r in store.list(coding_run_id=run.id)] == [on_run.id]
         assert [r.id for r in store.list(user_id=other_user_id)] == [r.id for r in store.list(repository_session_id=other_session_id)]
+
+
+def test_totals_sums_cost_and_tokens_for_a_session() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        user_id, repository_id, session_id = _seed(db)
+        store = UsageRecordStore(db)
+        store.create(**_record_kwargs(user_id, repository_id, session_id) | {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120, "cost": 0.01})
+        store.create(**_record_kwargs(user_id, repository_id, session_id) | {"input_tokens": 300, "output_tokens": 50, "total_tokens": 350, "cost": 0.02})
+
+        totals = store.totals(repository_session_id=session_id)
+
+        assert totals.cost == 0.03
+        assert totals.input_tokens == 400
+        assert totals.output_tokens == 70
+        assert totals.total_tokens == 470
+
+
+def test_totals_excludes_an_unpriced_call_from_cost_but_still_counts_its_tokens() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        user_id, repository_id, session_id = _seed(db)
+        store = UsageRecordStore(db)
+        store.create(**_record_kwargs(user_id, repository_id, session_id) | {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120, "cost": 0.01})
+        store.create(**_record_kwargs(user_id, repository_id, session_id) | {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cost": None})
+
+        totals = store.totals(repository_session_id=session_id)
+
+        assert totals.cost == 0.01
+        assert totals.input_tokens == 110
+        assert totals.total_tokens == 135
+
+
+def test_totals_of_no_matching_records_is_a_well_defined_zero() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        _seed(db)
+        store = UsageRecordStore(db)
+
+        totals = store.totals(repository_session_id=uuid.uuid4())
+
+        assert totals == CostTotals(cost=0.0, input_tokens=0, output_tokens=0, total_tokens=0)
+
+
+def test_totals_isolates_by_user_and_repository() -> None:
+    engine = _engine()
+    with Session(engine) as db:
+        user_id, repository_id, session_id = _seed(db)
+        other_user_id = uuid.uuid4()
+        other_repository_id = uuid.uuid4()
+        other_session_id = uuid.uuid4()
+        db.add(User(id=other_user_id, email="other@example.com", hashed_password="not-used"))
+        db.add(Repository(id=other_repository_id, user_id=other_user_id, name="other", repository_url="https://github.com/other/other.git", owner="other"))
+        db.add(RepositorySession(id=other_session_id, user_id=other_user_id, repository_id=other_repository_id))
+        db.commit()
+        store = UsageRecordStore(db)
+        store.create(**_record_kwargs(user_id, repository_id, session_id) | {"total_tokens": 120, "cost": 0.01})
+        store.create(**_record_kwargs(other_user_id, other_repository_id, other_session_id) | {"total_tokens": 999, "cost": 9.9})
+
+        assert store.totals(user_id=user_id).cost == 0.01
+        assert store.totals(repository_id=repository_id).total_tokens == 120
+        assert store.totals().total_tokens == 1119

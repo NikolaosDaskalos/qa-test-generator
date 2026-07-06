@@ -25,6 +25,7 @@ from app.schemas.generation import ExternalReference, GeneratedFile, GenerationP
 from app.schemas.repository import RepositoriesPublic, RepositoryCreate, RepositoryPublic, RepositoryUpdate
 from app.schemas.retrieval_request import RepositoryDocumentType, RetrievalRequest
 from app.schemas.review import FindingCategory, PatchReview, ReviewFinding
+from app.schemas.cost import AiCostRollupPublic
 from app.schemas.session import (
     CodingRunPublic,
     HumanDecisionRequest,
@@ -42,6 +43,7 @@ from app.schemas.user import UpdatePassword, UserBase, UserCreate, UserPublic, U
 __all__ = [
     "REVIEW_DISCLAIMER",
     "AgentStreamEvent",
+    "AiCostRollupPublic",
     "Citation",
     "PatchResult",
     "Result",

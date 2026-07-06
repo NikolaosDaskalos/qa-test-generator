@@ -24,7 +24,7 @@ from app.integrations.llm import create_anthropic_chat_model, create_chat_model,
 from app.integrations.weaviate import WeaviateResources, get_weaviate_resources
 from app.rag import DocumentIngestor, DocumentRetriever
 from app.schemas import TokenPayload
-from app.services import RepositoryService, RepositorySessionService
+from app.services import CostRollupService, RepositoryService, RepositorySessionService
 from app.services.coding_runs.patch_publisher import build_patch_publisher_factory
 from app.services.coding_runs.recorder import CodingRunRecorder
 from app.services.coding_runs.review_policy import ReviewPolicy
@@ -113,6 +113,16 @@ def get_repository_session_service(
 
 
 RepositorySessionServiceDep = Annotated[RepositorySessionService, Depends(get_repository_session_service)]
+
+
+def get_cost_rollup_service(
+    session_store: RepositorySessionStoreDep, repository_store: RepositoryStoreDep, usage_record_store: UsageRecordStoreDep
+) -> CostRollupService:
+    """Compose the owner-scoped AI Cost rollup service from its stores."""
+    return CostRollupService(session_store, repository_store, usage_record_store)
+
+
+CostRollupServiceDep = Annotated[CostRollupService, Depends(get_cost_rollup_service)]
 
 
 def get_current_user(session: SessionDep, token: TokenDep) -> User:
