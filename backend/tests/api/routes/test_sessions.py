@@ -47,6 +47,7 @@ class FakeRepositorySessionService:
         self.run_calls = []
         self.list_calls = []
         self.cost_calls = []
+        self.run_cost_calls = []
 
     def create_session(self, **kwargs) -> RepositorySession:
         self.create_calls.append(kwargs)
@@ -72,6 +73,12 @@ class FakeRepositorySessionService:
 
     def get_turn_cost(self, **kwargs) -> "TurnCostPublic":
         self.cost_calls.append(kwargs)
+        if self.cost_raises is not None:
+            raise self.cost_raises
+        return self.turn_cost
+
+    def get_run_cost(self, **kwargs) -> "TurnCostPublic":
+        self.run_cost_calls.append(kwargs)
         if self.cost_raises is not None:
             raise self.cost_raises
         return self.turn_cost
@@ -658,7 +665,68 @@ def test_turn_with_no_usage_reads_back_as_zeros_not_an_error() -> None:
         response = client.get(f"/sessions/{session_id}/history/{session_history_id}/cost")
 
     assert response.status_code == 200
-    assert response.json() == {"session_history_id": str(session_history_id), "cost": 0.0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    assert response.json() == {
+        "session_history_id": str(session_history_id),
+        "coding_run_id": None,
+        "cost": 0.0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def test_owner_can_read_a_code_generation_turns_cost_by_coding_run_id() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    session_id = uuid.uuid4()
+    coding_run_id = uuid.uuid4()
+    turn_cost = TurnCostPublic(coding_run_id=coding_run_id, cost=0.25, input_tokens=1500, output_tokens=840, total_tokens=2340)
+    service = FakeRepositorySessionService(RepositorySession(id=session_id, user_id=user.id, repository_id=uuid.uuid4()), turn_cost=turn_cost)
+    app = _lookup_app(service, user=user)
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{session_id}/runs/{coding_run_id}/cost")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["coding_run_id"] == str(coding_run_id)
+    assert body["session_history_id"] is None
+    assert body["cost"] == 0.25
+    assert body["input_tokens"] == 1500
+    assert body["output_tokens"] == 840
+    assert body["total_tokens"] == 2340
+    call = service.run_cost_calls[0]
+    assert call["repository_session_id"] == session_id
+    assert call["coding_run_id"] == coding_run_id
+    assert call["user"] is user
+
+
+def test_run_cost_in_a_session_not_owned_gets_the_shared_owner_scoped_error() -> None:
+    user = SimpleNamespace(id=uuid.uuid4(), is_superuser=False)
+    service = FakeRepositorySessionService(RepositorySession(user_id=user.id, repository_id=uuid.uuid4()), cost_raises=RepositorySessionNotFound())
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{uuid.uuid4()}/runs/{uuid.uuid4()}/cost")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Repository Session not found"}
+
+
+def test_run_cost_requires_authentication() -> None:
+    service = FakeRepositorySessionService(RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4()))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_repository_session_service] = lambda: service
+
+    with TestClient(app) as client:
+        response = client.get(f"/sessions/{uuid.uuid4()}/runs/{uuid.uuid4()}/cost")
+
+    assert response.status_code == 401
+    assert service.run_cost_calls == []
 
 
 def test_turn_cost_in_a_session_not_owned_gets_the_shared_owner_scoped_error() -> None:

@@ -360,3 +360,54 @@ def test_turn_cost_raises_forbidden_for_a_session_the_caller_does_not_own() -> N
         service.get_turn_cost(repository_session_id=repository_session.id, session_history_id=uuid.uuid4(), user=_user(uuid.uuid4()))
 
     assert usage_store.list_calls == []
+
+
+def test_run_cost_sums_cost_and_token_totals_for_an_owned_code_generation_turn() -> None:
+    user_id = uuid.uuid4()
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
+    coding_run_id = uuid.uuid4()
+    records = [
+        _usage_record(repository_session, None, coding_run_id=coding_run_id, input_tokens=300, output_tokens=40, total_tokens=340, cost=0.05),
+        _usage_record(repository_session, None, coding_run_id=coding_run_id, input_tokens=1200, output_tokens=800, total_tokens=2000, cost=0.20),
+    ]
+    session_store = FakeRepositorySessionStore(repository_session)
+    usage_store = FakeUsageRecordStore(records)
+    service = RepositorySessionService(session_store, FakeRepositoryStore(None), FakeCodingRunStore(), usage_store)
+
+    cost = service.get_run_cost(repository_session_id=repository_session.id, coding_run_id=coding_run_id, user=_user(user_id))
+
+    assert cost.coding_run_id == coding_run_id
+    assert cost.session_history_id is None
+    assert cost.input_tokens == 1500
+    assert cost.output_tokens == 840
+    assert cost.total_tokens == 2340
+    assert cost.cost == pytest.approx(0.25)
+    # The query is scoped to the owned session so records from another session — even the same
+    # coding_run_id reused elsewhere — can never be summed in.
+    assert usage_store.list_calls == [{"repository_session_id": repository_session.id, "coding_run_id": coding_run_id}]
+
+
+def test_run_cost_is_a_well_defined_zero_when_the_run_has_no_recorded_usage() -> None:
+    user_id = uuid.uuid4()
+    repository_session = RepositorySession(user_id=user_id, repository_id=uuid.uuid4())
+    coding_run_id = uuid.uuid4()
+    service = RepositorySessionService(
+        FakeRepositorySessionStore(repository_session), FakeRepositoryStore(None), FakeCodingRunStore(), FakeUsageRecordStore([])
+    )
+
+    cost = service.get_run_cost(repository_session_id=repository_session.id, coding_run_id=coding_run_id, user=_user(user_id))
+
+    assert cost.coding_run_id == coding_run_id
+    assert (cost.cost, cost.input_tokens, cost.output_tokens, cost.total_tokens) == (0.0, 0, 0, 0)
+
+
+def test_run_cost_raises_forbidden_for_a_session_the_caller_does_not_own() -> None:
+    repository_session = RepositorySession(user_id=uuid.uuid4(), repository_id=uuid.uuid4())
+    usage_store = FakeUsageRecordStore([])
+    service = RepositorySessionService(FakeRepositorySessionStore(repository_session), FakeRepositoryStore(None), FakeCodingRunStore(), usage_store)
+
+    with pytest.raises(RepositorySessionAccessForbidden):
+        service.get_run_cost(repository_session_id=repository_session.id, coding_run_id=uuid.uuid4(), user=_user(uuid.uuid4()))
+
+    # Ownership is gated before any Usage Record is read.
+    assert usage_store.list_calls == []

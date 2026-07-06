@@ -267,6 +267,94 @@ def test_stream_session_persists_the_code_generation_turn_with_its_coding_run_id
     assert coding_run_id == run_id
 
 
+def test_stream_session_stamps_code_generation_usage_records_with_the_coding_run_id():
+    user = _user()
+    service, _session_store, repository_session = _wiring(user)
+    run_id = uuid.uuid4()
+    plan_msg = AIMessage(
+        content="", usage_metadata={"input_tokens": 300, "output_tokens": 40, "total_tokens": 340}, response_metadata={"model_name": "gpt-4o"}
+    )
+    gen_msg = AIMessage(
+        content="", usage_metadata={"input_tokens": 1200, "output_tokens": 800, "total_tokens": 2000}, response_metadata={"model_name": "gpt-4o"}
+    )
+    review = ReviewResult(coding_run_id=run_id, accepted=True, score=8, threshold=7, findings=[], diff="diff --git a/tests/test_x.py b/tests/test_x.py")
+    items = [("custom", Stage(stage="planning")), ("custom", review)]
+    final = {"intent": "code_generation", "coding_run_id": run_id}
+    graph = FakeGraph(items, final, llm_calls=[("plan", plan_msg), ("generate_code", gen_msg)])
+
+    list(service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-cg"))
+
+    created = service.usage_record_store.created
+    # One durable row per node's LLM call, anchored to the run rather than a session message.
+    assert len(created) == 2
+    assert {record["node_name"] for record in created} == {"plan", "generate_code"}
+    for record in created:
+        assert record["coding_run_id"] == run_id
+        assert record["session_history_id"] is None
+        assert record["user_id"] == user.id
+        assert record["repository_id"] == repository_session.repository_id
+        assert record["repository_session_id"] == repository_session.id
+    gen_record = next(record for record in created if record["node_name"] == "generate_code")
+    assert gen_record["cost"] == pytest.approx(price_for("gpt-4o", 1200, 800))
+
+
+def test_stream_session_persists_the_spend_of_a_code_generation_turn_that_fails():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    run_id = uuid.uuid4()
+    classify_msg = AIMessage(
+        content="", usage_metadata={"input_tokens": 200, "output_tokens": 10, "total_tokens": 210}, response_metadata={"model_name": "gpt-4o-mini"}
+    )
+    plan_msg = AIMessage(
+        content="", usage_metadata={"input_tokens": 500, "output_tokens": 60, "total_tokens": 560}, response_metadata={"model_name": "gpt-4o"}
+    )
+    failure = RunFailure(coding_run_id=run_id, failed_stage="planning", reason="Out of scope")
+    items = [("custom", Stage(stage="classifying")), ("custom", Stage(stage="planning")), ("custom", failure)]
+    # The task was rejected before a Coding Run was created, so the terminal state carries no coding_run_id.
+    final = {"intent": "code_generation"}
+    graph = FakeGraph(items, final, llm_calls=[("classify", classify_msg), ("plan", plan_msg)])
+
+    events = list(service.stream_session(repository_session_id=repository_session.id, user=user, question="refactor", graph=graph, thread_id="t-fail"))
+
+    assert isinstance(events[-1], RunFailure)
+    created = service.usage_record_store.created
+    # The spend incurred before the failure is still recorded and attributed to the session/user/repo.
+    assert len(created) == 2
+    assert {record["node_name"] for record in created} == {"classify", "plan"}
+    for record in created:
+        assert record["user_id"] == user.id
+        assert record["repository_session_id"] == repository_session.id
+        assert record["session_history_id"] is None
+        assert record["coding_run_id"] is None
+    # A rejected task still persists no session exchange.
+    assert session_store.appended == []
+
+
+def test_stream_session_persists_the_spend_when_the_client_disconnects_mid_stream():
+    user = _user()
+    service, session_store, repository_session = _wiring(user)
+    run_id = uuid.uuid4()
+    gen_msg = AIMessage(
+        content="", usage_metadata={"input_tokens": 900, "output_tokens": 300, "total_tokens": 1200}, response_metadata={"model_name": "gpt-4o"}
+    )
+    items = [("custom", Stage(stage="planning")), ("custom", Stage(stage="generating")), ("custom", Stage(stage="reviewing"))]
+    final = {"intent": "code_generation", "coding_run_id": run_id}
+    graph = FakeGraph(items, final, llm_calls=[("generate_code", gen_msg)])
+
+    stream = service.stream_session(repository_session_id=repository_session.id, user=user, question="add tests", graph=graph, thread_id="t-drop")
+    next(stream)  # consume the first frame, then the client goes away
+    stream.close()
+
+    created = service.usage_record_store.created
+    # The call that completed before the drop is still recorded, anchored to the run recovered from state.
+    assert len(created) == 1
+    assert created[0]["coding_run_id"] == run_id
+    assert created[0]["session_history_id"] is None
+    assert created[0]["input_tokens"] == 900
+    # A turn cut mid-stream never persisted a clean session exchange.
+    assert session_store.appended == []
+
+
 def test_stream_session_passes_the_indexed_commit_to_the_graph():
     user = _user()
     service, _store, repository_session = _wiring(user, indexed_commit_sha="a" * 40)

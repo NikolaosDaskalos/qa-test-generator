@@ -129,6 +129,21 @@ def read_coding_run(
     )
 
 
+@router.get("/{repository_session_id}/runs/{coding_run_id}/cost", response_model=TurnCostPublic)
+def read_run_cost(
+    *, repository_session_service: RepositorySessionServiceDep, current_user: CurrentUser, repository_session_id: uuid.UUID, coding_run_id: uuid.UUID
+) -> TurnCostPublic:
+    """Read the AI Cost of one owned Code Generation Task turn, keyed by its Coding Run (ADR-0014).
+
+    The code-generation counterpart to :func:`read_turn_cost`: it sums the persisted Usage Records
+    stamped with this ``coding_run_id`` — the anchor the run's terminal events already carry — so a
+    client can show the card's cost the moment the turn finishes and again on reload, off the closed
+    Agent Stream. Includes the spend of a turn that later failed; a run with no recorded usage reads
+    back as a well-defined zero. Ownership uses the shared owner-scoped checks.
+    """
+    return repository_session_service.get_run_cost(repository_session_id=repository_session_id, coding_run_id=coding_run_id, user=current_user)
+
+
 @router.get("/{repository_session_id}/runs/{coding_run_id}/patch", response_model=RunPatchPublic)
 def read_coding_run_patch(
     *, repository_session_service: RepositorySessionServiceDep, current_user: CurrentUser, repository_session_id: uuid.UUID, coding_run_id: uuid.UUID

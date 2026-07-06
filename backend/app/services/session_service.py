@@ -15,7 +15,7 @@ from app.core.errors.session_errors import (
     RepositorySessionNotFound,
     RunNotAwaitingDecision,
 )
-from app.db.models import CodingRun, RepositorySession, SessionHistory, User
+from app.db.models import CodingRun, RepositorySession, SessionHistory, UsageRecord, User
 from app.db.persistence import CodingRunStore, RepositorySessionStore, RepositoryStore, SessionHistoryPage, UsageRecordStore
 from app.enums import RepositoryStatus
 from app.schemas import (
@@ -119,8 +119,34 @@ class RepositorySessionService:
         """
         repository_session = self._get_accessible(repository_session_id, user)
         records = self.usage_record_store.list(repository_session_id=repository_session.id, session_history_id=session_history_id)
+        return self._sum_turn_cost(records, session_history_id=session_history_id)
+
+    def get_run_cost(self, *, repository_session_id: uuid.UUID, coding_run_id: uuid.UUID, user: User) -> TurnCostPublic:
+        """Return the summed AI Cost and token totals of one owned Code Generation Task turn (ADR-0014).
+
+        The code-generation counterpart to :meth:`get_turn_cost`: a coding turn fans out across the
+        plan, gather-documents, generate, review, and revision nodes, and every call is stamped with
+        the turn's ``coding_run_id`` — the anchor its terminal events already carry — so the run's whole
+        spend, including the calls of a turn that later failed, sums here. Ownership flows through the
+        session, and the Usage Record query is scoped to it so a ``coding_run_id`` reused in another
+        session can never be summed in. A run with no recorded usage sums to a well-defined zero.
+        """
+        repository_session = self._get_accessible(repository_session_id, user)
+        records = self.usage_record_store.list(repository_session_id=repository_session.id, coding_run_id=coding_run_id)
+        return self._sum_turn_cost(records, coding_run_id=coding_run_id)
+
+    @staticmethod
+    def _sum_turn_cost(
+        records: list[UsageRecord], *, session_history_id: uuid.UUID | None = None, coding_run_id: uuid.UUID | None = None
+    ) -> TurnCostPublic:
+        """Sum a turn's Usage Records into its AI Cost, echoing back the anchor that keyed the read.
+
+        An unpriced call (``cost is None``) still contributes its tokens but nothing to ``cost``, and an
+        empty set sums to a well-defined zero rather than erroring.
+        """
         return TurnCostPublic(
             session_history_id=session_history_id,
+            coding_run_id=coding_run_id,
             cost=sum(record.cost for record in records if record.cost is not None),
             input_tokens=sum(record.input_tokens for record in records),
             output_tokens=sum(record.output_tokens for record in records),
@@ -163,35 +189,61 @@ class RepositorySessionService:
         return self._stream_session(context, question, graph, thread_id)
 
     def _stream_session(self, context: RepositorySessionExecution, question: str, graph: Any, thread_id: str) -> Generator[AgentStreamEvent, None, None]:
-        """Stream a fresh turn, persisting the exchange and emitting the terminal ``Result`` for answers."""
+        """Stream a fresh turn, persisting the exchange and emitting the terminal ``Result`` for answers.
+
+        AI Cost is captured per LLM call and persisted in a ``finally`` path, so the spend a turn
+        incurred survives a ``RunFailure`` or a mid-stream disconnect, not just a clean exit (ADR-0014).
+        Each record is anchored to the turn: the assistant Session History message for a Repository
+        question, or the ``coding_run_id`` for a Code Generation Task.
+        """
         repository_session = context.repository_session
         config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
         usage_callback = UsageCapturingCallback() if settings.track_costs else None
         if usage_callback is not None:
             config["callbacks"] = [usage_callback]
-        yield from map_graph_stream(graph.stream(context.graph_input(question), config=config, stream_mode=["custom", "messages"]))
+        session_history_id: uuid.UUID | None = None
+        coding_run_id: uuid.UUID | None = None
+        try:
+            yield from map_graph_stream(graph.stream(context.graph_input(question), config=config, stream_mode=["custom", "messages"]))
 
-        final = graph.get_state(config).values
-        if final.get("intent") == "repository_question":
-            answer = final.get("answer", "")
-            citations = final.get("citations", [])
-            _user_message, assistant_message = self.session_store.append_exchange(
-                repository_session.id, user_message=question, assistant_message=answer, assistant_citations=[citation.model_dump() for citation in citations]
-            )
-            self._persist_usage(usage_callback, repository_session, session_history_id=assistant_message.id)
-            yield Result(repository_session_id=repository_session.id, assistant_message_id=assistant_message.id, answer=answer, citations=citations)
-        elif final.get("intent") == "code_generation" and final.get("coding_run_id") is not None:
-            # Persist the coding turn linked to its durable Coding Run so the card — its review, failure,
-            # approval, and Pull Request link — is reconstructed from that run on reload, not snapshotted here.
-            self.session_store.append_exchange(repository_session.id, user_message=question, assistant_message="", coding_run_id=final.get("coding_run_id"))
+            final = graph.get_state(config).values
+            if final.get("intent") == "repository_question":
+                answer = final.get("answer", "")
+                citations = final.get("citations", [])
+                _user_message, assistant_message = self.session_store.append_exchange(
+                    repository_session.id, user_message=question, assistant_message=answer, assistant_citations=[citation.model_dump() for citation in citations]
+                )
+                session_history_id = assistant_message.id
+                yield Result(repository_session_id=repository_session.id, assistant_message_id=assistant_message.id, answer=answer, citations=citations)
+            elif final.get("intent") == "code_generation" and final.get("coding_run_id") is not None:
+                coding_run_id = final.get("coding_run_id")
+                # Persist the coding turn linked to its durable Coding Run so the card — its review, failure,
+                # approval, and Pull Request link — is reconstructed from that run on reload, not snapshotted here.
+                self.session_store.append_exchange(repository_session.id, user_message=question, assistant_message="", coding_run_id=coding_run_id)
+        finally:
+            # Persist on every exit — a clean turn, a RunFailure, or a mid-stream disconnect — so the spend
+            # already incurred is never dropped (ADR-0014). A code-generation turn that failed or was cut
+            # before the clean read still anchors to its Coding Run, recovered from graph state.
+            if session_history_id is None and coding_run_id is None:
+                coding_run_id = self._coding_run_id_from_state(graph, config)
+            self._persist_usage(usage_callback, repository_session, session_history_id=session_history_id, coding_run_id=coding_run_id)
 
-    def _persist_usage(self, usage_callback: UsageCapturingCallback | None, repository_session: RepositorySession, *, session_history_id: uuid.UUID) -> None:
+    def _persist_usage(
+        self,
+        usage_callback: UsageCapturingCallback | None,
+        repository_session: RepositorySession,
+        *,
+        session_history_id: uuid.UUID | None = None,
+        coding_run_id: uuid.UUID | None = None,
+    ) -> None:
         """Stamp each buffered AI Cost record with the turn's attribution and persist it (ADR-0013).
 
-        Called only once the answering turn is known, so every metered LLM call the turn
-        made — priced off the model its response reported — is anchored to the assistant
-        Session History message and the owning user, Repository, and Repository Session.
-        Disabled (no callback) or a turn with no captured calls persists nothing.
+        Called once the turn's anchor is known, so every metered LLM call the turn made —
+        priced off the model its response reported — is attributed to the owning user,
+        Repository, and Repository Session and anchored to the turn: the assistant Session
+        History message for a Repository question, or the ``coding_run_id`` for a Code
+        Generation Task (ADR-0014). Disabled (no callback) or a turn with no captured calls
+        persists nothing.
         """
         if usage_callback is None:
             return
@@ -208,7 +260,22 @@ class RepositorySessionService:
                 total_tokens=record.total_tokens,
                 cost=record.cost,
                 session_history_id=session_history_id,
+                coding_run_id=coding_run_id,
             )
+
+    @staticmethod
+    def _coding_run_id_from_state(graph: Any, config: dict[str, Any]) -> uuid.UUID | None:
+        """Best-effort read of the turn's Coding Run id from graph state for cost attribution.
+
+        Used only on the paths that never reached the clean terminal read — a RunFailure or a
+        mid-stream disconnect — so the captured spend can still be anchored to the run when one
+        was created. A state read that itself fails must never mask the persistence it precedes.
+        """
+        try:
+            coding_run_id: uuid.UUID | None = graph.get_state(config).values.get("coding_run_id")
+        except Exception:
+            return None
+        return coding_run_id
 
     def _resume_decision(
         self, *, repository_session_id: uuid.UUID, user: User, decision: HumanDecisionRequest, graph: Any
