@@ -2871,3 +2871,292 @@ test("A turn with no recorded AI Cost renders no cost label", async ({
   ).toBeVisible()
   await expect(page.getByTestId("turn-cost")).toHaveCount(0)
 })
+
+test("A completed Code Generation Task card shows its estimated AI Cost", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-cost-live/cost",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          session_history_id: null,
+          coding_run_id: "run-cost-live",
+          cost: 0.0789,
+          input_tokens: 3000,
+          output_tokens: 600,
+          total_tokens: 3600,
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"run_started","coding_run_id":"run-cost-live"}\n\n',
+          'data: {"type":"review_result","coding_run_id":"run-cost-live","accepted":true,"score":8,"threshold":7,"findings":[{"category":"coverage","detail":"Covers the successful login path."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.evaluate(() => localStorage.setItem("access_token", "test-token"))
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests for login")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(page.getByText("Coding Run run-cost-live")).toBeVisible()
+  await expect(page.getByText("Est. AI Cost: $0.0789")).toBeVisible()
+})
+
+test("A failed Code Generation Task card shows the AI Cost incurred before it failed", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-cost-failed/cost",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          session_history_id: null,
+          coding_run_id: "run-cost-failed",
+          cost: 0.0031,
+          input_tokens: 400,
+          output_tokens: 50,
+          total_tokens: 450,
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"run_started","coding_run_id":"run-cost-failed"}\n\n',
+          'data: {"type":"run_failure","coding_run_id":"run-cost-failed","failed_stage":"generating","reason":"The requested target is outside the allowed test file boundary."}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests outside the test root")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(page.getByText("Run failed during generating.")).toBeVisible()
+  await expect(page.getByText("Est. AI Cost: $0.0031")).toBeVisible()
+})
+
+test("Reloading a session re-fetches a Code Generation Task card's AI Cost", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-ready",
+            title: "Login coding run",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "message-user",
+              session_id: "session-ready",
+              role: "user",
+              content: "Add tests for login",
+              citations: [],
+              position: 1,
+              created_at: "2026-06-17T09:00:01Z",
+            },
+            {
+              id: "message-coding",
+              session_id: "session-ready",
+              role: "assistant",
+              content: "",
+              citations: [],
+              position: 2,
+              coding_run_id: "run-cost-reload",
+              created_at: "2026-06-17T09:00:02Z",
+            },
+          ],
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-cost-reload",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          id: "run-cost-reload",
+          status: "failed",
+          failed_stage: "generating",
+          failure_reason:
+            "The requested target is outside the allowed test file boundary.",
+          review_findings: [],
+          diff: null,
+          pull_request_url: null,
+          disclaimer:
+            "These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only.",
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/runs/run-cost-reload/cost",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          session_history_id: null,
+          coding_run_id: "run-cost-reload",
+          cost: 0.0512,
+          input_tokens: 2500,
+          output_tokens: 500,
+          total_tokens: 3000,
+        },
+      })
+    },
+  )
+
+  await page.goto("/?repository=repo-ready&session=session-ready")
+
+  await expect(page.getByText("Run failed during generating.")).toBeVisible()
+  await expect(page.getByText("Est. AI Cost: $0.0512")).toBeVisible()
+})

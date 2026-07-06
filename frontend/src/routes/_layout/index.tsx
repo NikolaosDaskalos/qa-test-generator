@@ -11,6 +11,7 @@ import type {
   RepositorySessionPublic,
   ReviewFinding,
   SessionHistoryPublic,
+  TurnCostPublic,
 } from "@/client"
 import { RepositoriesService, SessionsService } from "@/client"
 import { DiffView } from "@/components/DiffView"
@@ -527,8 +528,17 @@ function CopilotShell() {
                       </ul>
                     ) : null}
                     {message.role === "assistant" &&
-                    message.sessionHistoryId &&
-                    activeSessionId ? (
+                    activeSessionId &&
+                    message.codingRunId ? (
+                      // A Code Generation Task card anchors its AI Cost on the Coding Run
+                      // (success or failure); its Usage Records are stamped by run, not turn.
+                      <RunCostLabel
+                        repositorySessionId={activeSessionId}
+                        codingRunId={message.codingRunId}
+                      />
+                    ) : message.role === "assistant" &&
+                      activeSessionId &&
+                      message.sessionHistoryId ? (
                       <TurnCostLabel
                         repositorySessionId={activeSessionId}
                         sessionHistoryId={message.sessionHistoryId}
@@ -1189,9 +1199,23 @@ function formatEstimatedCost(cost: number): string {
   }).format(cost)
 }
 
+// Shared presentation for a card's AI Cost estimate. A turn with no recorded usage
+// (e.g. cost tracking disabled) renders nothing, keeping the label unobtrusive.
+function EstimatedCostLabel({ cost }: { cost: TurnCostPublic | undefined }) {
+  if (!cost || (cost.total_tokens ?? 0) === 0) {
+    return null
+  }
+
+  return (
+    <p data-testid="turn-cost" className="mt-2 text-xs text-muted-foreground">
+      Est. AI Cost: {formatEstimatedCost(cost.cost ?? 0)}
+    </p>
+  )
+}
+
 // Reads a completed Repository question turn's AI Cost off the persisted Usage Records
 // (never the closed Agent Stream), so the estimate shows the moment the turn finishes and
-// again on reload. A turn with no recorded usage (e.g. cost tracking disabled) renders nothing.
+// again on reload.
 function TurnCostLabel({
   repositorySessionId,
   sessionHistoryId,
@@ -1205,19 +1229,26 @@ function TurnCostLabel({
       SessionsService.readTurnCost({ repositorySessionId, sessionHistoryId }),
   })
 
-  const cost = costQuery.data
-  if (!cost || (cost.total_tokens ?? 0) === 0) {
-    return null
-  }
+  return <EstimatedCostLabel cost={costQuery.data} />
+}
 
-  return (
-    <p
-      data-testid="turn-cost"
-      className="mt-2 text-xs text-muted-foreground"
-    >
-      Est. AI Cost: {formatEstimatedCost(cost.cost ?? 0)}
-    </p>
-  )
+// Reads a Code Generation Task turn's AI Cost off the persisted Usage Records stamped with its
+// Coding Run (never the closed Agent Stream), so the estimate shows the moment the turn finishes
+// and again on reload. Includes the spend of a run that later failed (ADR-0014).
+function RunCostLabel({
+  repositorySessionId,
+  codingRunId,
+}: {
+  repositorySessionId: string
+  codingRunId: string
+}) {
+  const costQuery = useQuery({
+    queryKey: ["run-cost", repositorySessionId, codingRunId],
+    queryFn: () =>
+      SessionsService.readRunCost({ repositorySessionId, codingRunId }),
+  })
+
+  return <EstimatedCostLabel cost={costQuery.data} />
 }
 
 function RunEscalatedSummary({
