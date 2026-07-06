@@ -1,13 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router"
 
+import AiCostSummary from "@/components/UserSettings/AiCostSummary"
 import ChangePassword from "@/components/UserSettings/ChangePassword"
 import DeleteAccount from "@/components/UserSettings/DeleteAccount"
 import UserInformation from "@/components/UserSettings/UserInformation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import useAuth from "@/hooks/useAuth"
 
+function MyProfile() {
+  return (
+    <div className="flex flex-col gap-4">
+      <UserInformation />
+      <AiCostSummary />
+    </div>
+  )
+}
+
 const tabsConfig = [
-  { value: "my-profile", title: "My profile", component: UserInformation },
+  { value: "my-profile", title: "My profile", component: MyProfile },
   { value: "password", title: "Password", component: ChangePassword },
   { value: "danger-zone", title: "Danger zone", component: DeleteAccount },
 ]

@@ -3160,3 +3160,227 @@ test("Reloading a session re-fetches a Code Generation Task card's AI Cost", asy
   await expect(page.getByText("Run failed during generating.")).toBeVisible()
   await expect(page.getByText("Est. AI Cost: $0.0512")).toBeVisible()
 })
+
+test("The session view shows the session's running AI Cost total", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route("**/api/v1/costs/session/session-ready", async (route) => {
+    await route.fulfill({
+      json: {
+        cost: 0.0567,
+        input_tokens: 4000,
+        output_tokens: 800,
+        total_tokens: 4800,
+      },
+    })
+  })
+
+  await page.goto("/")
+  await page.evaluate(() => localStorage.setItem("access_token", "test-token"))
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+
+  await expect(page.getByTestId("session-total-cost")).toHaveText(
+    /Est\. session AI Cost: \$0\.0567/,
+  )
+})
+
+test("The repository view shows the Repository's AI Cost total across sessions", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/costs/repository/repo-ready", async (route) => {
+    await route.fulfill({
+      json: {
+        cost: 1.2345,
+        input_tokens: 90000,
+        output_tokens: 12000,
+        total_tokens: 102000,
+      },
+    })
+  })
+
+  await page.goto("/")
+  await page.evaluate(() => localStorage.setItem("access_token", "test-token"))
+  await page.getByRole("button", { name: /ready-api/i }).click()
+
+  await expect(page.getByTestId("repository-total-cost")).toHaveText(
+    /Est\. Repository AI Cost: \$1\.2345/,
+  )
+})
+
+test("The session total refreshes after a new question turn runs", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/history/assistant-msg-1/cost",
+    async (route) => {
+      await route.fulfill({
+        json: {
+          session_history_id: "assistant-msg-1",
+          coding_run_id: null,
+          cost: 0.02,
+          input_tokens: 1000,
+          output_tokens: 200,
+          total_tokens: 1200,
+        },
+      })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"token","content":"Login is tested."}\n\n',
+          'data: {"type":"result","repository_session_id":"session-ready","assistant_message_id":"assistant-msg-1","answer":"Login is tested.","citations":[]}\n\n',
+        ].join(""),
+      })
+    },
+  )
+  let sessionCostCalls = 0
+  await page.route("**/api/v1/costs/session/session-ready", async (route) => {
+    sessionCostCalls += 1
+    await route.fulfill({
+      json: {
+        cost: sessionCostCalls === 1 ? 0.01 : 0.03,
+        input_tokens: 1000,
+        output_tokens: 200,
+        total_tokens: 1200,
+      },
+    })
+  })
+
+  await page.goto("/")
+  await page.evaluate(() => localStorage.setItem("access_token", "test-token"))
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+
+  await expect(page.getByTestId("session-total-cost")).toHaveText(
+    /Est\. session AI Cost: \$0\.01/,
+  )
+
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Where is the login route tested?")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(page.getByText("Login is tested.")).toBeVisible()
+  await expect(page.getByTestId("session-total-cost")).toHaveText(
+    /Est\. session AI Cost: \$0\.03/,
+  )
+})

@@ -5,6 +5,7 @@ import { type FormEvent, useEffect, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type {
+  AiCostRollupPublic,
   Citation,
   HumanDecisionRequest,
   RepositoryPublic,
@@ -13,7 +14,7 @@ import type {
   SessionHistoryPublic,
   TurnCostPublic,
 } from "@/client"
-import { RepositoriesService, SessionsService } from "@/client"
+import { CostsService, RepositoriesService, SessionsService } from "@/client"
 import { DiffView } from "@/components/DiffView"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -34,6 +35,7 @@ import {
   decideReviewedPatchStream,
 } from "@/lib/agentStream"
 import { getErrorMessage } from "@/lib/apiError"
+import { formatEstimatedCost } from "@/lib/cost"
 
 type ChatMessage = {
   id: string
@@ -381,6 +383,9 @@ function CopilotShell() {
                   ? `${activeRepository.name} selected`
                   : "No repository selected"}
               </p>
+              {activeRepository ? (
+                <RepositoryTotalCost repositoryId={activeRepository.id} />
+              ) : null}
             </div>
             <Button
               asChild
@@ -439,7 +444,12 @@ function CopilotShell() {
             className="flex min-h-[32rem] flex-col rounded-lg border bg-background"
           >
             <div className="flex items-center justify-between gap-3 border-b p-4">
-              <h2 className="text-base font-semibold">Chat</h2>
+              <div className="flex flex-col gap-1">
+                <h2 className="text-base font-semibold">Chat</h2>
+                {activeSessionId ? (
+                  <SessionTotalCost repositorySessionId={activeSessionId} />
+                ) : null}
+              </div>
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
@@ -1190,15 +1200,6 @@ function RunOutcomeSummary({
   return null
 }
 
-function formatEstimatedCost(cost: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 4,
-  }).format(cost)
-}
-
 // Shared presentation for a card's AI Cost estimate. A turn with no recorded usage
 // (e.g. cost tracking disabled) renders nothing, keeping the label unobtrusive.
 function EstimatedCostLabel({ cost }: { cost: TurnCostPublic | undefined }) {
@@ -1249,6 +1250,63 @@ function RunCostLabel({
   })
 
   return <EstimatedCostLabel cost={costQuery.data} />
+}
+
+// Shared presentation for a rolled-up AI Cost total (session, Repository, or user).
+// Unlike a per-turn card, a rollup always renders — a dimension with no recorded usage
+// reads back a well-defined zero, so "$0.00" is a meaningful running total, not an error.
+function RollupCostLabel({
+  label,
+  testId,
+  cost,
+}: {
+  label: string
+  testId: string
+  cost: AiCostRollupPublic | undefined
+}) {
+  return (
+    <p data-testid={testId} className="text-xs text-muted-foreground">
+      {label}: {formatEstimatedCost(cost?.cost ?? 0)}
+    </p>
+  )
+}
+
+// Reads a Repository Session's running AI Cost total off the persisted Usage Records,
+// so the session view reflects the sum of its cards and refreshes as new turns land.
+function SessionTotalCost({
+  repositorySessionId,
+}: {
+  repositorySessionId: string
+}) {
+  const costQuery = useQuery({
+    queryKey: ["session-cost", repositorySessionId],
+    queryFn: () => CostsService.readSessionCost({ repositorySessionId }),
+  })
+
+  return (
+    <RollupCostLabel
+      label="Est. session AI Cost"
+      testId="session-total-cost"
+      cost={costQuery.data}
+    />
+  )
+}
+
+// Reads a Repository's AI Cost total across all its sessions off the persisted Usage
+// Records, shown in the repository view while the Repository is selected.
+function RepositoryTotalCost({ repositoryId }: { repositoryId: string }) {
+  const costQuery = useQuery({
+    queryKey: ["repository-cost", repositoryId],
+    queryFn: () => CostsService.readRepositoryCost({ repositoryId }),
+  })
+
+  return (
+    <RollupCostLabel
+      label="Est. Repository AI Cost"
+      testId="repository-total-cost"
+      cost={costQuery.data}
+    />
+  )
 }
 
 function RunEscalatedSummary({
@@ -1466,6 +1524,27 @@ function readLastRepositorySession(): {
   return null
 }
 
+// After a turn lands, its Usage Records change every rollup it belongs to, so refresh
+// the session, Repository, and user totals off the persisted records (never the closed
+// Agent Stream). The all-users total shares the same records for a superuser (ADR-0014).
+function invalidateCostRollups(
+  queryClient: ReturnType<typeof useQueryClient>,
+  {
+    repositoryId,
+    repositorySessionId,
+  }: {
+    repositoryId: string
+    repositorySessionId: string
+  },
+) {
+  queryClient.invalidateQueries({
+    queryKey: ["session-cost", repositorySessionId],
+  })
+  queryClient.invalidateQueries({ queryKey: ["repository-cost", repositoryId] })
+  queryClient.invalidateQueries({ queryKey: ["my-cost"] })
+  queryClient.invalidateQueries({ queryKey: ["all-users-cost"] })
+}
+
 function toChatMessages(history: SessionHistoryPublic[]): ChatMessage[] {
   return history.map((message) => ({
     id: message.id,
@@ -1680,6 +1759,7 @@ async function submitQuestion({
     }
   } finally {
     queryClient.invalidateQueries({ queryKey: ["sessions", repositoryId] })
+    invalidateCostRollups(queryClient, { repositoryId, repositorySessionId })
   }
 }
 
@@ -1785,6 +1865,7 @@ async function submitDecision({
     }
   } finally {
     queryClient.invalidateQueries({ queryKey: ["sessions", repositoryId] })
+    invalidateCostRollups(queryClient, { repositoryId, repositorySessionId })
     setPendingDecisionRunId(null)
   }
 }
