@@ -24,7 +24,7 @@ from app.services.coding_runs.review_policy import ReviewPolicy
 from app.core.errors.git_errors import GitError
 from app.core.errors.github_errors import GitHubError
 from app.db.models import RepositoryDocument
-from app.enums import CodingRunStage, OwnerVerdict
+from app.enums import CodingRunStage, CodingRunStatus, OwnerVerdict
 from app.schemas import (
     Citation,
     ExternalReference,
@@ -335,17 +335,11 @@ class RecordingRecorder:
         self.events.append(("start", thread_id, repository_session_id))
         return self.run_id
 
-    def begin_planning(self, coding_run_id):
-        self.events.append(("begin_planning", coding_run_id))
+    def advance_to(self, coding_run_id, status):
+        self.events.append(("advance_to", coding_run_id, status))
 
-    def begin_retrieving(self, coding_run_id):
-        self.events.append(("begin_retrieving", coding_run_id))
-
-    def begin_generating(self, coding_run_id):
-        self.events.append(("begin_generating", coding_run_id))
-
-    def begin_reviewing(self, coding_run_id):
-        self.events.append(("begin_reviewing", coding_run_id))
+    def record_no_changes(self, coding_run_id):
+        self.events.append(("record_no_changes", coding_run_id))
 
     def fail(self, coding_run_id, *, failed_stage, reason):
         self.events.append(("fail", coding_run_id, failed_stage, reason))
@@ -361,9 +355,6 @@ class RecordingRecorder:
 
     def approve(self, coding_run_id, *, pull_request_url):
         self.events.append(("approve", coding_run_id, pull_request_url))
-
-    def record_no_changes(self, coding_run_id):
-        self.events.append(("record_no_changes", coding_run_id))
 
 
 class FakeCodeGenerator:
@@ -1327,13 +1318,14 @@ def test_code_generation_persists_a_queued_run_and_advances_through_generation(t
         config=_config("run-thread"),
     )
 
-    assert [event[0] for event in recorder.events] == [
+    labels = [event[0] if event[0] != "advance_to" else f"advance_to:{event[2].value}" for event in recorder.events]
+    assert labels == [
         "start",
-        "begin_planning",
-        "begin_retrieving",
-        "begin_generating",
+        "advance_to:planning",
+        "advance_to:retrieving",
+        "advance_to:generating",
         "complete",
-        "begin_reviewing",
+        "advance_to:reviewing",
         "record_review",
     ]
     assert recorder.events[0] == ("start", "run-thread", session_id)
@@ -1349,7 +1341,8 @@ def test_code_generation_marks_failure_at_planning_when_out_of_scope() -> None:
 
     final = graph.invoke({"question": "refactor", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4()}, config=_config())
 
-    assert [event[0] for event in recorder.events] == ["start", "begin_planning", "fail"]
+    assert [event[0] for event in recorder.events] == ["start", "advance_to", "fail"]
+    assert recorder.events[1] == ("advance_to", recorder.run_id, CodingRunStatus.planning)
     assert recorder.events[2][2] == CodingRunStage.planning
     assert recorder.events[2][3] == "Not a test request"
     assert final["failure"].coding_run_id == recorder.run_id
@@ -1365,7 +1358,8 @@ def test_code_generation_marks_failure_at_retrieving_when_checkout_context_is_mi
 
     final = graph.invoke({"question": "add tests", "repository_id": uuid.uuid4(), "repository_session_id": uuid.uuid4()}, config=_config())
 
-    assert [event[0] for event in recorder.events] == ["start", "begin_planning", "begin_retrieving", "fail"]
+    assert [event[0] for event in recorder.events] == ["start", "advance_to", "advance_to", "fail"]
+    assert recorder.events[2] == ("advance_to", recorder.run_id, CodingRunStatus.retrieving)
     assert recorder.events[3][2] == CodingRunStage.retrieving
     assert final["failure"].coding_run_id == recorder.run_id
     assert final.get("candidate_hints") is None
@@ -1593,7 +1587,7 @@ def test_accepted_review_advances_to_awaiting_approval_and_emits_review_result(t
     # User-visible output states tests were not executed and runtime correctness was not verified.
     assert "not executed" in review.disclaimer.lower()
     # The run advanced into reviewing and recorded an accepted review decision.
-    assert ("begin_reviewing", recorder.run_id) in recorder.events
+    assert ("advance_to", recorder.run_id, CodingRunStatus.reviewing) in recorder.events
     record = next(event for event in recorder.events if event[0] == "record_review")
     assert record[2] is True
 
@@ -2337,7 +2331,7 @@ def test_code_reviewer_failure_is_a_reviewing_run_failure(tmp_path) -> None:
     assert final["failure"].coding_run_id == recorder.run_id
     assert final.get("review_result") is None
     # The run advanced into reviewing and then recorded the failure; it is never left without one.
-    assert ("begin_reviewing", recorder.run_id) in recorder.events
+    assert ("advance_to", recorder.run_id, CodingRunStatus.reviewing) in recorder.events
     fail = next(event for event in recorder.events if event[0] == "fail")
     assert fail[2] == "reviewing"
     # A reviewer crash is sanitized, never leaking raw exception text.

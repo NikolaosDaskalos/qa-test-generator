@@ -1,15 +1,16 @@
 """The persistence port the graph uses to record a Coding Run's lifecycle.
 
-The unified graph stays free of the database: the ``code_generation`` branch
-calls this thin port to persist the durable Coding Run (the domain record of
-truth) while the checkpointer holds in-flight graph state. ``CodingRunRecorder``
-is the production adapter over ``CodingRunStore``; tests substitute a fake.
+The unified graph stays free of the database: the ``code_generation`` branch calls
+this thin port by ``coding_run_id`` to persist the durable Coding Run (the domain
+record of truth) while the checkpointer holds in-flight graph state. The production
+adapter is ``CodingRunStore`` itself — it owns the id lookup, the missing-run guard,
+and the Test Patch / review-finding serialization behind these methods. Tests
+substitute a fake at the same seam.
 """
 
 import uuid
 from typing import Protocol
 
-from app.db.persistence import CodingRunStore
 from app.enums import CodingRunStage, CodingRunStatus
 from app.schemas import ExternalReference, GeneratedFile, ReviewFinding
 
@@ -20,17 +21,8 @@ class RunRecorder(Protocol):
     def start(self, *, thread_id: str, repository_session_id: uuid.UUID) -> uuid.UUID:
         """Persist a queued Coding Run and return its id."""
 
-    def begin_planning(self, coding_run_id: uuid.UUID) -> None:
-        """Move a Coding Run into the planning stage."""
-
-    def begin_retrieving(self, coding_run_id: uuid.UUID) -> None:
-        """Move a Coding Run into the retrieving stage."""
-
-    def begin_generating(self, coding_run_id: uuid.UUID) -> None:
-        """Move a Coding Run into the generating stage."""
-
-    def begin_reviewing(self, coding_run_id: uuid.UUID) -> None:
-        """Move a Coding Run into the reviewing stage."""
+    def advance_to(self, coding_run_id: uuid.UUID, status: CodingRunStatus) -> None:
+        """Move a Coding Run into its next working stage."""
 
     def fail(self, coding_run_id: uuid.UUID, *, failed_stage: CodingRunStage, reason: str) -> None:
         """Mark a Coding Run failed at ``failed_stage`` with a sanitized ``reason``."""
@@ -51,106 +43,3 @@ class RunRecorder(Protocol):
 
     def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
         """Record a run that proposed no test changes across all attempts as succeeded."""
-
-
-class CodingRunRecorder:
-    """Production ``RunRecorder`` backed by the durable ``CodingRunStore``."""
-
-    def __init__(self, store: CodingRunStore) -> None:
-        self.store = store
-
-    def start(self, *, thread_id: str, repository_session_id: uuid.UUID) -> uuid.UUID:
-        run = self.store.create(repository_session_id=repository_session_id, thread_id=thread_id)
-        return run.id
-
-    def begin_planning(self, coding_run_id: uuid.UUID) -> None:
-        self._advance(coding_run_id, CodingRunStatus.planning)
-
-    def begin_retrieving(self, coding_run_id: uuid.UUID) -> None:
-        self._advance(coding_run_id, CodingRunStatus.retrieving)
-
-    def begin_generating(self, coding_run_id: uuid.UUID) -> None:
-        self._advance(coding_run_id, CodingRunStatus.generating)
-
-    def begin_reviewing(self, coding_run_id: uuid.UUID) -> None:
-        self._advance(coding_run_id, CodingRunStatus.reviewing)
-
-    def _advance(self, coding_run_id: uuid.UUID, status: CodingRunStatus) -> None:
-        run = self.store.get_by_id(coding_run_id)
-        if run is not None:
-            self.store.advance_status(run, status)
-
-    def fail(self, coding_run_id: uuid.UUID, *, failed_stage: CodingRunStage, reason: str) -> None:
-        run = self.store.get_by_id(coding_run_id)
-        if run is not None:
-            self.store.mark_failed(run, failed_stage=failed_stage, failure_reason=reason)
-
-    def complete(
-        self, coding_run_id: uuid.UUID, *, branch: str, diff: str, generated_files: list[GeneratedFile], external_references: list[ExternalReference]
-    ) -> None:
-        run = self.store.get_by_id(coding_run_id)
-        if run is not None:
-            self.store.complete(
-                run,
-                generation_branch=branch,
-                diff=diff,
-                generated_files=[file.model_dump() for file in generated_files],
-                external_references=[reference.model_dump() for reference in external_references],
-            )
-
-    def record_review(self, coding_run_id: uuid.UUID, *, accepted: bool, findings: list[ReviewFinding]) -> None:
-        run = self.store.get_by_id(coding_run_id)
-        if run is not None:
-            self.store.record_review(run, accepted=accepted, review_findings=[finding.model_dump() for finding in findings])
-
-    def reject(self, coding_run_id: uuid.UUID) -> None:
-        run = self.store.get_by_id(coding_run_id)
-        if run is not None:
-            self.store.reject(run)
-
-    def approve(self, coding_run_id: uuid.UUID, *, pull_request_url: str) -> None:
-        run = self.store.get_by_id(coding_run_id)
-        if run is not None:
-            self.store.approve(run, pull_request_url=pull_request_url)
-
-    def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
-        self._advance(coding_run_id, CodingRunStatus.succeeded)
-
-
-class NullRunRecorder:
-    """A no-op recorder for graph paths exercised without persistence."""
-
-    def start(self, *, thread_id: str, repository_session_id: uuid.UUID) -> uuid.UUID:
-        return uuid.uuid4()
-
-    def begin_planning(self, coding_run_id: uuid.UUID) -> None:
-        return None
-
-    def begin_retrieving(self, coding_run_id: uuid.UUID) -> None:
-        return None
-
-    def begin_generating(self, coding_run_id: uuid.UUID) -> None:
-        return None
-
-    def begin_reviewing(self, coding_run_id: uuid.UUID) -> None:
-        return None
-
-    def fail(self, coding_run_id: uuid.UUID, *, failed_stage: CodingRunStage, reason: str) -> None:
-        return None
-
-    def complete(
-        self, coding_run_id: uuid.UUID, *, branch: str, diff: str, generated_files: list[GeneratedFile], external_references: list[ExternalReference]
-    ) -> None:
-        return None
-
-    def record_review(self, coding_run_id: uuid.UUID, *, accepted: bool, findings: list[ReviewFinding]) -> None:
-        return None
-
-    def reject(self, coding_run_id: uuid.UUID) -> None:
-        return None
-
-    def approve(self, coding_run_id: uuid.UUID, *, pull_request_url: str) -> None:
-        return None
-
-    def record_no_changes(self, coding_run_id: uuid.UUID) -> None:
-        return None

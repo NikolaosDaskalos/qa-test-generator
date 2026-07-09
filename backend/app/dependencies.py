@@ -26,7 +26,6 @@ from app.rag import DocumentIngestor, DocumentRetriever
 from app.schemas import TokenPayload
 from app.services import CostRollupService, RepositoryService, RepositorySessionService
 from app.services.coding_runs.patch_publisher import build_patch_publisher_factory
-from app.services.coding_runs.recorder import CodingRunRecorder
 from app.services.coding_runs.review_policy import ReviewPolicy
 from app.services.coding_runs.workspace import LocalGitWorkspace
 
@@ -231,8 +230,9 @@ def get_session_graph(
 
     Classifier and planner reuse the chat model via structured output; retrieval
     and generation reuse the repository-scoped components. This composition root
-    chooses every production runtime adapter explicitly: the Coding Run recorder
-    persists the code-generation lifecycle, the local checkout workspace factory
+    chooses every production runtime adapter explicitly: the Coding Run store
+    persists the code-generation lifecycle behind the recorder port, the local
+    checkout workspace factory
     drives Git plumbing, the patch publisher factory publishes approved patches,
     and the durable ``PostgresSaver`` checkpointer (the process-wide singleton
     opened in the application lifespan) holds graph state; only the (in-memory)
@@ -246,7 +246,7 @@ def get_session_graph(
         planner_llm=chat_model,
         code_generator=CodeGenerator(strong_chat_model, fallback_llm=generator_fallback_model),
         code_reviewer=CodeReviewer(strongest_chat_model, fallback_llm=reviewer_fallback_model),
-        run_recorder=CodingRunRecorder(coding_run_store),
+        run_recorder=coding_run_store,
         workspace_factory=LocalGitWorkspace,
         publisher_factory=build_patch_publisher_factory(repository_store),
         checkpointer=request.app.state.session_checkpointer,

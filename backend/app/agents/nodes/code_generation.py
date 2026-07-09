@@ -14,7 +14,7 @@ from typing import Literal
 from langgraph.types import interrupt
 
 from app.agents.nodes.failures import fail_state
-from app.enums import CodingRunStage, OwnerVerdict
+from app.enums import CodingRunStage, CodingRunStatus, OwnerVerdict
 from app.schemas import ReviewFinding, ReviewResult, RunFailure, RunNoChanges, Stage
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 from app.services.coding_runs.generation_retries import can_retry_generation, is_generation_retry, spend_generation_retry
@@ -53,7 +53,7 @@ def build_gather_documents_node(retriever, recorder):
     partitioner = RepositoryDocumentPartitioner(retriever)
 
     def gather_documents(state) -> dict:
-        recorder.begin_retrieving(state["coding_run_id"])
+        recorder.advance_to(state["coding_run_id"], CodingRunStatus.retrieving)
         emit(Stage(stage="retrieving"))
         # Candidate Repository paths are untrusted hints that must be confined against the
         # checkout before entering agent context; a missing checkout cannot silently drop
@@ -144,7 +144,7 @@ def build_generate_code_node(code_generator, workspace_factory, recorder):
             external_references = proposal.external_references or state.get("external_references") or []
             budget_update = spend_generation_retry(state)
         else:
-            recorder.begin_generating(state["coding_run_id"])
+            recorder.advance_to(state["coding_run_id"], CodingRunStatus.generating)
             try:
                 workspace = workspace_factory(state.get("checkout_root"))
                 generation_branch = workspace.prepare_branch(state.get("indexed_commit_sha"))
@@ -255,7 +255,7 @@ def build_review_patch_node(code_reviewer, recorder, *, policy: ReviewPolicy):
 
     def review_patch(state) -> dict:
         coding_run_id = state.get("coding_run_id")
-        recorder.begin_reviewing(coding_run_id)
+        recorder.advance_to(coding_run_id, CodingRunStatus.reviewing)
         # A second pass over this node is the review of a Generation Retry; surface it
         # as a distinct stage marker so the Agent Stream tells the two reviews apart.
         emit(Stage(stage="re_reviewing" if is_generation_retry(state) else "reviewing"))

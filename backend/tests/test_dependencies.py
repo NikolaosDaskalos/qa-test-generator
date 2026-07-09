@@ -64,7 +64,6 @@ def test_session_graph_supplies_every_production_runtime_adapter(monkeypatch) ->
     monkeypatch.setattr(dependencies, "build_graph", lambda **kwargs: captured.update(kwargs))
     monkeypatch.setattr(dependencies, "CodeGenerator", lambda model, *, fallback_llm=None: ("code_generator", model, fallback_llm))
     monkeypatch.setattr(dependencies, "CodeReviewer", lambda model, *, fallback_llm=None: ("code_reviewer", model, fallback_llm))
-    monkeypatch.setattr(dependencies, "CodingRunRecorder", lambda store: ("recorder", store))
     monkeypatch.setattr(dependencies, "build_patch_publisher_factory", lambda store: ("publisher_factory", store))
 
     dependencies.get_session_graph(
@@ -80,7 +79,8 @@ def test_session_graph_supplies_every_production_runtime_adapter(monkeypatch) ->
         repository_store=repository_store,
     )
 
-    assert captured["run_recorder"] == ("recorder", coding_run_store)
+    # The store is injected directly as the graph's recorder port — no pass-through adapter.
+    assert captured["run_recorder"] is coding_run_store
     assert captured["workspace_factory"] is dependencies.LocalGitWorkspace
     assert captured["publisher_factory"] == ("publisher_factory", repository_store)
     assert captured["checkpointer"] is request.app.state.session_checkpointer
@@ -98,7 +98,6 @@ def test_session_graph_resolves_the_review_policy_from_settings_once(monkeypatch
     monkeypatch.setattr(dependencies, "build_graph", lambda **kwargs: captured.update(kwargs))
     monkeypatch.setattr(dependencies, "CodeGenerator", lambda model, *, fallback_llm=None: ("code_generator", model, fallback_llm))
     monkeypatch.setattr(dependencies, "CodeReviewer", lambda model, *, fallback_llm=None: ("code_reviewer", model, fallback_llm))
-    monkeypatch.setattr(dependencies, "CodingRunRecorder", lambda store: ("recorder", store))
     monkeypatch.setattr(dependencies, "build_patch_publisher_factory", lambda store: ("publisher_factory", store))
 
     dependencies.get_session_graph(

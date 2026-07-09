@@ -227,9 +227,9 @@ def build_graph(
     The application composition root chooses the production adapters: the
     process-wide ``PostgresSaver`` (its connection pool opened once in the
     FastAPI lifespan; only the in-memory graph wiring is rebuilt per request),
-    the ``CodingRunRecorder``, the local checkout workspace factory, and the Git
-    patch publisher. Tests deliberately choose their null, fake, local, or
-    in-memory adapters according to the behavior under test (ADR-0002).
+    the ``CodingRunStore`` behind the recorder port, the local checkout workspace
+    factory, and the Git patch publisher. Tests deliberately choose their fake,
+    local, or in-memory adapters according to the behavior under test (ADR-0002).
 
     The Patch Review policy is likewise resolved once and required here: the same
     ``review_policy`` (the pass threshold and the Generation Retries limit) is
