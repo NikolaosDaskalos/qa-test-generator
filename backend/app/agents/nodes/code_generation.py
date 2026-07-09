@@ -17,7 +17,7 @@ from app.agents.nodes.failures import fail_state
 from app.enums import CodingRunStage, OwnerVerdict
 from app.schemas import ReviewFinding, ReviewResult, RunFailure, RunNoChanges
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
-from app.services.coding_runs.generation_retries import can_retry_generation, is_generation_retry, spend_generation_retry
+from app.services.coding_runs.review_gate import ReviewVerdict, decide, generation_retries, is_generation_retry, spend_generation_retry
 from app.services.coding_runs.review_policy import ReviewPolicy
 from app.services.coding_runs.patch_builder import PatchBuilder, PatchBuildRequest
 from app.services.coding_runs.repository_document_partitioner import RepositoryDocumentPartitioner, RepositoryDocumentPartitionRequest
@@ -214,22 +214,6 @@ def _is_empty_patch(state) -> bool:
     return not (state.get("diff") or "").strip()
 
 
-def _post_review_route(review: ReviewResult | None, state, policy: ReviewPolicy) -> Literal["revise", "escalate", "already_covered"]:
-    """The post-review destination for a non-failed run.
-
-    An empty proposal is never escalated to the owner: it is retried while Generation
-    Retries remain and, once exhausted, reported as the existing tests already covering
-    the request (``already_covered``). A non-empty patch escalates to the owner's decision
-    when it is accepted or Generation Retries are exhausted, and is otherwise revised.
-    """
-    retry_available = can_retry_generation(state, limit=policy.max_generation_retries)
-    if _is_empty_patch(state):
-        return "revise" if retry_available else "already_covered"
-    if review is not None and not review.accepted and retry_available:
-        return "revise"
-    return "escalate"
-
-
 def build_review_patch_node(code_reviewer, recorder, lifecycle, *, policy: ReviewPolicy):
     """Build the node that statically reviews a generated Test Patch before approval.
 
@@ -244,8 +228,10 @@ def build_review_patch_node(code_reviewer, recorder, lifecycle, *, policy: Revie
     score, the threshold it was judged against, the findings, and the assessed diff.
 
     The node returns plain state — never a ``Command`` — leaving post-review routing
-    to an explicit conditional edge (see ``build_review_router``). It does emit the
-    terminal ``ReviewResult`` whenever the run escalates to the owner (an accepted
+    to an explicit conditional edge (see ``build_review_router``). The review gate's
+    ``decide`` is consulted once here and its verdict written to state, so the router
+    reads the same decision rather than recomputing it. The node emits the terminal
+    ``ReviewResult`` whenever that verdict escalates the run to the owner (an accepted
     patch, or a below-threshold one with the Generation Retries — bounded by the
     resolved ``ReviewPolicy`` — exhausted), so the escalated patch surfaces its score
     on the Agent Stream; a patch bound for one more Generation Retry stays quiet until
@@ -298,33 +284,32 @@ def build_review_patch_node(code_reviewer, recorder, lifecycle, *, policy: Revie
 
         recorder.record_review(coding_run_id, accepted=accepted, findings=findings)
         review_result = ReviewResult(coding_run_id=coding_run_id, accepted=accepted, score=score, threshold=pass_threshold, findings=findings, diff=diff)
+        verdict = decide(review_result, retries_spent=generation_retries(state), policy=policy)
         # The terminal ReviewResult rides the stream only when the run escalates to the
         # owner; a patch bound for revision or reported as already-covered stays quiet.
-        if _post_review_route(review_result, state, policy) == "escalate":
+        if verdict == "escalate":
             emit(review_result)
-        return {"review_result": review_result, "trace": ["review_patch"]}
+        return {"review_result": review_result, "review_verdict": verdict, "trace": ["review_patch"]}
 
     return review_patch
 
 
-def build_review_router(policy: ReviewPolicy):
+def build_review_router():
     """Build the post-review router that drives the conditional edge off ``review_patch``.
 
-    Reading only the verdict ``review_patch`` wrote to state, it routes the four
-    non-trivial outcomes: a reviewing-stage Run Failure routes to the failure sink; a
-    below-threshold (or empty) patch with Generation Retries remaining routes back to
-    ``generate_code`` for one more Generation Retry; an accepted patch, or a non-empty
-    below-threshold one with no Generation Retries remaining routes to the owner's human
-    decision; and an empty proposal with no retries remaining routes to the no-changes
-    terminal rather than escalating nothing to the owner. Exhaustion escalates or
-    reports — it never fails. The router has no side effects; ``review_patch`` already
-    emitted the terminal ``ReviewResult`` on the escalation path.
+    The router computes nothing: a reviewing-stage Run Failure routes to the failure
+    sink, and otherwise it consumes the review gate's verdict that ``review_patch``
+    already decided and wrote to state — ``revise`` back to ``generate_code``,
+    ``escalate`` to the owner's human decision, ``already_covered`` to the no-changes
+    terminal. It has no side effects; ``review_patch`` already emitted the terminal
+    ``ReviewResult`` on the escalation path.
     """
 
     def route_after_review(state) -> Literal["revise", "escalate", "already_covered", "failed"]:
         if state.get("failure") is not None:
             return "failed"
-        return _post_review_route(state.get("review_result"), state, policy)
+        verdict: ReviewVerdict = state["review_verdict"]
+        return verdict
 
     return route_after_review
 

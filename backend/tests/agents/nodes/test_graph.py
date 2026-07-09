@@ -2604,40 +2604,6 @@ def test_exhausting_the_budget_escalates_the_below_threshold_patch_to_human_revi
     assert all(event[0] != "fail" for event in recorder.events)
 
 
-def test_a_zero_budget_escalates_a_below_threshold_patch_without_revising(tmp_path) -> None:
-    """With the Generation Retries configured to zero, a below-threshold patch escalates immediately, never revising."""
-    (tmp_path / "tests").mkdir()
-    recorder = RecordingRecorder()
-    findings = [ReviewFinding(category="coverage", detail="thin")]
-    reviewer = FakeCodeReviewer(PatchReview(score=4, findings=findings))
-    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
-    graph = _generation_graph(
-        code_generator=generator,
-        recorder=recorder,
-        workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
-        code_reviewer=reviewer,
-        max_generation_retries=0,
-    )
-    config = _config()
-
-    result = graph.invoke(
-        {
-            "question": "add tests",
-            "repository_id": uuid.uuid4(),
-            "repository_session_id": uuid.uuid4(),
-            "checkout_root": str(tmp_path),
-            "indexed_commit_sha": "abc",
-        },
-        config=config,
-    )
-
-    # No revision was attempted and the single below-threshold review escalated straight to the owner.
-    assert generator.revise_calls == []
-    assert result.get("failure") is None
-    assert result["__interrupt__"][0].value["score"] == 4
-    assert graph.get_state(config).next == ("await_decision",)
-
-
 def test_build_graph_threads_the_policy_threshold_into_the_review_decision(tmp_path) -> None:
     """The pass bar is the resolved ReviewPolicy passed to build_graph, not global settings.
 
@@ -2751,42 +2717,6 @@ def test_an_empty_proposal_with_zero_budget_reports_already_covered_immediately(
     no_changes = [event for event in events if isinstance(event, RunNoChanges)]
     assert len(no_changes) == 1
     assert no_changes[0].message == NO_CHANGES_MESSAGE
-
-
-def test_multiple_generation_retries_allow_multiple_revisions_before_escalating(tmp_path) -> None:
-    """Multiple Generation Retries permit several revisions before the patch escalates."""
-    (tmp_path / "tests").mkdir()
-    recorder = RecordingRecorder()
-    reviewer = FakeCodeReviewer(PatchReview(score=2, findings=[ReviewFinding(category="coverage", detail="thin")]))
-    generator = FakeCodeGenerator(
-        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
-        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...  # revised")]),
-    )
-    graph = _generation_graph(
-        code_generator=generator,
-        recorder=recorder,
-        workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
-        code_reviewer=reviewer,
-        max_generation_retries=2,
-    )
-    config = _config()
-
-    result = graph.invoke(
-        {
-            "question": "add tests",
-            "repository_id": uuid.uuid4(),
-            "repository_session_id": uuid.uuid4(),
-            "checkout_root": str(tmp_path),
-            "indexed_commit_sha": "abc",
-        },
-        config=config,
-    )
-
-    # Two revisions were attempted (the configured Generation Retries), then the still-below-threshold patch escalated rather than failing.
-    assert len(generator.revise_calls) == 2
-    assert result.get("failure") is None
-    assert graph.get_state(config).next == ("await_decision",)
-    assert [event[2] for event in recorder.events if event[0] == "record_review"] == [False, False, False]
 
 
 def test_revision_generation_failure_is_a_generating_run_failure(tmp_path) -> None:

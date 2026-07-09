@@ -45,6 +45,7 @@ from app.agents.nodes.repository_question import (
 )
 from app.enums import OwnerVerdict
 from app.schemas import Citation, PatchResult, RetrievalRequest, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
+from app.services.coding_runs.review_gate import ReviewVerdict
 from app.streaming import emit
 
 Intent = Literal["repository_question", "code_generation"]
@@ -101,8 +102,11 @@ class CodeGenerationState(TypedDict):
     diff: str | None
     patch_result: PatchResult | None
     review_result: ReviewResult | None
+    # The review gate's verdict, decided once in ``review_patch`` and consumed by the
+    # post-review router; the gate lives in ``app.services.coding_runs.review_gate``.
+    review_verdict: ReviewVerdict | None
     # Count of spent Generation Retries; ``None``/absent means none spent yet. The
-    # spend/limit arithmetic lives in ``app.services.coding_runs.generation_retries``.
+    # spend/limit arithmetic lives in ``app.services.coding_runs.review_gate``.
     generation_retries: int | None
     # The owner's three-way human-in-the-loop verdict (approve/reject/edit) on an escalated
     # patch, supplied by resuming the suspended graph, and the terminal outcome when that
@@ -232,11 +236,11 @@ def build_graph(
     factory, and the Git patch publisher. Tests deliberately choose their fake,
     local, or in-memory adapters according to the behavior under test (ADR-0002).
 
-    The Patch Review policy is likewise resolved once and required here: the same
+    The Patch Review policy is likewise resolved once and required here: the
     ``review_policy`` (the pass threshold and the Generation Retries limit) is
-    threaded into both ``review_patch`` and its post-review router, so a Test Patch
-    is scored, retried, escalated, or reported as already covered under one coherent
-    configuration rather than each consumer reading global settings on its own.
+    threaded into ``review_patch``, where the review gate decides once whether a
+    Test Patch is retried, escalated, or reported as already covered; the
+    post-review router only consumes that recorded verdict.
     """
     recorder = run_recorder
     # The one seam that pairs a durable status advance with its Stage marker; nodes
@@ -271,7 +275,7 @@ def build_graph(
     graph.add_conditional_edges("generate_code", build_generate_router(), {"review": "review_patch", "failed": "fail_run"})
     graph.add_conditional_edges(
         "review_patch",
-        build_review_router(review_policy),
+        build_review_router(),
         {"revise": "generate_code", "escalate": "await_decision", "already_covered": "report_no_changes", "failed": "fail_run"},
     )
     graph.add_conditional_edges(
