@@ -14,8 +14,8 @@ from typing import Literal
 from langgraph.types import interrupt
 
 from app.agents.nodes.failures import fail_state
-from app.enums import CodingRunStage, CodingRunStatus, OwnerVerdict
-from app.schemas import ReviewFinding, ReviewResult, RunFailure, RunNoChanges, Stage
+from app.enums import CodingRunStage, OwnerVerdict
+from app.schemas import ReviewFinding, ReviewResult, RunFailure, RunNoChanges
 from app.services.coding_runs.decision_finalizer import DecisionFinalizer
 from app.services.coding_runs.generation_retries import can_retry_generation, is_generation_retry, spend_generation_retry
 from app.services.coding_runs.review_policy import ReviewPolicy
@@ -43,7 +43,7 @@ EMPTY_PATCH_FINDING = ReviewFinding(category="coverage", detail="The generator p
 NO_CHANGES_MESSAGE = "The existing tests already cover all the requested cases, so no new tests were generated."
 
 
-def build_gather_documents_node(retriever, recorder):
+def build_gather_documents_node(retriever, lifecycle):
     """Build the generic retrieve node that partitions documents source vs. test.
 
     Gathering documents first advances the run into the retrieving stage and emits
@@ -53,8 +53,7 @@ def build_gather_documents_node(retriever, recorder):
     partitioner = RepositoryDocumentPartitioner(retriever)
 
     def gather_documents(state) -> dict:
-        recorder.advance_to(state["coding_run_id"], CodingRunStatus.retrieving)
-        emit(Stage(stage="retrieving"))
+        lifecycle.enter("retrieving", state["coding_run_id"])
         # Candidate Repository paths are untrusted hints that must be confined against the
         # checkout before entering agent context; a missing checkout cannot silently drop
         # them, so the Code Generation path fails explicitly at this boundary.
@@ -95,19 +94,20 @@ def _generating_failure(reason: str) -> dict:
     return fail_state(RunFailure(failed_stage=CodingRunStage.generating, reason=reason), trace="generate_code")
 
 
-def build_generate_code_node(code_generator, workspace_factory, recorder):
+def build_generate_code_node(code_generator, workspace_factory, recorder, lifecycle):
     """Build the single node that runs the whole generating stage end-to-end.
 
     The node distinguishes its two passes by whether a prior ``review_result`` is on
     state — absent on the first pass (straight from documents gathering), present
     whenever the post-review router routes a below-threshold patch back here. On the
-    first pass it advances the run into generating, restores a clean generation branch
-    at the indexed commit (the backend — never the model — owns this), and calls the
-    Code Generator's initial generation. On a retry pass it skips branch preparation (the
-    branch already exists), calls the Code Generator's revision with the prior proposal,
-    the reviewed canonical diff, and the Code Reviewer's findings, and spends one
-    Generation Retry. The Code Generator may call only the
-    bounded ``web_search`` tool — no shell or filesystem access.
+    first pass it restores a clean generation branch at the indexed commit (the
+    backend — never the model — owns this), enters the generating stage through the
+    run lifecycle only once that branch exists, and calls the Code Generator's initial
+    generation. On a retry pass it skips branch preparation (the branch already exists),
+    enters the revising stage (cycling the durable run back into generating), calls the
+    Code Generator's revision with the prior proposal, the reviewed canonical diff, and
+    the Code Reviewer's findings, and spends one Generation Retry. The Code Generator
+    may call only the bounded ``web_search`` tool — no shell or filesystem access.
 
     Either pass then validates, writes, and derives the canonical Test Patch through the
     deep ``PatchBuilder`` (a revision resets the prior patch first via the now-spent
@@ -126,7 +126,7 @@ def build_generate_code_node(code_generator, workspace_factory, recorder):
         is_retry = review is not None
 
         if is_retry:
-            emit(Stage(stage="revising"))
+            lifecycle.enter("revising", state["coding_run_id"])
             try:
                 proposal = code_generator.revise(
                     task=state["question"],
@@ -144,14 +144,15 @@ def build_generate_code_node(code_generator, workspace_factory, recorder):
             external_references = proposal.external_references or state.get("external_references") or []
             budget_update = spend_generation_retry(state)
         else:
-            recorder.advance_to(state["coding_run_id"], CodingRunStatus.generating)
             try:
                 workspace = workspace_factory(state.get("checkout_root"))
                 generation_branch = workspace.prepare_branch(state.get("indexed_commit_sha"))
             except Exception:
                 logger.exception("Generation branch preparation failed")
                 return _generating_failure(BRANCH_PREPARATION_FAILED)
-            emit(Stage(stage="generating"))
+            # The run enters generating only once a clean branch exists; a branch-preparation
+            # failure stays a terminal RunFailure that never announces the stage.
+            lifecycle.enter("generating", state["coding_run_id"])
             try:
                 proposal = code_generator.generate(
                     task=state["question"], source_documents=state.get("source_documents") or [], test_documents=state.get("test_documents") or []
@@ -229,7 +230,7 @@ def _post_review_route(review: ReviewResult | None, state, policy: ReviewPolicy)
     return "escalate"
 
 
-def build_review_patch_node(code_reviewer, recorder, *, policy: ReviewPolicy):
+def build_review_patch_node(code_reviewer, recorder, lifecycle, *, policy: ReviewPolicy):
     """Build the node that statically reviews a generated Test Patch before approval.
 
     Review is document-grounded static assessment only: the reviewer never executes
@@ -255,10 +256,9 @@ def build_review_patch_node(code_reviewer, recorder, *, policy: ReviewPolicy):
 
     def review_patch(state) -> dict:
         coding_run_id = state.get("coding_run_id")
-        recorder.advance_to(coding_run_id, CodingRunStatus.reviewing)
         # A second pass over this node is the review of a Generation Retry; surface it
         # as a distinct stage marker so the Agent Stream tells the two reviews apart.
-        emit(Stage(stage="re_reviewing" if is_generation_retry(state) else "reviewing"))
+        lifecycle.enter("re_reviewing" if is_generation_retry(state) else "reviewing", coding_run_id)
         diff = state.get("diff") or ""
         generated_files = state.get("generated_files") or []
 

@@ -17,6 +17,7 @@ from langgraph.types import Command
 
 from app.agents import Classification, build_graph
 from app.agents.nodes.code_generation import NO_CHANGES_MESSAGE, build_review_patch_node
+from app.agents.run_lifecycle import RunLifecycle
 from app.agents.nodes.generation import INSUFFICIENT_DOCUMENTS_ANSWER
 from app.agents.nodes.planner import PlannerOutput
 from app.agents.nodes.repository_question import ChainedSubQuestions, QueryVariants, ShapeClassification, SubQuestions
@@ -1544,6 +1545,40 @@ def test_branch_preparation_failure_is_a_generating_run_failure(tmp_path) -> Non
     assert recorder.events[-1][0] == "fail"
 
 
+def test_branch_preparation_failure_never_enters_the_generating_stage(tmp_path) -> None:
+    """A run that cannot prepare its branch never announces or records the generating stage.
+
+    The run enters generating only once a clean branch exists: a branch-preparation
+    failure is a terminal generating-stage RunFailure that advances no status and
+    puts no ``generating`` marker on the Agent Stream.
+    """
+    recorder = RecordingRecorder()
+
+    class RaisingPrepareWorkspace(FakeWorkspace):
+        def prepare_branch(self, indexed_commit_sha):
+            raise GitError("could not prepare branch")
+
+    generator = FakeCodeGenerator(GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]))
+    graph = _generation_graph(code_generator=generator, recorder=recorder, workspace=RaisingPrepareWorkspace())
+
+    events = _custom_events(
+        graph,
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+    )
+
+    advances = [event[2] for event in recorder.events if event[0] == "advance_to"]
+    assert CodingRunStatus.generating not in advances
+    assert "generating" not in [event.stage for event in events if isinstance(event, Stage)]
+    failures = [event for event in events if isinstance(event, RunFailure)]
+    assert [failure.failed_stage for failure in failures] == [CodingRunStage.generating]
+
+
 # ── code_generation branch: patch review ──────────────────────────
 
 
@@ -2241,7 +2276,7 @@ def test_score_above_threshold_is_accepted_by_the_backend(tmp_path) -> None:
     """The backend, not the model, decides the pass: a score above the threshold is accepted."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, RunLifecycle(recorder), policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
 
     result = node(_review_state(tmp_path, recorder))
 
@@ -2254,7 +2289,7 @@ def test_score_at_threshold_is_accepted_by_the_backend(tmp_path) -> None:
     """A score exactly at the threshold passes: the pass bar is ``score >= threshold``."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=7, findings=[])), recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=7, findings=[])), recorder, RunLifecycle(recorder), policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
 
     result = node(_review_state(tmp_path, recorder))
 
@@ -2265,7 +2300,7 @@ def test_score_below_threshold_is_not_accepted_by_the_backend(tmp_path) -> None:
     """A score under the threshold fails the pass decision, leaving routing to request a revision."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=6, findings=[])), recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=6, findings=[])), recorder, RunLifecycle(recorder), policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
 
     result = node(_review_state(tmp_path, recorder))
 
@@ -2278,7 +2313,7 @@ def test_review_result_carries_the_score_and_the_threshold_it_was_judged_against
     """The ReviewResult surfaces the reviewer's score and the threshold the backend judged it against."""
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
-    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
+    node = build_review_patch_node(FakeCodeReviewer(PatchReview(score=8, findings=[])), recorder, RunLifecycle(recorder), policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
 
     review = node(_review_state(tmp_path, recorder))["review_result"]
 
@@ -2292,7 +2327,7 @@ def test_backend_independently_rejects_out_of_scope_files_even_when_the_score_pa
     (tmp_path / "app" / "auth.py").write_text("real application code")
     recorder = RecordingRecorder()
     reviewer = FakeCodeReviewer(PatchReview(score=10, findings=[]))
-    node = build_review_patch_node(reviewer, recorder, policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
+    node = build_review_patch_node(reviewer, recorder, RunLifecycle(recorder), policy=ReviewPolicy(pass_threshold=7, max_generation_retries=2))
     state = {
         "coding_run_id": recorder.run_id,
         "question": "add tests",
@@ -2846,6 +2881,49 @@ def test_revision_stream_distinguishes_revising_and_second_review_stages(tmp_pat
 
     stages = [event.stage for event in events if isinstance(event, Stage)]
     assert stages == ["classifying", "planning", "retrieving", "generating", "reviewing", "revising", "re_reviewing"]
+
+
+def test_a_generation_retry_advances_the_run_back_into_generating(tmp_path) -> None:
+    """A Generation Retry cycles the durable Coding Run back through generating and reviewing.
+
+    The revise pass announces ``revising`` on the wire but re-enters the ordinary
+    ``generating`` status (per the CONTEXT.md glossary), so a mid-revise read of the
+    persisted run reports it actively generating — never stuck in ``reviewing``.
+    """
+    (tmp_path / "tests").mkdir()
+    recorder = RecordingRecorder()
+    reviewer = FakeCodeReviewer(reviews=[PatchReview(score=3, findings=[]), PatchReview(score=10, findings=[])])
+    generator = FakeCodeGenerator(
+        GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...")]),
+        revision=GenerationProposal(generated_files=[GeneratedFile(path="tests/test_auth.py", content="def test_x(): ...\ndef test_y(): ...")]),
+    )
+    graph = _generation_graph(
+        code_generator=generator,
+        recorder=recorder,
+        workspace=FakeWorkspace(diff="diff --git a/tests/test_auth.py b/tests/test_auth.py"),
+        code_reviewer=reviewer,
+    )
+
+    graph.invoke(
+        {
+            "question": "add tests",
+            "repository_id": uuid.uuid4(),
+            "repository_session_id": uuid.uuid4(),
+            "checkout_root": str(tmp_path),
+            "indexed_commit_sha": "abc",
+        },
+        config=_config(),
+    )
+
+    advances = [event[2] for event in recorder.events if event[0] == "advance_to"]
+    assert advances == [
+        CodingRunStatus.planning,
+        CodingRunStatus.retrieving,
+        CodingRunStatus.generating,
+        CodingRunStatus.reviewing,
+        CodingRunStatus.generating,
+        CodingRunStatus.reviewing,
+    ]
 
 
 def test_escalated_below_threshold_patch_emits_its_review_result_on_the_stream(tmp_path) -> None:

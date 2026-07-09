@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 
 from app.agents.fallback import model_label, with_provider_fallback
 from app.agents.nodes.failures import fail_state
-from app.enums import CodingRunStage, CodingRunStatus
+from app.enums import CodingRunStage
 from app.prompts.prompts import PLANNER_SYSTEM_PROMPT
-from app.schemas import RetrievalRequest, RunFailure, RunStarted, Stage
+from app.schemas import RetrievalRequest, RunFailure, RunStarted
 from app.streaming import emit
 
 # Used when the planner rejects scope without a specific, sanitized reason.
@@ -31,7 +31,7 @@ class PlannerOutput(BaseModel):
     reason: str | None = Field(default=None, description="Short user-safe explanation when the request is out of scope; leave null for in-scope requests.")
 
 
-def build_plan_node(planner_llm, recorder, fallback_llm):
+def build_plan_node(planner_llm, recorder, lifecycle, fallback_llm):
     """Build the planner node, the code-generation branch entry point.
 
     Planning owns the Coding Run's birth: it creates the queued run (minting
@@ -50,9 +50,8 @@ def build_plan_node(planner_llm, recorder, fallback_llm):
     def plan(state, config) -> dict:
         thread_id = config["configurable"]["thread_id"]
         coding_run_id = recorder.start(thread_id=thread_id, repository_session_id=state.get("repository_session_id"))
-        recorder.advance_to(coding_run_id, CodingRunStatus.planning)
         emit(RunStarted(coding_run_id=coding_run_id))
-        emit(Stage(stage="planning"))
+        lifecycle.enter("planning", coding_run_id)
         result = structured.invoke([SystemMessage(content=PLANNER_SYSTEM_PROMPT), HumanMessage(content=state["question"])])
         if result is None or not result.in_scope:
             reason = (result.reason if result and result.reason else None) or DEFAULT_REJECTION_REASON

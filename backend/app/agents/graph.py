@@ -34,6 +34,7 @@ from app.agents.nodes.code_generation import (
     build_review_router,
 )
 from app.agents.nodes.planner import build_plan_node
+from app.agents.run_lifecycle import RunLifecycle
 from app.prompts.prompts import CLASSIFIER_SYSTEM_PROMPT
 from app.agents.nodes.repository_question import (
     QuestionShape,
@@ -238,14 +239,17 @@ def build_graph(
     configuration rather than each consumer reading global settings on its own.
     """
     recorder = run_recorder
+    # The one seam that pairs a durable status advance with its Stage marker; nodes
+    # call lifecycle.enter(...) instead of hand-pairing the two (issue #64).
+    lifecycle = RunLifecycle(recorder)
     workspaces = workspace_factory
     publishers = publisher_factory
     graph = StateGraph(GraphState)
     graph.add_node("classify", _classify_node(classifier_llm, default_fallback_llm))
-    graph.add_node("plan", build_plan_node(planner_llm, recorder, fallback_llm=default_fallback_llm))
-    graph.add_node("gather_documents", build_gather_documents_node(retriever, recorder))
-    graph.add_node("generate_code", build_generate_code_node(code_generator, workspaces, recorder))
-    graph.add_node("review_patch", build_review_patch_node(code_reviewer, recorder, policy=review_policy))
+    graph.add_node("plan", build_plan_node(planner_llm, recorder, lifecycle, fallback_llm=default_fallback_llm))
+    graph.add_node("gather_documents", build_gather_documents_node(retriever, lifecycle))
+    graph.add_node("generate_code", build_generate_code_node(code_generator, workspaces, recorder, lifecycle))
+    graph.add_node("review_patch", build_review_patch_node(code_reviewer, recorder, lifecycle, policy=review_policy))
     graph.add_node("await_decision", build_await_decision_node())
     graph.add_node("approve_patch", build_approve_patch_node(publishers, workspaces, recorder))
     graph.add_node("discard_patch", build_discard_patch_node(workspaces, recorder))
