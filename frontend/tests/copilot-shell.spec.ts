@@ -1010,6 +1010,83 @@ test("User can request code generation and see the reviewed Test Patch", async (
   await expect(page.getByText("Awaiting the owner's decision.")).toBeVisible()
 })
 
+test("A rejected escalated Test Patch still offers the owner's decision", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({ json: { data: [], count: 0 } })
+  })
+  await page.route("**/api/v1/sessions", async (route) => {
+    await route.fulfill({
+      json: {
+        id: "session-ready",
+        title: "New session",
+        user_id: "user-1",
+        repository_id: "repo-ready",
+        created_at: "2026-06-17T09:00:00Z",
+        updated_at: "2026-06-17T09:00:00Z",
+      },
+    })
+  })
+  await page.route(
+    "**/api/v1/sessions/session-ready/history",
+    async (route) => {
+      await route.fulfill({ json: { data: [] } })
+    },
+  )
+  await page.route(
+    "**/api/v1/sessions/session-ready/questions",
+    async (route) => {
+      await route.fulfill({
+        contentType: "text/event-stream",
+        body: [
+          'data: {"type":"run_started","coding_run_id":"run-below"}\n\n',
+          'data: {"type":"stage","stage":"reviewing"}\n\n',
+          'data: {"type":"review_result","coding_run_id":"run-below","accepted":false,"score":5,"threshold":7,"findings":[{"category":"coverage","detail":"Misses the locked account path."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+        ].join(""),
+      })
+    },
+  )
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+  await page.getByRole("button", { name: "New Session" }).click()
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests for login")
+  await page.getByRole("button", { name: "Ask" }).click()
+
+  await expect(page.getByText("Rejected", { exact: true })).toBeVisible()
+  await expect(page.getByText("Score 5/10; threshold 7")).toBeVisible()
+  await expect(page.getByText("Awaiting the owner's decision.")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Approve" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Reject" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Edit" })).toBeVisible()
+})
+
 test("User can approve a reviewed Test Patch and see the pushed branch", async ({
   page,
 }) => {
@@ -1726,7 +1803,7 @@ test("Reloading rehydrates a rejected Coding Run's inline decision summary", asy
               content: "",
               citations: [],
               position: 2,
-              coding_run_id: "run-rejected",
+              coding_run_id: "run-below",
               created_at: "2026-06-17T09:00:02Z",
             },
           ],
@@ -1735,11 +1812,11 @@ test("Reloading rehydrates a rejected Coding Run's inline decision summary", asy
     },
   )
   await page.route(
-    "**/api/v1/sessions/session-ready/runs/run-rejected",
+    "**/api/v1/sessions/session-ready/runs/run-below",
     async (route) => {
       await route.fulfill({
         json: {
-          id: "run-rejected",
+          id: "run-below",
           status: "rejected",
           failed_stage: null,
           failure_reason: null,

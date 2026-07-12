@@ -931,10 +931,10 @@ function ReviewResultSummary({
   const [feedback, setFeedback] = useState("")
   const [editing, setEditing] = useState(false)
   const [editFeedback, setEditFeedback] = useState("")
+  // A review_result only rides the stream when the run escalates and pauses
+  // awaiting the owner, so a rejected review still gets the decision controls.
   const canDecide =
-    review.accepted &&
-    !message.decision &&
-    typeof message.codingRunId === "string"
+    !message.decision && typeof message.codingRunId === "string"
 
   return (
     <div className="mt-3 grid gap-3">
