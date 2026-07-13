@@ -644,7 +644,10 @@ test("First Repository Session request refreshes the sidebar title", async ({
   await page.goto("/")
   await page.getByRole("button", { name: /ready-api/i }).click()
   await page.getByRole("button", { name: "New Session" }).click()
-  await expect(page.getByRole("button", { name: /New session/i })).toBeVisible()
+  // Match the session list item (title + timestamp), not the New Session button.
+  await expect(
+    page.getByRole("button", { name: /New session \d/i }),
+  ).toBeVisible()
 
   await page
     .getByRole("textbox", { name: "Ask about the selected repository" })
@@ -2171,7 +2174,7 @@ test("User can reject a reviewed Test Patch with optional feedback", async ({
   await expect(page.getByRole("button", { name: "Reject" })).not.toBeVisible()
 })
 
-test("Edit reveals a required feedback field and submits the edit verdict", async ({
+test("Edit submits the edit verdict once its feedback field is filled", async ({
   page,
 }) => {
   let streamCount = 0
@@ -2267,18 +2270,18 @@ test("Edit reveals a required feedback field and submits the edit verdict", asyn
     page.getByRole("button", { name: "Edit", exact: true }),
   ).toBeVisible()
 
-  // Edit reveals its own feedback field; its submit is blocked while blank.
-  await expect(
-    page.getByRole("textbox", { name: "Edit feedback" }),
-  ).toHaveCount(0)
-  await page.getByRole("button", { name: "Edit", exact: true }).click()
+  // Edit has its own always-visible feedback field; the button is blocked while blank.
   const editFeedback = page.getByRole("textbox", { name: "Edit feedback" })
   await expect(editFeedback).toBeVisible()
-  await expect(page.getByRole("button", { name: "Submit edit" })).toBeDisabled()
+  await expect(
+    page.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeDisabled()
 
   await editFeedback.fill("Also cover the locked account path.")
-  await expect(page.getByRole("button", { name: "Submit edit" })).toBeEnabled()
-  await page.getByRole("button", { name: "Submit edit" }).click()
+  await expect(
+    page.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeEnabled()
+  await page.getByRole("button", { name: "Edit", exact: true }).click()
 
   // The edit resumes the run and re-surfaces a fresh escalation to decide again.
   await expect(
@@ -2399,11 +2402,10 @@ test("Edit re-enters the streaming state and supports repeated edits on the same
   await expect(page.getByText("Original coverage.")).toBeVisible()
 
   // First edit resumes the run and re-surfaces a fresh escalation.
-  await page.getByRole("button", { name: "Edit", exact: true }).click()
   await page
     .getByRole("textbox", { name: "Edit feedback" })
     .fill("First revision.")
-  await page.getByRole("button", { name: "Submit edit" }).click()
+  await page.getByRole("button", { name: "Edit", exact: true }).click()
 
   await expect(page.getByText("First revision applied.")).toBeVisible()
   await expect(page.getByTestId("stage-progress")).toHaveCount(0)
@@ -2414,13 +2416,12 @@ test("Edit re-enters the streaming state and supports repeated edits on the same
   ).toBeVisible()
 
   // A second edit on the same run is accepted (the loop is unbounded).
-  await page.getByRole("button", { name: "Edit", exact: true }).click()
   const secondEditFeedback = page.getByRole("textbox", {
     name: "Edit feedback",
   })
   await expect(secondEditFeedback).toHaveValue("")
   await secondEditFeedback.fill("Second revision.")
-  await page.getByRole("button", { name: "Submit edit" }).click()
+  await page.getByRole("button", { name: "Edit", exact: true }).click()
 
   await expect(page.getByText("Second revision applied.")).toBeVisible()
 })
@@ -3460,4 +3461,123 @@ test("The session total refreshes after a new question turn runs", async ({
   await expect(page.getByTestId("session-total-cost")).toHaveText(
     /Est\. session AI Cost: \$0\.03/,
   )
+})
+
+test("Switching sessions while a question streams keeps the turn in its own session", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/repositories/**", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "repo-ready",
+            user_id: "user-1",
+            repository_url: "https://github.com/acme/ready-api",
+            name: "ready-api",
+            provider: "github",
+            owner: "acme",
+            default_branch: "main",
+            indexed_commit_sha: "abc123",
+            status: "ready",
+            failed_reason: null,
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:05:00Z",
+          },
+        ],
+        count: 1,
+      },
+    })
+  })
+  await page.route(/\/api\/v1\/sessions\?/, async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "session-a",
+            title: "Session A",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:00:00Z",
+            updated_at: "2026-06-17T09:10:00Z",
+          },
+          {
+            id: "session-b",
+            title: "Session B",
+            user_id: "user-1",
+            repository_id: "repo-ready",
+            created_at: "2026-06-17T09:01:00Z",
+            updated_at: "2026-06-17T09:11:00Z",
+          },
+        ],
+        count: 2,
+      },
+    })
+  })
+  await page.route("**/api/v1/sessions/session-a/history", async (route) => {
+    await route.fulfill({ json: { data: [] } })
+  })
+  await page.route("**/api/v1/sessions/session-b/history", async (route) => {
+    await route.fulfill({
+      json: {
+        data: [
+          {
+            id: "message-b-assistant",
+            session_id: "session-b",
+            role: "assistant",
+            content: "Session B stored answer.",
+            citations: [],
+            position: 1,
+            created_at: "2026-06-17T09:01:01Z",
+          },
+        ],
+      },
+    })
+  })
+  await page.route("**/api/v1/sessions/session-a/questions", async (route) => {
+    // Hold the Agent Stream open long enough for the user to switch sessions
+    // before the escalated review lands.
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    await route.fulfill({
+      contentType: "text/event-stream",
+      body: [
+        'data: {"type":"run_started","coding_run_id":"run-switch"}\n\n',
+        'data: {"type":"review_result","coding_run_id":"run-switch","accepted":true,"score":8,"threshold":7,"findings":[{"category":"coverage","detail":"Covers the successful login path."}],"diff":"diff --git a/tests/test_login.py b/tests/test_login.py\\n+def test_login_success():\\n+    assert True\\n","disclaimer":"These tests were not executed and their runtime correctness was not verified; the patch was assessed statically only."}\n\n',
+      ].join(""),
+    })
+  })
+
+  await page.goto("/")
+  await page.getByRole("button", { name: /ready-api/i }).click()
+
+  const repositoryRegion = page.getByRole("region", { name: "Repository" })
+  await repositoryRegion.getByRole("button", { name: "Session A" }).click()
+
+  await page
+    .getByRole("textbox", { name: "Ask about the selected repository" })
+    .fill("Add tests for login")
+  await page.getByRole("button", { name: "Ask" }).click()
+  await expect(page.getByText("Add tests for login")).toBeVisible()
+
+  // Switch away while the response is still streaming: Session B shows only
+  // its own history, none of Session A's in-flight turn.
+  await repositoryRegion.getByRole("button", { name: "Session B" }).click()
+  await expect(page.getByText("Session B stored answer.")).toBeVisible()
+  await expect(page.getByText("Add tests for login")).toHaveCount(0)
+
+  // Switch back before the stream lands: the in-flight turn is still there,
+  // and the escalated review card arrives with its decision buttons intact.
+  await repositoryRegion.getByRole("button", { name: "Session A" }).click()
+  await expect(page.getByText("Add tests for login")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Approve" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Reject" })).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeVisible()
+
+  // The landed review stays in Session A; Session B never sees it.
+  await repositoryRegion.getByRole("button", { name: "Session B" }).click()
+  await expect(page.getByText("Session B stored answer.")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0)
+  await expect(page.getByText("Add tests for login")).toHaveCount(0)
 })

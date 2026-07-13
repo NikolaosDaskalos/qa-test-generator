@@ -9,6 +9,7 @@ import {
   SidebarHeader,
 } from "@/components/ui/sidebar"
 import { type Item, Main } from "./Main"
+import { RepositoryPanel } from "./RepositoryPanel"
 import { User } from "./User"
 
 const baseItems: Item[] = [{ icon: Bot, title: "Copilot", path: "/" }]
@@ -21,6 +22,7 @@ export function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         <Main items={baseItems} />
+        <RepositoryPanel />
       </SidebarContent>
       <SidebarFooter>
         <SidebarAppearance />

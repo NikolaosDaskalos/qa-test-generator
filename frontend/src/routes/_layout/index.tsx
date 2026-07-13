@@ -1,20 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
-import { Plus } from "lucide-react"
-import { type FormEvent, useEffect, useState } from "react"
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type {
-  AiCostRollupPublic,
   Citation,
   HumanDecisionRequest,
   RepositoryPublic,
-  RepositorySessionPublic,
   ReviewFinding,
   SessionHistoryPublic,
   TurnCostPublic,
 } from "@/client"
 import { CostsService, RepositoriesService, SessionsService } from "@/client"
+import { RollupCostLabel } from "@/components/Common/RollupCostLabel"
 import { DiffView } from "@/components/DiffView"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -116,11 +121,42 @@ function CopilotShell() {
   const [activeRepository, setActiveRepository] =
     useState<RepositoryPublic | null>(null)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  // The transcript, stage progress, and stream errors are keyed by session so an
+  // in-flight Agent Stream keeps writing to its own session after a switch.
+  const [messagesBySession, setMessagesBySession] = useState<
+    Record<string, ChatMessage[]>
+  >({})
   const [question, setQuestion] = useState("")
-  const [stageStatus, setStageStatus] = useState<string[]>([])
-  const [streamError, setStreamError] = useState<string | null>(null)
-  const [isCreatingSession, setIsCreatingSession] = useState(false)
+  const [stageStatusBySession, setStageStatusBySession] = useState<
+    Record<string, string[]>
+  >({})
+  const [streamErrorBySession, setStreamErrorBySession] = useState<
+    Record<string, string | null>
+  >({})
+  // Sessions with a live stream own their transcript; a stale history reload
+  // must not overwrite the in-flight turn.
+  const streamingSessionsRef = useRef<Set<string>>(new Set())
+  const chatMessages = activeSessionId
+    ? (messagesBySession[activeSessionId] ?? [])
+    : []
+  const stageStatus = activeSessionId
+    ? (stageStatusBySession[activeSessionId] ?? [])
+    : []
+  const streamError = activeSessionId
+    ? (streamErrorBySession[activeSessionId] ?? null)
+    : null
+  const applySessionHistory = useCallback(
+    (sessionId: string, messages: ChatMessage[]) => {
+      if (streamingSessionsRef.current.has(sessionId)) {
+        return
+      }
+      setMessagesBySession((bySession) => ({
+        ...bySession,
+        [sessionId]: messages,
+      }))
+    },
+    [],
+  )
   const [pendingDecisionRunId, setPendingDecisionRunId] = useState<
     string | null
   >(null)
@@ -214,35 +250,6 @@ function CopilotShell() {
   })
   const sessions = sessionsQuery.data?.data ?? []
 
-  async function handleSelectSession(sessionId: string) {
-    if (!activeRepository || sessionId === activeSessionId) {
-      return
-    }
-    setStageStatus([])
-    setStreamError(null)
-    setActiveSessionId(sessionId)
-    setChatMessages([])
-    localStorage.setItem(
-      getRepositorySessionStorageKey(activeRepository.id),
-      sessionId,
-    )
-    localStorage.setItem(
-      getLastRepositorySessionStorageKey(),
-      JSON.stringify({
-        repositoryId: activeRepository.id,
-        sessionId,
-      }),
-    )
-    navigate({
-      to: "/",
-      search: { repository: activeRepository.id, session: sessionId },
-    })
-    const history = await SessionsService.readRepositorySessionHistory({
-      repositorySessionId: sessionId,
-    })
-    setChatMessages(toChatMessages(history.data))
-  }
-
   useEffect(() => {
     if (!isRepositoryPublic(repositoryStatusQuery.data)) {
       return
@@ -274,11 +281,6 @@ function CopilotShell() {
   useEffect(() => {
     if (!activeRepository || activeRepository.status !== "ready") {
       setActiveSessionId((current) => (current === null ? current : null))
-      setChatMessages((messages) => (messages.length === 0 ? messages : []))
-      return
-    }
-
-    if (isCreatingSession) {
       return
     }
 
@@ -312,7 +314,6 @@ function CopilotShell() {
           localStorage.removeItem(getLastRepositorySessionStorageKey())
         }
         setActiveSessionId(null)
-        setChatMessages([])
         if (selectedSessionId) {
           navigate({
             to: "/",
@@ -344,16 +345,17 @@ function CopilotShell() {
       }
       SessionsService.readRepositorySessionHistory({
         repositorySessionId: nextSessionId,
-      }).then((history) => setChatMessages(toChatMessages(history.data)))
+      }).then((history) =>
+        applySessionHistory(nextSessionId, toChatMessages(history.data)),
+      )
       return
     }
 
     setActiveSessionId(null)
-    setChatMessages([])
   }, [
     activeRepository,
     activeSessionId,
-    isCreatingSession,
+    applySessionHistory,
     navigate,
     selectedSessionId,
     sessions,
@@ -370,69 +372,7 @@ function CopilotShell() {
         <h1 className="text-2xl font-bold tracking-tight">Copilot</h1>
       </header>
 
-      <div className="grid flex-1 gap-6 lg:grid-cols-[22rem_minmax(0,1fr)]">
-        <section
-          aria-label="Repository"
-          className="flex min-h-72 flex-col gap-4 rounded-lg border bg-background p-4"
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <h2 className="text-base font-semibold">Repositories</h2>
-              <p className="text-sm text-muted-foreground">
-                {activeRepository
-                  ? `${activeRepository.name} selected`
-                  : "No repository selected"}
-              </p>
-              {activeRepository ? (
-                <RepositoryTotalCost repositoryId={activeRepository.id} />
-              ) : null}
-            </div>
-            <Button
-              asChild
-              variant="outline"
-              size="icon"
-              className="size-8 shrink-0"
-            >
-              <Link to="/repositories/new" aria-label="Add repository">
-                <Plus className="size-4" />
-              </Link>
-            </Button>
-          </div>
-          <RepositorySelector
-            activeRepository={activeRepository}
-            activeSessionId={activeSessionId}
-            isCreatingSession={isCreatingSession}
-            isSessionsLoading={sessionsQuery.isLoading}
-            repositories={repositories}
-            sessions={sessions}
-            onCreateSession={() => {
-              if (!activeRepository) {
-                return
-              }
-              setStageStatus([])
-              setStreamError(null)
-              createRepositorySession({
-                repositoryId: activeRepository.id,
-                navigate,
-                queryClient,
-                setActiveSessionId,
-                setChatMessages,
-                setIsCreatingSession,
-              })
-            }}
-            onSelectRepository={(repository) => {
-              setActiveRepository(repository)
-              setStageStatus([])
-              setStreamError(null)
-              navigate({
-                to: "/",
-                search: { repository: repository.id },
-              })
-            }}
-            onSelectSession={handleSelectSession}
-          />
-        </section>
-
+      <div className="flex flex-1 flex-col">
         {activeRepository && activeRepository.status !== "ready" ? (
           <RepositoryDetails
             repository={activeRepository}
@@ -497,16 +437,32 @@ function CopilotShell() {
                           if (!activeSessionId || !activeRepository) {
                             return
                           }
+                          const sessionId = activeSessionId
+                          streamingSessionsRef.current.add(sessionId)
                           submitDecision({
                             queryClient,
                             repositoryId: activeRepository.id,
-                            repositorySessionId: activeSessionId,
+                            repositorySessionId: sessionId,
                             decision,
-                            setChatMessages,
+                            setChatMessages: scopeSessionSetter<ChatMessage[]>(
+                              setMessagesBySession,
+                              sessionId,
+                              [],
+                            ),
                             setPendingDecisionRunId,
-                            setStageStatus,
-                            setStreamError,
-                          })
+                            setStageStatus: scopeSessionSetter<string[]>(
+                              setStageStatusBySession,
+                              sessionId,
+                              [],
+                            ),
+                            setStreamError: scopeSessionSetter<string | null>(
+                              setStreamErrorBySession,
+                              sessionId,
+                              null,
+                            ),
+                          }).finally(() =>
+                            streamingSessionsRef.current.delete(sessionId),
+                          )
                         }}
                       />
                     ) : null}
@@ -578,16 +534,30 @@ function CopilotShell() {
                 if (!activeSessionId || !activeRepository || !question.trim()) {
                   return
                 }
+                const sessionId = activeSessionId
+                streamingSessionsRef.current.add(sessionId)
                 submitQuestion({
                   queryClient,
                   repositoryId: activeRepository.id,
-                  repositorySessionId: activeSessionId,
+                  repositorySessionId: sessionId,
                   question: question.trim(),
-                  setChatMessages,
+                  setChatMessages: scopeSessionSetter<ChatMessage[]>(
+                    setMessagesBySession,
+                    sessionId,
+                    [],
+                  ),
                   setQuestion,
-                  setStageStatus,
-                  setStreamError,
-                })
+                  setStageStatus: scopeSessionSetter<string[]>(
+                    setStageStatusBySession,
+                    sessionId,
+                    [],
+                  ),
+                  setStreamError: scopeSessionSetter<string | null>(
+                    setStreamErrorBySession,
+                    sessionId,
+                    null,
+                  ),
+                }).finally(() => streamingSessionsRef.current.delete(sessionId))
               }}
             >
               <textarea
@@ -780,143 +750,6 @@ function RepositoryEmptyState() {
   )
 }
 
-function RepositorySelector({
-  activeRepository,
-  activeSessionId,
-  isCreatingSession,
-  isSessionsLoading,
-  sessions,
-  repositories,
-  onCreateSession,
-  onSelectRepository,
-  onSelectSession,
-}: {
-  activeRepository: RepositoryPublic | null
-  activeSessionId: string | null
-  isCreatingSession: boolean
-  isSessionsLoading: boolean
-  sessions: RepositorySessionPublic[]
-  repositories: RepositoryPublic[]
-  onCreateSession: () => void
-  onSelectRepository: (repository: RepositoryPublic) => void
-  onSelectSession: (sessionId: string) => void
-}) {
-  if (repositories.length === 0) {
-    return (
-      <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-        No repositories registered yet.
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {repositories.map((repository) => {
-        const isExpanded = activeRepository?.id === repository.id
-
-        return (
-          <div key={repository.id} className="grid gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              aria-expanded={isExpanded}
-              aria-pressed={isExpanded}
-              className="h-auto justify-start p-3 text-left"
-              onClick={() => onSelectRepository(repository)}
-            >
-              <span className="flex min-w-0 flex-1 flex-col gap-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="truncate font-medium">
-                    {repository.name}
-                  </span>
-                  <Badge variant="secondary">{repository.status}</Badge>
-                </span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {repository.owner}/{repository.name}
-                </span>
-                {repository.status === "failed" && repository.failed_reason ? (
-                  <span className="text-xs text-destructive">
-                    {repository.failed_reason}
-                  </span>
-                ) : null}
-              </span>
-            </Button>
-            {isExpanded && repository.status === "ready" ? (
-              <SessionList
-                activeSessionId={activeSessionId}
-                isCreatingSession={isCreatingSession}
-                isLoading={isSessionsLoading}
-                sessions={sessions}
-                onCreateSession={onCreateSession}
-                onSelectSession={onSelectSession}
-              />
-            ) : null}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function SessionList({
-  sessions,
-  activeSessionId,
-  isCreatingSession,
-  isLoading,
-  onCreateSession,
-  onSelectSession,
-}: {
-  sessions: RepositorySessionPublic[]
-  activeSessionId: string | null
-  isCreatingSession: boolean
-  isLoading: boolean
-  onCreateSession: () => void
-  onSelectSession: (sessionId: string) => void
-}) {
-  return (
-    <div className="ml-3 flex flex-col gap-2 border-l pl-3">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">Sessions</h3>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={isCreatingSession}
-          onClick={onCreateSession}
-        >
-          New Session
-        </Button>
-      </div>
-      {isLoading ? (
-        <p className="text-xs text-muted-foreground">Loading sessions...</p>
-      ) : sessions.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No sessions yet.</p>
-      ) : (
-        <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto">
-          {sessions.map((session) => (
-            <li key={session.id}>
-              <Button
-                type="button"
-                variant="ghost"
-                aria-pressed={session.id === activeSessionId}
-                className="h-auto w-full justify-start p-2 text-left aria-pressed:bg-muted"
-                onClick={() => onSelectSession(session.id)}
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm">{session.title}</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {new Date(session.updated_at).toLocaleString()}
-                  </span>
-                </span>
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
-
 function ReviewResultSummary({
   isPending,
   message,
@@ -929,12 +762,10 @@ function ReviewResultSummary({
   review: ReviewResultView
 }) {
   const [feedback, setFeedback] = useState("")
-  const [editing, setEditing] = useState(false)
   const [editFeedback, setEditFeedback] = useState("")
   // A review_result only rides the stream when the run escalates and pauses
   // awaiting the owner, so a rejected review still gets the decision controls.
-  const canDecide =
-    !message.decision && typeof message.codingRunId === "string"
+  const canDecide = !message.decision && typeof message.codingRunId === "string"
 
   return (
     <div className="mt-3 grid gap-3">
@@ -979,7 +810,7 @@ function ReviewResultSummary({
             <Button
               type="button"
               size="sm"
-              variant="outline"
+              variant="destructive"
               disabled={isPending}
               onClick={() =>
                 onDecision({
@@ -994,46 +825,20 @@ function ReviewResultSummary({
             <Button
               type="button"
               size="sm"
-              variant="secondary"
-              disabled={isPending}
-              onClick={() => setEditing((open) => !open)}
+              variant="outline"
+              disabled={isPending || editFeedback.trim() === ""}
+              onClick={() => {
+                onDecision({
+                  coding_run_id: message.codingRunId ?? "",
+                  verdict: "edit",
+                  feedback: editFeedback,
+                })
+                setEditFeedback("")
+              }}
             >
               Edit
             </Button>
           </div>
-          {editing ? (
-            <div className="grid gap-2">
-              <Label htmlFor={`edit-feedback-${message.id}`}>
-                Edit feedback
-              </Label>
-              <textarea
-                id={`edit-feedback-${message.id}`}
-                aria-label="Edit feedback"
-                className="min-h-16 resize-none rounded-md border bg-background px-3 py-2 text-sm disabled:bg-muted/30 disabled:text-muted-foreground"
-                disabled={isPending}
-                value={editFeedback}
-                onChange={(event) => setEditFeedback(event.target.value)}
-              />
-              <div>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={isPending || editFeedback.trim() === ""}
-                  onClick={() => {
-                    onDecision({
-                      coding_run_id: message.codingRunId ?? "",
-                      verdict: "edit",
-                      feedback: editFeedback,
-                    })
-                    setEditing(false)
-                    setEditFeedback("")
-                  }}
-                >
-                  Submit edit
-                </Button>
-              </div>
-            </div>
-          ) : null}
           <div className="grid gap-2">
             <Label htmlFor={`reject-feedback-${message.id}`}>
               Reject feedback
@@ -1047,10 +852,48 @@ function ReviewResultSummary({
               onChange={(event) => setFeedback(event.target.value)}
             />
           </div>
+          <div className="grid gap-2">
+            <Label htmlFor={`edit-feedback-${message.id}`}>Edit feedback</Label>
+            <textarea
+              id={`edit-feedback-${message.id}`}
+              aria-label="Edit feedback"
+              className="min-h-16 resize-none rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground disabled:bg-muted/30 disabled:text-muted-foreground"
+              placeholder="Describe the changes you want — the Edit button stays disabled until you provide feedback here."
+              disabled={isPending}
+              value={editFeedback}
+              onChange={(event) => setEditFeedback(event.target.value)}
+            />
+          </div>
         </div>
       ) : null}
     </div>
   )
+}
+
+function LinkifiedText({ text }: { text: string }) {
+  const nodes: ReactNode[] = []
+  let cursor = 0
+  for (const match of text.matchAll(/https?:\/\/[^\s)]+/g)) {
+    if (match.index > cursor) {
+      nodes.push(text.slice(cursor, match.index))
+    }
+    nodes.push(
+      <a
+        key={`link-${match.index}`}
+        className="text-primary underline"
+        href={match[0]}
+        target="_blank"
+        rel="noreferrer"
+      >
+        {match[0]}
+      </a>,
+    )
+    cursor = match.index + match[0].length
+  }
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor))
+  }
+  return <>{nodes}</>
 }
 
 function RunDecisionSummary({ decision }: { decision: RunDecisionView }) {
@@ -1060,7 +903,9 @@ function RunDecisionSummary({ decision }: { decision: RunDecisionView }) {
         <>
           <p className="text-sm font-medium">Approved and pushed</p>
           {decision.message ? (
-            <p className="text-sm text-muted-foreground">{decision.message}</p>
+            <p className="text-sm text-muted-foreground">
+              <LinkifiedText text={decision.message} />
+            </p>
           ) : null}
           {decision.branch ? (
             <p className="text-sm text-muted-foreground">
@@ -1252,25 +1097,6 @@ function RunCostLabel({
   return <EstimatedCostLabel cost={costQuery.data} />
 }
 
-// Shared presentation for a rolled-up AI Cost total (session, Repository, or user).
-// Unlike a per-turn card, a rollup always renders — a dimension with no recorded usage
-// reads back a well-defined zero, so "$0.00" is a meaningful running total, not an error.
-function RollupCostLabel({
-  label,
-  testId,
-  cost,
-}: {
-  label: string
-  testId: string
-  cost: AiCostRollupPublic | undefined
-}) {
-  return (
-    <p data-testid={testId} className="text-xs text-muted-foreground">
-      {label}: {formatEstimatedCost(cost?.cost ?? 0)}
-    </p>
-  )
-}
-
 // Reads a Repository Session's running AI Cost total off the persisted Usage Records,
 // so the session view reflects the sum of its cards and refreshes as new turns land.
 function SessionTotalCost({
@@ -1287,23 +1113,6 @@ function SessionTotalCost({
     <RollupCostLabel
       label="Est. session AI Cost"
       testId="session-total-cost"
-      cost={costQuery.data}
-    />
-  )
-}
-
-// Reads a Repository's AI Cost total across all its sessions off the persisted Usage
-// Records, shown in the repository view while the Repository is selected.
-function RepositoryTotalCost({ repositoryId }: { repositoryId: string }) {
-  const costQuery = useQuery({
-    queryKey: ["repository-cost", repositoryId],
-    queryFn: () => CostsService.readRepositoryCost({ repositoryId }),
-  })
-
-  return (
-    <RollupCostLabel
-      label="Est. Repository AI Cost"
-      testId="repository-total-cost"
       cost={costQuery.data}
     />
   )
@@ -1558,53 +1367,21 @@ function toChatMessages(history: SessionHistoryPublic[]): ChatMessage[] {
   }))
 }
 
-async function createRepositorySession({
-  navigate,
-  repositoryId,
-  queryClient,
-  setActiveSessionId,
-  setChatMessages,
-  setIsCreatingSession,
-}: {
-  navigate: ReturnType<typeof Route.useNavigate>
-  repositoryId: string
-  queryClient: ReturnType<typeof useQueryClient>
-  setActiveSessionId: React.Dispatch<React.SetStateAction<string | null>>
-  setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
-  setIsCreatingSession: React.Dispatch<React.SetStateAction<boolean>>
-}) {
-  setIsCreatingSession(true)
-  try {
-    const session = await SessionsService.createRepositorySession({
-      requestBody: { repository_id: repositoryId },
-    })
-    const sessionId = session.id
-
-    localStorage.setItem(
-      getRepositorySessionStorageKey(repositoryId),
-      sessionId,
-    )
-    localStorage.setItem(
-      getLastRepositorySessionStorageKey(),
-      JSON.stringify({
-        repositoryId,
-        sessionId,
-      }),
-    )
-    setActiveSessionId(sessionId)
-    setChatMessages([])
-    navigate({
-      to: "/",
-      search: { repository: repositoryId, session: sessionId },
-    })
-
-    const history = await SessionsService.readRepositorySessionHistory({
-      repositorySessionId: sessionId,
-    })
-    setChatMessages(toChatMessages(history.data))
-    queryClient.invalidateQueries({ queryKey: ["sessions", repositoryId] })
-  } finally {
-    setIsCreatingSession(false)
+// Binds a React state setter to one session's slot of a per-session record so
+// stream handlers keep the plain Dispatch<SetStateAction<T>> shape they expect.
+function scopeSessionSetter<T>(
+  setRecord: React.Dispatch<React.SetStateAction<Record<string, T>>>,
+  sessionId: string,
+  emptyValue: T,
+): React.Dispatch<React.SetStateAction<T>> {
+  return (action) => {
+    setRecord((record) => ({
+      ...record,
+      [sessionId]:
+        typeof action === "function"
+          ? (action as (previous: T) => T)(record[sessionId] ?? emptyValue)
+          : action,
+    }))
   }
 }
 
