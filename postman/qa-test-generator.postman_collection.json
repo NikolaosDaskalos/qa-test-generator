@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "92c95e9a-f9f8-4ccd-b7ae-db9f920db57d",
     "name": "QA Test Generator API",
-    "description": "Sign up, log in, and exercise the repository, session, agent stream, human-in-the-loop, and coding-run endpoints. Set `githubToken` and `replacementGithubToken` before running repository requests. Login stores `accessToken`, repository creation stores `repositoryId`, session creation stores `repositorySessionId`, and test generation stores `codingRunId`. The repository must be ready before creating a session.",
+    "description": "Sign up, log in, and exercise the repository, session, agent stream, human-in-the-loop, coding-run, and AI-cost endpoints. Set `githubToken` and `replacementGithubToken` before running repository requests. Login stores `accessToken`, repository creation stores `repositoryId`, session creation stores `repositorySessionId`, repository questions store `sessionHistoryId`, and code generation stores `codingRunId`. The repository must be ready before creating a session. Requests under `Costs` that are marked superuser-only require a superuser token.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -423,7 +423,7 @@
                   "    pm.expect(response.id).to.be.a('string').and.not.empty;",
                   "    pm.expect(response.repository_id).to.eql(pm.variables.get('repositoryId'));",
                   "    pm.expect(response.title).to.eql(pm.variables.get('sessionTitle'));",
-                  "    pm.expect(response.owner_id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(response.user_id).to.be.a('string').and.not.empty;",
                   "    pm.environment.set('repositorySessionId', response.id);",
                   "    pm.collectionVariables.set('repositorySessionId', response.id);",
                   "});"
@@ -481,7 +481,7 @@
                   "    pm.expect(response.count).to.be.a('number');",
                   "    response.data.forEach(function (session) {",
                   "        pm.expect(session.id).to.be.a('string').and.not.empty;",
-                  "        pm.expect(session.owner_id).to.be.a('string').and.not.empty;",
+                  "        pm.expect(session.user_id).to.be.a('string').and.not.empty;",
                   "        pm.expect(session.repository_id).to.be.a('string').and.not.empty;",
                   "        pm.expect(session.title).to.be.a('string');",
                   "        pm.expect(session.created_at).to.be.a('string').and.not.empty;",
@@ -557,6 +557,8 @@
                   "    pm.expect(result.type).to.eql('result');",
                   "    pm.expect(result.repository_session_id).to.eql(pm.variables.get('repositorySessionId'));",
                   "    pm.expect(result.assistant_message_id).to.be.a('string').and.not.empty;",
+                  "    pm.environment.set('sessionHistoryId', result.assistant_message_id);",
+                  "    pm.collectionVariables.set('sessionHistoryId', result.assistant_message_id);",
                   "    pm.expect(result.answer).to.be.a('string').and.not.empty;",
                   "    pm.expect(result.citations).to.be.an('array');",
                   "});"
@@ -603,7 +605,7 @@
           "response": []
         },
         {
-          "name": "Start Test Generation (Await Human Decision)",
+          "name": "Start Code Generation (Await Human Decision)",
           "event": [
             {
               "listen": "test",
@@ -628,7 +630,7 @@
                   "        .map(line => JSON.parse(line.slice(6)));",
                   "}",
                   "",
-                  "pm.test('Test-generation stream exposes and stores the coding run id', function () {",
+                  "pm.test('Code-generation stream exposes and stores the coding run id', function () {",
                   "    const events = readSseEvents();",
                   "    pm.expect(events).not.to.be.empty;",
                   "    pm.expect(events.some(event => event.type === 'run_started')).to.be.true;",
@@ -650,13 +652,8 @@
                   "        pm.expect(terminal.findings).to.be.an('array');",
                   "        pm.expect(terminal.diff).to.be.a('string');",
                   "        pm.expect(terminal.disclaimer).to.be.a('string').and.not.empty;",
-                  "        if (terminal.accepted) {",
-                  "            pm.environment.set('codingRunAwaitingDecision', 'true');",
-                  "            pm.collectionVariables.set('codingRunAwaitingDecision', 'true');",
-                  "        } else {",
-                  "            pm.environment.set('codingRunAwaitingDecision', 'false');",
-                  "            pm.collectionVariables.set('codingRunAwaitingDecision', 'false');",
-                  "        }",
+                  "        pm.environment.set('codingRunAwaitingDecision', 'true');",
+                  "        pm.collectionVariables.set('codingRunAwaitingDecision', 'true');",
                   "    }",
                   "});"
                 ]
@@ -697,7 +694,7 @@
                 "questions"
               ]
             },
-            "description": "Starts a Test-Generation Task through the unified session stream. When review accepts the generated patch, the stream ends with `review_result` and the persisted run waits for the owner decision at `awaiting_approval`; the request stores `codingRunId` for the decision and `/runs/*` requests."
+            "description": "Starts a Code Generation Task through the unified session stream. A completed review ends with `review_result`; both accepted (`awaiting_approval`) and below-threshold (`changes_requested`) patches wait for the owner's approve, reject, or edit verdict. The request stores `codingRunId` for the decision and `/runs/*` requests."
           },
           "response": []
         },
@@ -718,6 +715,11 @@
                   "    pm.expect(response.id).to.eql(pm.variables.get('codingRunId'));",
                   "    pm.expect(response.status).to.be.oneOf(['queued', 'planning', 'retrieving', 'generating', 'awaiting_review', 'reviewing', 'awaiting_approval', 'changes_requested', 'approved', 'succeeded', 'rejected', 'failed']);",
                   "    pm.expect(response.review_findings).to.be.an('array');",
+                  "    pm.expect(response.pull_request_url === null || typeof response.pull_request_url === 'string').to.be.true;",
+                  "    if (response.pull_request_url) {",
+                  "        pm.environment.set('pullRequestUrl', response.pull_request_url);",
+                  "        pm.collectionVariables.set('pullRequestUrl', response.pull_request_url);",
+                  "    }",
                   "    pm.expect(response.disclaimer).to.be.a('string').and.not.empty;",
                   "});"
                 ]
@@ -813,19 +815,26 @@
                   "        .map(line => JSON.parse(line.slice(6)));",
                   "}",
                   "",
-                  "pm.test('Decision resumes the paused run and emits an approval/rejection terminal event', function () {",
+                  "pm.test('Decision resumes the paused run and emits the verdict outcome', function () {",
                   "    const events = readSseEvents();",
                   "    pm.expect(events).not.to.be.empty;",
                   "    const terminal = events[events.length - 1];",
-                  "    const expectedTerminal = String(pm.variables.get('approveCodingRun')) === 'true' ? 'run_approved' : 'run_rejected';",
-                  "    pm.expect(terminal.type).to.eql(expectedTerminal);",
+                  "    const verdict = pm.variables.get('codingRunVerdict');",
+                  "    const expectedTerminalTypes = verdict === 'approve' ? ['run_approved'] : verdict === 'reject' ? ['run_rejected'] : ['review_result', 'run_failure', 'run_no_changes'];",
+                  "    pm.expect(expectedTerminalTypes).to.include(terminal.type);",
                   "    pm.expect(terminal.coding_run_id).to.eql(pm.variables.get('codingRunId'));",
-                  "    pm.expect(terminal.diff).to.be.a('string');",
-                  "    pm.expect(terminal.disclaimer).to.be.a('string').and.not.empty;",
                   "    if (terminal.type === 'run_approved') {",
+                  "        pm.expect(terminal.diff).to.be.a('string');",
                   "        pm.expect(terminal.branch).to.be.a('string').and.not.empty;",
-                  "    } else {",
+                  "        pm.expect(terminal.pull_request_url).to.be.a('string').and.not.empty;",
+                  "        pm.expect(terminal.message).to.include(terminal.pull_request_url);",
+                  "        pm.environment.set('pullRequestUrl', terminal.pull_request_url);",
+                  "        pm.collectionVariables.set('pullRequestUrl', terminal.pull_request_url);",
+                  "        pm.expect(terminal.disclaimer).to.be.a('string').and.not.empty;",
+                  "    } else if (terminal.type === 'run_rejected') {",
+                  "        pm.expect(terminal.diff).to.be.a('string');",
                   "        pm.expect(terminal.findings).to.be.an('array');",
+                  "        pm.expect(terminal.disclaimer).to.be.a('string').and.not.empty;",
                   "    }",
                   "});"
                 ]
@@ -846,7 +855,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"decision\": {\n    \"coding_run_id\": \"{{codingRunId}}\",\n    \"approved\": {{approveCodingRun}},\n    \"feedback\": \"{{decisionFeedback}}\"\n  }\n}",
+              "raw": "{\n  \"decision\": {\n    \"coding_run_id\": \"{{codingRunId}}\",\n    \"verdict\": \"{{codingRunVerdict}}\",\n    \"feedback\": \"{{decisionFeedback}}\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -866,7 +875,7 @@
                 "questions"
               ]
             },
-            "description": "Resumes a paused `awaiting_approval` Coding Run through the same `POST /sessions/{repositorySessionId}/questions` endpoint. Set `approveCodingRun` to `true` to commit and push the generated branch, or `false` to reject and discard the patch."
+            "description": "Resumes a paused `awaiting_approval` or `changes_requested` Coding Run through the same `POST /sessions/{repositorySessionId}/questions` endpoint. Set `codingRunVerdict` to `approve`, `reject`, or `edit`. An edit requires non-blank `decisionFeedback` and sends the existing patch back through generation and review."
           },
           "response": []
         },
@@ -882,9 +891,11 @@
                   "    pm.response.to.have.status(200);",
                   "});",
                   "",
-                  "pm.test('Session history is returned in message order', function () {",
+                  "pm.test('A cursor-paginated session history page is returned in chronological order', function () {",
                   "    const response = pm.response.json();",
                   "    pm.expect(response.data).to.be.an('array');",
+                  "    pm.expect(response.has_more).to.be.a('boolean');",
+                  "    pm.expect(response.next_before === null || Number.isInteger(response.next_before)).to.be.true;",
                   "    response.data.forEach(function (message, index) {",
                   "        pm.expect(message.id).to.be.a('string').and.not.empty;",
                   "        pm.expect(message.session_id).to.eql(pm.variables.get('repositorySessionId'));",
@@ -897,6 +908,15 @@
                   "            pm.expect(message.position).to.be.above(response.data[index - 1].position);",
                   "        }",
                   "    });",
+                  "    const assistantMessage = [...response.data].reverse().find(message => message.role === 'assistant');",
+                  "    if (assistantMessage) {",
+                  "        pm.environment.set('sessionHistoryId', assistantMessage.id);",
+                  "        pm.collectionVariables.set('sessionHistoryId', assistantMessage.id);",
+                  "    }",
+                  "    if (response.next_before !== null) {",
+                  "        pm.environment.set('historyBefore', String(response.next_before));",
+                  "        pm.collectionVariables.set('historyBefore', String(response.next_before));",
+                  "    }",
                   "});"
                 ]
               }
@@ -906,7 +926,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/history",
+              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/history?limit={{historyLimit}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -916,9 +936,290 @@
                 "sessions",
                 "{{repositorySessionId}}",
                 "history"
+              ],
+              "query": [
+                {
+                  "key": "before",
+                  "value": "{{historyBefore}}",
+                  "description": "Optional cursor. Enable after the first request stores `next_before` to fetch the next older page.",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "{{historyLimit}}"
+                }
               ]
             },
-            "description": "Returns the recent ordered message history for a session owned by the authenticated user."
+            "description": "Returns one chronological page from the complete history of an owned session. The newest page omits `before`; use the returned `next_before` as `historyBefore` and enable that query parameter to walk toward older messages."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Repository Question Cost",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Repository-question turn cost is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.session_history_id).to.eql(pm.variables.get('sessionHistoryId'));",
+                  "    pm.expect(response.coding_run_id).to.eql(null);",
+                  "    pm.expect(response.cost).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.input_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.output_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.total_tokens).to.eql(response.input_tokens + response.output_tokens);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/history/{{sessionHistoryId}}/cost",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "{{repositorySessionId}}",
+                "history",
+                "{{sessionHistoryId}}",
+                "cost"
+              ]
+            },
+            "description": "Reads persisted AI cost and token totals for one repository-question turn. `sessionHistoryId` is stored from the terminal question result or the latest assistant message returned by session history."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coding Run Cost",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Coding-run turn cost is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.session_history_id).to.eql(null);",
+                  "    pm.expect(response.coding_run_id).to.eql(pm.variables.get('codingRunId'));",
+                  "    pm.expect(response.cost).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.input_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.output_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.total_tokens).to.eql(response.input_tokens + response.output_tokens);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sessions/{{repositorySessionId}}/runs/{{codingRunId}}/cost",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sessions",
+                "{{repositorySessionId}}",
+                "runs",
+                "{{codingRunId}}",
+                "cost"
+              ]
+            },
+            "description": "Reads persisted AI cost and token totals for one owned Code Generation Task, including spend from a run that later failed."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Costs",
+      "item": [
+        {
+          "name": "Get Session Cost",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Session cost rollup is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.cost).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.input_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.output_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.total_tokens).to.eql(response.input_tokens + response.output_tokens);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/costs/session/{{repositorySessionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "costs",
+                "session",
+                "{{repositorySessionId}}"
+              ]
+            },
+            "description": "Returns the authenticated owner's total AI cost across every turn in one Repository Session."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Repository Cost",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Repository cost rollup is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.cost).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.input_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.output_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.total_tokens).to.eql(response.input_tokens + response.output_tokens);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/costs/repository/{{repositoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "costs",
+                "repository",
+                "{{repositoryId}}"
+              ]
+            },
+            "description": "Returns the authenticated owner's total AI cost across every session for one Repository."
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Cost",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Current-user cost rollup is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.cost).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.input_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.output_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.total_tokens).to.eql(response.input_tokens + response.output_tokens);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/costs/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "costs",
+                "me"
+              ]
+            },
+            "description": "Returns the authenticated user's total AI cost across all owned repositories."
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Users Cost (Superuser)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Global cost rollup is returned', function () {",
+                  "    const response = pm.response.json();",
+                  "    pm.expect(response.cost).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.input_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.output_tokens).to.be.a('number').and.at.least(0);",
+                  "    pm.expect(response.total_tokens).to.eql(response.input_tokens + response.output_tokens);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/costs/all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "costs",
+                "all"
+              ]
+            },
+            "description": "Returns the global AI cost across all users. This route requires an access token for an active superuser."
           },
           "response": []
         }
@@ -997,6 +1298,21 @@
       "type": "string"
     },
     {
+      "key": "sessionHistoryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "historyBefore",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "historyLimit",
+      "value": "50",
+      "type": "string"
+    },
+    {
       "key": "skip",
       "value": "0",
       "type": "string"
@@ -1017,8 +1333,13 @@
       "type": "string"
     },
     {
-      "key": "approveCodingRun",
-      "value": "false",
+      "key": "pullRequestUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "codingRunVerdict",
+      "value": "reject",
       "type": "string"
     },
     {
