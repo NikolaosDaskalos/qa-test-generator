@@ -113,7 +113,12 @@ class DocumentIngestor:
         # todo sanitize the docs before persist them
 
         repository_documents = [
-            RepositoryDocument(repository_id=repository_id, content=doc.page_content, doc_metadata=doc.metadata | {"commit_sha": commit_sha, "branch": branch})
+            RepositoryDocument(
+                id=uuid.uuid5(repository_id, f"{commit_sha}:{doc.metadata['source']}"),
+                repository_id=repository_id,
+                content=doc.page_content,
+                doc_metadata=doc.metadata | {"commit_sha": commit_sha, "branch": branch},
+            )
             for doc in raw_docs
         ]
 
@@ -124,7 +129,7 @@ class DocumentIngestor:
 
         try:
             for raw_doc, repository_document in zip(raw_docs, repository_documents, strict=True):
-                raw_doc.metadata.update({"parent_id": str(repository_document.id), "repository_id": repository_key, "branch": branch, "commit_sha": commit_sha})
+                raw_doc.metadata.update({"parent_id": str(repository_document.id), "repository_id": repository_key, "commit_sha": commit_sha})
 
             chunked_docs = self._split(raw_docs)
             ids = [str(uuid.uuid5(repository_id, f"{commit_sha}:{doc.metadata['source']}:{index}")) for index, doc in enumerate(chunked_docs)]

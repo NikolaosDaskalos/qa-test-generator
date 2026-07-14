@@ -173,7 +173,9 @@ class GitCommands:
             raise GitError("Commit message cannot be empty")
         logger.info("Creating Git commit path=%s", self.repo_path)
         self._run("git", "add", ".", cwd=self.repo_path)
-        return self._run("git", "commit", "-m", commit_msg, cwd=self.repo_path)
+        return self._run(
+            "git", "-c", f"user.name={COMMIT_AUTHOR_NAME}", "-c", f"user.email={COMMIT_AUTHOR_EMAIL}", "commit", "-m", commit_msg, cwd=self.repo_path
+        )
 
     def push_current_branch(self, token: str) -> GitResult:
         """Push the current branch while protecting the remote default branch.

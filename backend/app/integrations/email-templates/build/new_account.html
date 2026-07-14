@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <title>{{ project_name }} - New Account</title>
+    <style type="text/css">
+      body { margin: 0; padding: 0; background-color: #fafbfc; }
+      .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 40px 20px; }
+      .heading { text-align: center; padding: 35px; font-size: 20px; color: #333333; }
+      .text { text-align: center; font-size: 16px; padding: 0 25px 10px; font-family: Arial, Helvetica, sans-serif; color: #555555; }
+      .button-wrapper { text-align: center; padding: 15px 0; }
+      .button { display: inline-block; font-size: 18px; background-color: #009688; border-radius: 8px; color: #ffffff; text-decoration: none; padding: 15px 30px; }
+      .divider { border: 0; border-top: 2px solid #cccccc; margin: 20px 25px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="heading">{{ project_name }} - New Account</div>
+      <div class="text"><span>Welcome to your new account!</span></div>
+      <div class="text">Here are your account details:</div>
+      <div class="text">Username: {{ username }}</div>
+      <div class="text">Password: {{ password }}</div>
+      <div class="button-wrapper"><a class="button" href="{{ link }}">Go to Dashboard</a></div>
+      <hr class="divider" />
+    </div>
+  </body>
+</html>

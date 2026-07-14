@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 # prepared statements must be disabled for pooled connections.
 _CONNECTION_KWARGS = {"autocommit": True, "prepare_threshold": 0}
 
+# Pre-warm a few connections at startup, but never open more than the pool allows.
+_DEFAULT_POOL_MIN_SIZE = 4
+
 
 def _conninfo() -> str:
     """Render the app's SQLAlchemy URL as a libpq conninfo string psycopg accepts."""
@@ -33,7 +36,8 @@ def open_checkpointer() -> tuple[PostgresSaver, ConnectionPool]:
     Returns the ``PostgresSaver`` to compile graphs against and the pool to close
     at shutdown. ``setup()`` is idempotent, so re-running it at startup is safe.
     """
-    pool = ConnectionPool(conninfo=_conninfo(), max_size=settings.CHECKPOINTER_POOL_MAX_SIZE, kwargs=_CONNECTION_KWARGS, open=True)
+    min_size = min(_DEFAULT_POOL_MIN_SIZE, settings.CHECKPOINTER_POOL_MAX_SIZE)
+    pool = ConnectionPool(conninfo=_conninfo(), min_size=min_size, max_size=settings.CHECKPOINTER_POOL_MAX_SIZE, kwargs=_CONNECTION_KWARGS, open=True)
     checkpointer = PostgresSaver(pool)
     checkpointer.setup()
     logger.info("Session graph checkpointer initialized with pool_max_size=%s", settings.CHECKPOINTER_POOL_MAX_SIZE)
