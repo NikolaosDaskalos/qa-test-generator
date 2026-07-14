@@ -5,9 +5,9 @@ import pytest
 from sqlmodel import select
 from weaviate.classes.config import DataType, Vectorizers
 
-from app import backend_pre_start
-from app.backend_pre_start import init, logger
 from app.core import settings
+from app.scripts import backend_pre_start
+from app.scripts.backend_pre_start import init, logger
 
 
 class FakeCollection:
@@ -58,8 +58,8 @@ def test_init_successful_connection() -> None:
     select1 = select(1)
 
     with (
-        patch("app.backend_pre_start.Session", return_value=session_mock),
-        patch("app.backend_pre_start.select", return_value=select1),
+        patch("app.scripts.backend_pre_start.Session", return_value=session_mock),
+        patch("app.scripts.backend_pre_start.select", return_value=select1),
         patch.object(logger, "info"),
         patch.object(logger, "error"),
         patch.object(logger, "warn"),

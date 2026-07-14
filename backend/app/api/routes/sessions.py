@@ -5,9 +5,9 @@ import uuid
 from fastapi import APIRouter, status
 from fastapi.responses import StreamingResponse
 
+from app.api.dependencies import CurrentUser, RepositorySessionServiceDep, SessionGraphDep
 from app.core import settings
 from app.db.models import RepositorySession
-from app.dependencies import CurrentUser, RepositorySessionServiceDep, SessionGraphDep
 from app.schemas import (
     CodingRunPublic,
     RepositoryQuestionRequest,

@@ -19,9 +19,9 @@ from langchain_core.messages import HumanMessage
 
 from app.agents.fallback import with_agent_fallback
 from app.agents.middleware import build_tool_call_limit_middleware
+from app.agents.prompts.prompts import CODE_REVIEWER_SYSTEM_PROMPT
+from app.agents.prompts.rendering import format_files, format_repository_documents
 from app.agents.tools import web_search
-from app.prompts.prompts import CODE_REVIEWER_SYSTEM_PROMPT
-from app.prompts.rendering import format_files, format_repository_documents
 from app.schemas import PatchReview
 
 logger = logging.getLogger(__name__)

@@ -8,12 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app import crud
+from app.api.dependencies import CurrentUser, SessionDep, get_current_active_superuser
 from app.core import security, settings
-from app.dependencies import CurrentUser, SessionDep, get_current_active_superuser
+from app.core.security import generate_password_reset_token, verify_password_reset_token
+from app.db.persistence import user_store
+from app.integrations.email import generate_reset_password_email, send_email
 from app.schemas import UserPublic, UserUpdate
 from app.schemas.authentication import Message, NewPassword, Token
-from app.utils import generate_password_reset_token, generate_reset_password_email, send_email, verify_password_reset_token
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ def login_access_token(session: SessionDep, form_data: Annotated[OAuth2PasswordR
     """
     OAuth2 compatible token login, get an access token for future requests
     """
-    user = crud.authenticate(session=session, email=form_data.username, password=form_data.password)
+    user = user_store.authenticate(session=session, email=form_data.username, password=form_data.password)
     if not user:
         logger.warning("Login rejected because credentials are incorrect")
         raise HTTPException(status_code=400, detail="Incorrect email or password")
@@ -50,7 +51,7 @@ def recover_password(email: str, session: SessionDep) -> Message:
     """
     Password Recovery
     """
-    user = crud.get_user_by_email(session=session, email=email)
+    user = user_store.get_user_by_email(session=session, email=email)
 
     # Always return the same response to prevent email enumeration attacks
     # Only send email if user actually exists
@@ -73,7 +74,7 @@ def reset_password(session: SessionDep, body: NewPassword) -> Message:
     if not email:
         logger.warning("Password reset rejected because the token is invalid")
         raise HTTPException(status_code=400, detail="Invalid token")
-    user = crud.get_user_by_email(session=session, email=email)
+    user = user_store.get_user_by_email(session=session, email=email)
     if not user:
         # Don't reveal that the user doesn't exist - use same error as invalid token
         logger.warning("Password reset rejected because the token user was not found")
@@ -82,7 +83,7 @@ def reset_password(session: SessionDep, body: NewPassword) -> Message:
         logger.warning("Password reset rejected because the user is inactive user_id=%s", user.id)
         raise HTTPException(status_code=400, detail="Inactive user")
     user_in_update = UserUpdate(password=body.new_password)
-    crud.update_user(session=session, db_user=user, user_in=user_in_update)
+    user_store.update_user(session=session, db_user=user, user_in=user_in_update)
     logger.info("Password reset completed user_id=%s", user.id)
     return Message(message="Password updated successfully")
 
@@ -92,7 +93,7 @@ def recover_password_html_content(email: str, session: SessionDep) -> Any:
     """
     HTML Content for Password Recovery
     """
-    user = crud.get_user_by_email(session=session, email=email)
+    user = user_store.get_user_by_email(session=session, email=email)
 
     if not user:
         logger.warning("Password recovery preview failed because the user was not found")

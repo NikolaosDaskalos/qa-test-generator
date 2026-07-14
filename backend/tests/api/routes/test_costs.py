@@ -6,10 +6,10 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import get_cost_rollup_service, get_current_user
 from app.api.exception_handlers import register_exception_handlers
 from app.api.routes.costs import router
 from app.core.errors.session_errors import RepositorySessionAccessForbidden, RepositorySessionNotFound
-from app.dependencies import get_cost_rollup_service, get_current_user
 from app.schemas import AiCostRollupPublic
 
 

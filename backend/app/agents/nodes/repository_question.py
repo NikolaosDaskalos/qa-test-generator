@@ -17,9 +17,16 @@ from pydantic import BaseModel, Field
 
 from app.agents.fallback import model_label, with_provider_fallback
 from app.agents.nodes.generation import INSUFFICIENT_DOCUMENTS_ANSWER, generate_grounded_answer, stream_and_cite
+from app.agents.prompts.prompts import (
+    DECOMPOSE_CHAINED_PROMPT,
+    DECOMPOSE_PROMPT,
+    MULTI_QUERY_PROMPT,
+    SUB_ANSWER_CHAINED_PROMPT,
+    SUB_ANSWER_PROMPT,
+    SYNTHESIS_PROMPT,
+)
+from app.agents.prompts.rendering import format_repository_documents
 from app.core import settings
-from app.prompts.prompts import DECOMPOSE_CHAINED_PROMPT, DECOMPOSE_PROMPT, MULTI_QUERY_PROMPT, SUB_ANSWER_CHAINED_PROMPT, SUB_ANSWER_PROMPT, SYNTHESIS_PROMPT
-from app.prompts.rendering import format_repository_documents
 from app.schemas import Stage
 from app.streaming import emit
 

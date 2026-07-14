@@ -10,8 +10,8 @@ stream) while collecting the text and projecting de-duplicated file citations.
 # pyrefly: ignore [missing-import]
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.prompts.prompts import QA_SYSTEM_PROMPT
-from app.prompts.rendering import format_repository_documents
+from app.agents.prompts.prompts import QA_SYSTEM_PROMPT
+from app.agents.prompts.rendering import format_repository_documents
 from app.schemas import Citation, Stage
 from app.streaming import FINAL_ANSWER_TAG, emit
 

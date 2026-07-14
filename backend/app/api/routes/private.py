@@ -6,9 +6,9 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from app.api.dependencies import SessionDep
 from app.core import get_password_hash
 from app.db.models import User
-from app.dependencies import SessionDep
 from app.schemas import UserPublic
 
 logger = logging.getLogger(__name__)

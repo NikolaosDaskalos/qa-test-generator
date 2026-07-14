@@ -1,17 +1,14 @@
-"""Email rendering/sending and password-reset token helpers."""
+"""Email rendering and SMTP delivery for account and password-reset messages."""
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import emails  # type: ignore[import-untyped]
-import jwt
 from jinja2 import Template
-from jwt.exceptions import InvalidTokenError
 
-from app.core import security, settings
+from app.core import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -90,23 +87,3 @@ def generate_new_account_email(email_to: str, username: str, password: str) -> E
         context={"project_name": settings.PROJECT_NAME, "username": username, "password": password, "email": email_to, "link": settings.FRONTEND_HOST},
     )
     return EmailData(html_content=html_content, subject=subject)
-
-
-def generate_password_reset_token(email: str) -> str:
-    """Return a signed JWT scoping a password reset to ``email``, expiring per settings."""
-    delta = timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS)
-    now = datetime.now(timezone.utc)
-    expires = now + delta
-    exp = expires.timestamp()
-    encoded_jwt = jwt.encode({"exp": exp, "nbf": now, "sub": email}, settings.SECRET_KEY, algorithm=security.ALGORITHM)
-    return encoded_jwt
-
-
-def verify_password_reset_token(token: str) -> str | None:
-    """Return the email a valid reset token was issued for, or ``None`` if invalid/expired."""
-    try:
-        decoded_token = jwt.decode(token, settings.SECRET_KEY, algorithms=[security.ALGORITHM])
-        return str(decoded_token["sub"])
-    except InvalidTokenError:
-        logger.warning("Password reset token verification failed")
-        return None

@@ -4,8 +4,8 @@ These pin the display rules for how Code Chunk source labels and proposed Test
 File contents appear in an LLM prompt, directly and without any model loop.
 """
 
+from app.agents.prompts.rendering import format_files, format_repository_documents
 from app.db.models import RepositoryDocument
-from app.prompts.rendering import format_files, format_repository_documents
 from app.schemas import GeneratedFile
 
 

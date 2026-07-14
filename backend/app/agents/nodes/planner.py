@@ -12,8 +12,8 @@ from pydantic import BaseModel, Field
 
 from app.agents.fallback import model_label, with_provider_fallback
 from app.agents.nodes.failures import fail_state
+from app.agents.prompts.prompts import PLANNER_SYSTEM_PROMPT
 from app.enums import CodingRunStage
-from app.prompts.prompts import PLANNER_SYSTEM_PROMPT
 from app.schemas import RetrievalRequest, RunFailure, RunStarted
 from app.streaming import emit
 

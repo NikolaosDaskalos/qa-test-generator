@@ -5,10 +5,10 @@ from pwdlib.hashers.bcrypt import BcryptHasher
 from sqlmodel import Session
 
 from app.core import get_password_hash, settings, verify_password
-from app.crud import create_user
+from app.core.security import generate_password_reset_token
 from app.db.models import User
+from app.db.persistence.user_store import create_user
 from app.schemas import UserCreate
-from app.utils import generate_password_reset_token
 from tests.utils.user import user_authentication_headers
 from tests.utils.utils import random_email, random_lower_string
 

@@ -34,8 +34,6 @@ from app.agents.nodes.code_generation import (
     build_review_router,
 )
 from app.agents.nodes.planner import build_plan_node
-from app.agents.run_lifecycle import RunLifecycle
-from app.prompts.prompts import CLASSIFIER_SYSTEM_PROMPT
 from app.agents.nodes.repository_question import (
     QuestionShape,
     build_analyzing_node,
@@ -43,6 +41,8 @@ from app.agents.nodes.repository_question import (
     build_decompose_recursive_node,
     build_simple_rag_node,
 )
+from app.agents.prompts.prompts import CLASSIFIER_SYSTEM_PROMPT
+from app.agents.run_lifecycle import RunLifecycle
 from app.enums import OwnerVerdict
 from app.schemas import Citation, PatchResult, RetrievalRequest, ReviewResult, RunApproved, RunFailure, RunNoChanges, RunRejected, Stage
 from app.services.coding_runs.review_gate import ReviewVerdict

@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends
 
-from app.dependencies import CostRollupServiceDep, CurrentUser, get_current_active_superuser
+from app.api.dependencies import CostRollupServiceDep, CurrentUser, get_current_active_superuser
 from app.schemas import AiCostRollupPublic
 
 router = APIRouter(prefix="/costs", tags=["costs"])

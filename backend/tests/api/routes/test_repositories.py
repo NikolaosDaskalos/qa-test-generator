@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import get_current_user, get_repository_service
 from app.api.exception_handlers import register_exception_handlers
 from app.api.routes.repositories import create_repository, read_repositories, read_repository, router
 from app.core.errors.repository_errors import (
@@ -17,7 +18,6 @@ from app.core.errors.repository_errors import (
     RepositoryNotFound,
 )
 from app.db.models import Repository
-from app.dependencies import get_current_user, get_repository_service
 from app.enums import RepositoryStatus
 from app.integrations.weaviate import get_weaviate_resources
 from app.schemas import RepositoryCreate

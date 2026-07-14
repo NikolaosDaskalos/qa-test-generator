@@ -4,9 +4,9 @@ import logging
 
 from sqlmodel import Session, select
 
-from app import crud
 from app.core.config import settings
 from app.db.models import User
+from app.db.persistence import user_store
 from app.schemas import UserCreate
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ def init_db(session: Session) -> None:
     if not user:
         logger.info("Creating initial superuser")
         user_in = UserCreate(email=settings.FIRST_SUPERUSER, password=settings.FIRST_SUPERUSER_PASSWORD, is_superuser=True)
-        user = crud.create_user(session=session, user_create=user_in)
+        user = user_store.create_user(session=session, user_create=user_in)
         logger.info("Initial superuser created user_id=%s", user.id)
     else:
         logger.info("Initial superuser already exists user_id=%s", user.id)

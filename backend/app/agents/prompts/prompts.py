@@ -40,7 +40,6 @@ question to the user."""
 
 
 # ── Decomposition prompts (independent Question Shape) ───────────────────────────
-# Kept recognizably close to the reference notebook (03_query_transformations.ipynb):
 # split a compound question, answer each part from its own retrieved context, then
 # synthesize one coherent answer that states any gaps instead of inventing content.
 DECOMPOSE_PROMPT = """You are an expert at query decomposition for a repository \

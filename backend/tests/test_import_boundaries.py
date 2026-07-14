@@ -17,21 +17,21 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parent.parent / "app"
 
 # Map a package to import prefixes it is forbidden from depending on.
+# The DI wiring lives at ``app.api.dependencies``, so the ``app.api`` prefix
+# also keeps the composition root out of feature workflows and core.
 FORBIDDEN_IMPORTS: dict[str, list[str]] = {
     # Feature workflows must not import HTTP transport or the composition root.
-    "app.services": ["fastapi", "app.api", "app.dependencies", "app.main"],
-    "app.agents": ["fastapi", "app.api", "app.dependencies", "app.main"],
-    "app.rag": ["fastapi", "app.api", "app.dependencies", "app.main"],
+    "app.services": ["fastapi", "app.api", "app.main"],
+    "app.agents": ["fastapi", "app.api", "app.main"],
+    "app.rag": ["fastapi", "app.api", "app.main"],
     # core stays a leaf of shared concerns: no HTTP, no infra, no features.
     "app.core": [
         "fastapi",
         "app.api",
-        "app.dependencies",
         "app.main",
         "app.db",
         "app.db.models",
         "app.db.persistence",
-        "app.crud",
         "app.integrations",
         "app.services",
         "app.agents",

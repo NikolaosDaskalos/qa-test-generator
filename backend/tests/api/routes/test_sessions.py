@@ -7,13 +7,13 @@ from types import SimpleNamespace
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import get_current_user, get_repository_session_service, get_session_graph
 from app.api.exception_handlers import register_exception_handlers
 from app.api.routes.sessions import router
 from app.core import settings
 from app.core.errors.session_errors import RepositorySessionNotFound
 from app.db.models import CodingRun, RepositorySession, SessionHistory
 from app.db.persistence import SessionHistoryPage
-from app.dependencies import get_current_user, get_repository_session_service, get_session_graph
 from app.enums import CodingRunStage, CodingRunStatus, OwnerVerdict, SessionMessageRole
 from app.schemas import Citation, RepositorySessionPublic, RepositorySessionsPublic, Result, RunApproved, RunRejected, Stage, Token, TurnCostPublic
 

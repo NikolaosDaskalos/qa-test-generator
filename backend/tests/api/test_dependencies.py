@@ -3,7 +3,7 @@
 import uuid
 from types import SimpleNamespace
 
-from app import dependencies
+from app.api import dependencies
 
 
 def test_session_graph_uses_direct_rag_components(monkeypatch) -> None:

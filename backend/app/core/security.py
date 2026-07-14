@@ -1,15 +1,19 @@
-"""Security primitives: JWT access tokens, password hashing, and repository-token encryption."""
+"""Security primitives: JWT access and reset tokens, password hashing, and repository-token encryption."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
 from cryptography.fernet import Fernet, InvalidToken
+from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 from pwdlib.hashers.bcrypt import BcryptHasher
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 password_hash = PasswordHash((Argon2Hasher(), BcryptHasher()))
 
@@ -37,6 +41,26 @@ def verify_password(plain_password: str, hashed_password: str) -> tuple[bool, st
 def get_password_hash(password: str) -> str:
     """Hash a plaintext password with the preferred (Argon2) scheme."""
     return password_hash.hash(password)
+
+
+def generate_password_reset_token(email: str) -> str:
+    """Return a signed JWT scoping a password reset to ``email``, expiring per settings."""
+    delta = timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS)
+    now = datetime.now(timezone.utc)
+    expires = now + delta
+    exp = expires.timestamp()
+    encoded_jwt = jwt.encode({"exp": exp, "nbf": now, "sub": email}, settings.SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+def verify_password_reset_token(token: str) -> str | None:
+    """Return the email a valid reset token was issued for, or ``None`` if invalid/expired."""
+    try:
+        decoded_token = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        return str(decoded_token["sub"])
+    except InvalidTokenError:
+        logger.warning("Password reset token verification failed")
+        return None
 
 
 def encrypt_repository_token(token: str) -> str:
