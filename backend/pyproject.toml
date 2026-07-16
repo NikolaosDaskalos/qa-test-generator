@@ -20,7 +20,7 @@ dependencies = [
   "langchain-openai>=1.2.2",
   "langchain-tavily>=0.2.18",
   "langchain-voyageai>=0.3.3",
-  "langchain-weaviate>=0.0.6",
+  "langchain-weaviate>=0.0.7",
   "psycopg[binary]<4.0.0,>=3.1.13",
   "pwdlib[argon2,bcrypt]>=0.3.0",
   "pydantic>2.0",
