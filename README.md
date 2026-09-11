@@ -208,7 +208,6 @@ Open <http://localhost:5173>. Use the backend origin without `/api/v1` for `VITE
 - Frontend docs: [frontend/README.md](./frontend/README.md)
 - General development (Docker Compose, local domains, `.env`): [development.md](./development.md)
 - Deployment: [deployment.md](./deployment.md)
-- Domain language: [CONTEXT.md](./CONTEXT.md) · Backend plan: [docs/backend-plan.md](./docs/backend-plan.md)
 
 A Postman collection is available under [postman/](./postman/).
 

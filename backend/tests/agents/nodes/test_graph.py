@@ -2817,8 +2817,8 @@ def test_a_generation_retry_advances_the_run_back_into_generating(tmp_path) -> N
     """A Generation Retry cycles the durable Coding Run back through generating and reviewing.
 
     The revise pass announces ``revising`` on the wire but re-enters the ordinary
-    ``generating`` status (per the CONTEXT.md glossary), so a mid-revise read of the
-    persisted run reports it actively generating — never stuck in ``reviewing``.
+    ``generating`` status, so a mid-revise read of the persisted run reports it
+    actively generating — never stuck in ``reviewing``.
     """
     (tmp_path / "tests").mkdir()
     recorder = RecordingRecorder()
