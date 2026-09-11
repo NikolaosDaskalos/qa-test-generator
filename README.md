@@ -2,7 +2,7 @@
 
 Repository-grounded question answering and an agentic test-generation workflow for Python repositories hosted on GitHub. Connect a GitHub repository, index it, ask questions grounded in its code, and ask the copilot to write tests — reviewed, staticaly by AI review agent, and proposed back to you as a Pull Request once you approve.
 
-> Built on the [Full Stack FastAPI Template](https://github.com/fastapi/full-stack-fastapi-template). This is a course capstone demo, not a production or concurrent system. See [CONTEXT.md](./CONTEXT.md) for the full domain language and [docs/backend-plan.md](./docs/backend-plan.md) for the backend plan.
+> Built on the [Full Stack FastAPI Template](https://github.com/fastapi/full-stack-fastapi-template). This is a course capstone demo, not a production or concurrent system.
 
 ## What It Does
 
@@ -12,9 +12,6 @@ Repository-grounded question answering and an agentic test-generation workflow f
 4. **Ask questions** — repository-grounded answers stream back with file-level citations.
 5. **Generate tests** — submit a free-text Code Generation Task; a bounded LangGraph workflow plans, retrieves repository documents, generates complete test files, optionally consults web docs for framework syntax, runs the tests in an isolated sandbox, and reviews them.
 6. **Review & approve** — progress and the final diff stream over Server-Sent Events; you reject the patch or approve a commit + push to a new non-default branch and the opening of a Pull Request into the default branch.
-7. **Sync** — a manual endpoint incrementally re-indexes only the files changed since the last indexed commit.
-
-Out of scope for the demo: GitLab/Bitbucket, non-Python repositories, automatic/webhook sync, concurrent coding runs, application-code changes, and backend-side merges.
 
 ## Technology Stack
 
@@ -80,11 +77,23 @@ The token is encrypted at rest with `REPOSITORY_TOKEN_ENCRYPTION_KEY`.
 
 ## Getting Started
 
-You can **clone** this repository and run it with Docker Compose.
+After cloning this repository, choose Docker Compose for both services or run the backend and frontend locally with their databases in Docker. Run commands from the **repository root** unless a step says otherwise.
+
+### Prerequisites
+
+- Docker with Docker Compose for PostgreSQL, Weaviate, and containerized services.
+- For local backend development: Python (the Docker image uses 3.13) and `uv`.
+- For local frontend development: Bun (CI uses 1.3.12).
 
 ### Configure
 
-Copy `.env.example` to `.env` and set the required values. Before running, change at least:
+If you do not already have a root `.env`, create it:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set the required values. Before running, change at least:
 
 - `SECRET_KEY`
 - `FIRST_SUPERUSER_PASSWORD`
@@ -121,16 +130,80 @@ Pass secrets as environment variables in deployed environments rather than commi
 
 See [backend/app/core/config.py](./backend/app/core/config.py) for the full set.
 
-### Run
+### Start both services with Docker Compose
 
 ```bash
-docker compose watch
+docker compose up -d --build --wait backend frontend mailcatcher
 ```
 
-This starts Postgres, Weaviate, Adminer, the backend, and the frontend. The frontend is served at `http://localhost:5173` and the API at `http://localhost:8000` (interactive docs at `http://localhost:8000/docs`).
+This starts the backend, frontend, and development email service, plus PostgreSQL, Weaviate, and the backend prestart service. Prestart initializes Weaviate, applies database migrations, and creates the first administrator account.
+
+- Frontend: <http://localhost:5173>
+- Backend API: <http://localhost:8000>
+- Interactive API docs: <http://localhost:8000/docs>
+- Development email inbox: <http://localhost:1080>
+
+Log in with `FIRST_SUPERUSER` and `FIRST_SUPERUSER_PASSWORD` from your root `.env`.
+
+Inspect startup logs with `docker compose logs -f prestart backend`. For backend source synchronization, run `docker compose watch backend` in another terminal. The Docker frontend serves compiled assets; rebuild it after frontend changes with `docker compose up -d --build frontend`.
+
+### Start the backend locally
+
+In the root `.env`, use the published database addresses:
+
+```dotenv
+POSTGRES_SERVER=localhost
+POSTGRES_PORT=5432
+WEAVIATE_HTTP_HOST=localhost
+WEAVIATE_HTTP_PORT=8081
+WEAVIATE_GRPC_HOST=localhost
+WEAVIATE_GRPC_PORT=50051
+```
+
+Start the dependencies from the repository root. If the Docker backend is already running, stop it first to free port `8000`:
+
+```bash
+docker compose stop backend
+docker compose up -d --wait db weaviate
+```
+
+Then install dependencies, initialize the databases, and start FastAPI:
+
+```bash
+cd backend
+uv sync --frozen
+uv run bash scripts/prestart.sh
+uv run fastapi run --reload --host 127.0.0.1 --port 8000 app/main.py
+```
+
+Keep this terminal running. The API is available at <http://localhost:8000/docs>. Run these Python commands from `backend/` so settings load the root `.env` correctly. See [backend/README.md](./backend/README.md) for full configuration, migrations, and tests.
+
+### Start the frontend locally
+
+With the backend running locally or in Docker, open a separate terminal at the repository root. Stop the Docker frontend if it is running to free port `5173`, then install dependencies:
+
+```bash
+docker compose stop frontend
+bun install
+```
+
+Set the following entry in `frontend/.env` (a separate file from the root `.env`):
+
+```dotenv
+VITE_API_URL=http://localhost:8000
+```
+
+Start the Vite development server from the repository root:
+
+```bash
+bun run dev
+```
+
+Open <http://localhost:5173>. Use the backend origin without `/api/v1` for `VITE_API_URL`, and restart Vite after changing it. See [frontend/README.md](./frontend/README.md) for builds, API client generation, and end-to-end tests.
 
 ## Development
 
+- Project overview, architecture, and workflows: [PROJECT.md](./PROJECT.md)
 - Backend docs: [backend/README.md](./backend/README.md)
 - Frontend docs: [frontend/README.md](./frontend/README.md)
 - General development (Docker Compose, local domains, `.env`): [development.md](./development.md)
