@@ -1,6 +1,6 @@
 # AI Codebase Copilot
 
-Repository-grounded question answering and an agentic test-generation workflow for Python repositories hosted on GitHub. Connect a GitHub repository, index it, ask questions grounded in its code, and ask the copilot to write tests — reviewed, executed in a sandbox, and proposed back to you as a Pull Request once you approve.
+Repository-grounded question answering and an agentic test-generation workflow for Python repositories hosted on GitHub. Connect a GitHub repository, index it, ask questions grounded in its code, and ask the copilot to write tests — reviewed, staticaly by AI review agent, and proposed back to you as a Pull Request once you approve.
 
 > Built on the [Full Stack FastAPI Template](https://github.com/fastapi/full-stack-fastapi-template). This is a course capstone demo, not a production or concurrent system. See [CONTEXT.md](./CONTEXT.md) for the full domain language and [docs/backend-plan.md](./docs/backend-plan.md) for the backend plan.
 

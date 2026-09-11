@@ -14,6 +14,7 @@ This document describes the application implemented in `backend/app/` and `front
 8. [Installation and configuration](#8-installation-and-configuration)
 9. [Running the application](#9-running-the-application)
 10. [Usage examples](#10-usage-examples)
+11. [Further improvements](#11-further-improvements)
 
 ## 1. Title, overview, and purpose
 
@@ -1071,3 +1072,17 @@ curl --fail --silent --show-error "$API_URL/costs/session/$SESSION_ID" \
 ```
 
 For older messages, pass the returned `next_before` position as `?before=<position>&limit=50`. For a completed question's cost, use its `assistant_message_id` in `/sessions/{session_id}/history/{message_id}/cost`. These reads use persisted records and do not invoke a model again.
+
+## 11. Further improvements
+
+The following improvements are planned for the service:
+
+- **Support more programming languages:** Extend repository analysis and test generation beyond Python to languages such as JavaScript, TypeScript, Java, and Go, using each language's testing frameworks and project conventions.
+- **Incremental repository synchronization:** Let owners refresh indexed Python files from the latest default branch, updating added, modified, deleted, and renamed files without rebuilding unchanged evidence.
+- **Upstream-change detection:** Periodically check whether the remote repository has changed and show a synchronization hint, leaving the owner in control of when to refresh.
+- **Shared checkout protection:** Allow only one operation to modify a repository's checkout at a time, including while a generated patch awaits approval. Questions and work on other repositories remain available.
+- **Run cancellation and recovery:** Clean up failed or disconnected generation runs by discarding unapproved changes, restoring the indexed commit, and removing temporary local branches so subsequent operations can start safely.
+- **Test execution and automatic repair:** Execute generated tests before AI review and use failure output to guide a bounded number of corrections. Report unresolved failures or unavailable execution to the owner.
+- **Isolated Docker execution:** Prepare dependencies in a disposable workspace and run generated tests with networking disabled, resource limits, and timeouts, without exposing backend credentials or modifying the original checkout.
+- **Execution availability monitoring:** Enable the Docker runner in the service and check its availability at startup and before execution. Keep the service usable when Docker is unavailable and clearly mark tests as not executed.
+- **Visible execution results:** Show whether tests passed, failed, or were not executed, together with test counts and a log excerpt, on the review card before the owner approves or rejects the patch.
