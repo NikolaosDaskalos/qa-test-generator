@@ -22,7 +22,7 @@ dependencies = [
   "langchain-voyageai>=0.3.3",
   "langchain-weaviate>=0.0.6",
   "psycopg[binary]<4.0.0,>=3.1.13",
-  "pwdlib[argon2,bcrypt]>=0.3.0",
+  "pwdlib[argon2,bcrypt]>=0.3.1",
   "pydantic>2.0",
   "pydantic-settings<3.0.0,>=2.2.1",
   "pyjwt<3.0.0,>=2.8.0",
